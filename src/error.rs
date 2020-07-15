@@ -3,7 +3,7 @@
 //! The primary interface here is through the [`Builder`] type, which allows for dynamic construction
 //! of complex error messages.
 
-use crate::files::Files;
+use crate::db::Files;
 use ansi_term::Color;
 use std::fmt::Write;
 use std::mem;
@@ -218,7 +218,8 @@ impl Element {
 }
 
 impl Builder {
-    fn pretty_fmt(&self, files: &Files) -> String {
+    /// Formats an error builder to a string with a trailing newline
+    pub fn pretty_fmt(&self, files: &Files) -> String {
         // There's a few assertions we'll make that should be true of any error message:
         assert!(!self.elements.is_empty());
         assert_eq!(self.elements[0].kind(), ElementKind::Context);
@@ -249,7 +250,7 @@ impl Builder {
                 Element::Context {
                     file_name,
                     byte_idx,
-                } => Some(files.line_idx(&file_name, *byte_idx)),
+                } => Some(files.file(&file_name).line_idx(*byte_idx)),
                 Element::Highlight {
                     file_name, regions, ..
                 } => Some(
@@ -257,13 +258,13 @@ impl Builder {
                         .iter()
                         .map(|r| r.end)
                         .max()
-                        .map(|idx| files.line_idx(&file_name, idx))
+                        .map(|idx| files.file(&file_name).line_idx(idx))
                         .unwrap(),
                 ),
                 Element::Line {
                     file_name,
                     byte_idx,
-                } => Some(files.line_idx(&file_name, *byte_idx)),
+                } => Some(files.file(&file_name).line_idx(*byte_idx)),
                 _ => None,
             })
             .max();
@@ -327,8 +328,8 @@ impl Builder {
                     file_name,
                     byte_idx,
                 } => {
-                    let line_no = files.line_idx(&file_name, *byte_idx) + 1;
-                    let col_no = files.col_idx(&file_name, *byte_idx) + 1;
+                    let line_no = files.file(&file_name).line_idx(*byte_idx) + 1;
+                    let col_no = files.file(&file_name).col_idx(*byte_idx) + 1;
 
                     writeln!(
                         msg,
@@ -453,14 +454,14 @@ impl Builder {
                     .iter()
                     .map(|r| r.start)
                     .min()
-                    .map(|idx| files.line_idx(&file_name, idx))
+                    .map(|idx| files.file(&file_name).line_idx(idx))
                     .unwrap();
 
                 let end = regions
                     .iter()
                     .map(|r| r.end)
                     .max()
-                    .map(|idx| files.line_idx(&file_name, idx))
+                    .map(|idx| files.file(&file_name).line_idx(idx))
                     .unwrap();
 
                 start..=end
@@ -469,7 +470,7 @@ impl Builder {
                 file_name,
                 byte_idx,
             } => {
-                let line_idx = files.line_idx(&file_name, *byte_idx);
+                let line_idx = files.file(&file_name).line_idx(*byte_idx);
                 line_idx..=line_idx
             }
             _ => unreachable!(),
@@ -694,6 +695,8 @@ impl Builder {
         file_name: &str,
         spacing: &str,
     ) {
+        let file = files.file(file_name);
+
         assert!(!ranges.is_empty());
 
         // We'll produce the ranges of lines corresponding to each input range, along with the
@@ -706,14 +709,11 @@ impl Builder {
         line_ranges = ranges
             .into_iter()
             .map(|r| {
-                let lines = RangeInclusive::new(
-                    files.line_idx(file_name, r.start),
-                    files.line_idx(file_name, r.end),
-                );
+                let lines = RangeInclusive::new(file.line_idx(r.start), file.line_idx(r.end));
 
                 let cols = Range {
-                    start: files.col_idx(file_name, r.start),
-                    end: files.col_idx(file_name, r.end),
+                    start: file.col_idx(r.start),
+                    end: file.col_idx(r.end),
                 };
 
                 (lines, cols)
@@ -736,7 +736,7 @@ impl Builder {
                 // +1 because lines start at zero
                 first_line + 1,
                 ACCENT_COLOR.paint("|"),
-                files.get(file_name, first_line),
+                file.get_line(first_line),
                 width = spacing.len(),
             )
             .unwrap();
@@ -789,7 +789,7 @@ impl Builder {
             // explicitly handled.
 
             // Set up some things to use later - these will be useful in all of the cases below.
-            let curr_line = files.get(file_name, *lines.start());
+            let curr_line = file.get_line(*lines.start());
 
             // If we're on a new line (this shouldn't happen outside of the first loop iteration),
             // we'll do some setup to make sure that we have the
@@ -881,7 +881,7 @@ impl Builder {
                 //
                 // Before we do that, however, we need to write another line of the source
                 // text.
-                let snd_line = files.get(file_name, *lines.end());
+                let snd_line = file.get_line(*lines.end());
 
                 writeln!(
                     msg,
@@ -974,7 +974,7 @@ impl Builder {
                     lines.start() + 2,
                     ACCENT_COLOR.paint("|"),
                     color.paint("|"),
-                    files.get(file_name, lines.start() + 1),
+                    file.get_line(lines.start() + 1),
                     width = spacing.len(),
                 )
                 .unwrap();
@@ -1003,7 +1003,7 @@ impl Builder {
                 // cases above, we'll ignore any leading whitespace (which will only be spaces
                 // at this point). As before, if ignoring the whitespace would cut off the
                 // ending column, we will silently revert to highlighting all of the whitespace.
-                let final_line = files.get(file_name, *lines.end());
+                let final_line = file.get_line(*lines.end());
 
                 writeln!(
                     msg,

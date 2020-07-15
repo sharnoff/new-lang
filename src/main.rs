@@ -1,65 +1,37 @@
 mod ast;
+mod db;
 mod error;
-mod files;
 mod token_tree;
 mod tokens;
+mod types;
+mod utils;
 
-use files::Files;
-use token_tree::file_tree;
-use tokens::tokenize;
+use db::Files;
 
 fn main() {
     let mut files = Files::new();
 
-    let input_str = include_str!("test_input.tc");
-    files.add("test_input.tc", input_str);
+    files.reserve("test_input.tc");
 
-    let token_results = tokenize(input_str);
-    let n_tokens = token_results.len();
+    let test_input_file = files.file("test_input.tc");
+    let token_tree = test_input_file.get_token_tree(|err| panic!("Failed to open file: {:?}", err));
 
-    let res =
-        token_results
-            .into_iter()
-            .fold(Ok(Vec::with_capacity(n_tokens)), |tokens, res| {
-                match (tokens, res) {
-                    (Ok(mut ts), Ok(t)) => {
-                        ts.push(t);
-                        Ok(ts)
-                    }
-                    (Ok(_), Err(i)) => Err(vec![i]),
-                    (Err(inv), Ok(_)) => Err(inv),
-                    (Err(mut inv), Err(i)) => {
-                        inv.push(i);
-                        Err(inv)
-                    }
-                }
-            });
+    println!("{:?}", std::ops::Deref::deref(&token_tree));
 
-    let offset = |line: &str| {
-        let start = (line as *const str as *const u8 as usize)
-            - (input_str as *const str as *const u8 as usize);
+    drop(token_tree);
+    drop(test_input_file);
 
-        start..start + line.len()
-    };
+    let num_errors = files.print_errors();
+    if num_errors != 0 {
+        let num_err_str = match num_errors {
+            1 => "a previous error".into(),
+            n => format!("{} previous errors", n),
+        };
 
-    let tokens = match res {
-        Ok(ts) => ts,
-        Err(es) => {
-            error::display_errors(es.into_iter(), (offset, "test_input.tc"), &files);
-            return;
-        }
-    };
-
-    let tokens = file_tree(&tokens);
-    let token_tree_errors = tokens.collect_errors();
-    if !token_tree_errors.is_empty() {
-        error::display_errors(
-            token_tree_errors.into_iter(),
-            (offset, "test_input.tc"),
-            &files,
+        eprintln!(
+            "{}: Failed due to {}",
+            error::ERR_COLOR.paint("error"),
+            num_err_str
         );
-        return;
     }
-
-    println!("{:?}", tokens);
 }

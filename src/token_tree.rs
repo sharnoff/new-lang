@@ -22,7 +22,7 @@ use crate::tokens::{self, LiteralKind, SimpleToken};
 use std::ops::Range;
 
 // TODO: Document - gives the output of tokenizing the entire file.
-pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> {
+pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>], ends_early: bool) -> FileTokenTree<'a> {
     // Trim any leading whitespace from the tokens
     use tokens::TokenKind::{BlockComment, LineComment, Whitespace};
 
@@ -37,7 +37,7 @@ pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> 
     let mut idx = n_leading_whitespace;
     let mut tokens = Vec::new();
     while idx < simple_tokens.len() {
-        let (t, i) = Token::consume(&simple_tokens[idx..], None);
+        let (t, i) = Token::consume(&simple_tokens[idx..], ends_early, None);
         tokens.push(t);
         idx += i;
     }
@@ -148,6 +148,7 @@ impl Delim {
 impl<'a> Token<'a> {
     fn consume(
         tokens: &'a [SimpleToken<'a>],
+        ends_early: bool,
         enclosing_delim: Option<SimpleToken<'a>>,
     ) -> (Result<Token<'a>, Error<'a>>, usize) {
         use tokens::TokenKind::*;
@@ -174,7 +175,7 @@ impl<'a> Token<'a> {
 
             // Multi-token elements
             [OpenParen, ..] | [OpenCurly, ..] | [OpenSquare, ..] => {
-                let (kind, consumed) = Token::consume_delim(tokens);
+                let (kind, consumed) = Token::consume_delim(tokens, ends_early);
                 (Ok(kind), consumed)
             }
 
@@ -243,7 +244,7 @@ impl<'a> Token<'a> {
         (token_res, consumed + trailing)
     }
 
-    fn consume_delim(tokens: &'a [SimpleToken<'a>]) -> (TokenKind<'a>, usize) {
+    fn consume_delim(tokens: &'a [SimpleToken<'a>], ends_early: bool) -> (TokenKind<'a>, usize) {
         use tokens::TokenKind::{
             BlockComment, CloseCurly, CloseParen, CloseSquare, LineComment, OpenCurly, OpenParen,
             OpenSquare, Whitespace,
@@ -275,8 +276,10 @@ impl<'a> Token<'a> {
         let mut inner = Vec::new();
         loop {
             if consumed == tokens.len() {
-                // This is an error; we got to EOF and the delimeter wasn't closed
-                inner.push(Err(UnclosedDelim(delim, tokens)));
+                // This is an error; we got to EOF and the delimeter wasn't closed.
+                if !ends_early {
+                    inner.push(Err(UnclosedDelim(delim, tokens)));
+                }
                 break;
             }
 
@@ -286,7 +289,7 @@ impl<'a> Token<'a> {
                 break;
             }
 
-            let (t, c) = Token::consume(&tokens[consumed..], Some(tokens[0]));
+            let (t, c) = Token::consume(&tokens[consumed..], ends_early, Some(tokens[0]));
             inner.push(t);
             consumed += c;
         }
