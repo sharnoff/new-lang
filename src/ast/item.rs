@@ -295,6 +295,14 @@ pub struct UseStmt<'a> {
 }
 
 /// A collection of proof statements, given before an item
+///
+/// This is provided so that we can track groups of proof statements together, keeping certain
+/// attributes (like whether the values have been poisoned) as part of this struct instead of
+/// elsewhere.
+///
+/// For more information on the structure of proof statements, see [`ProofStmt`].
+///
+/// [`ProofStmt`]: struct.ProofStmt.html
 #[derive(Debug)]
 pub struct ProofStmts<'a> {
     pub stmts: Vec<ProofStmt<'a>>,
@@ -302,21 +310,77 @@ pub struct ProofStmts<'a> {
     pub(super) src: TokenSlice<'a>,
 }
 
+/// A single proof statment - i.e. a single line starting with `#`
+///
+/// There are multiple types of the statments possibe; these are given by the `kind` field.
+///
+/// The BNF for proof statements is:
+/// ```text
+/// ProofStmts = { "#" ProofStmt "\n" } .
+/// ProofStmt = Expr ( "=>" | "<=>" ) Expr
+///           | Expr
+///           | "invariant" [ StringLiteral ] ":"
+///           | "forall" Pattern [ "in" Expr ] ":"
+///           | "exists" Pattern [ "in" Expr ] where ":"
+/// ```
+/// Please note that these are likely to change - the precise syntax here is far from final.
+///
+/// The first `ProofStmt` variant indicates single- or double-implication between certain
+/// conditions, given by expressions. The second simply gives a boolean statement that is always
+/// true (or always required). The remaining three should hopefully be relatively clear without
+/// further detail.
+///
+/// These types of statmeents are enumerated in the variants of [`ProofStmtKind`].
+///
+/// ## Structure
+///
+/// Broadly speaking, the nesting of proof statements is given by their indentation level; the BNF
+/// here accurately describes single lines, but not the tree structure created between them.
+///
+/// For example, one might write the following:
+/// ```text
+/// # invariant "foo":
+/// #   x > 4
+/// # forall y in 0..x:
+/// #   exists z where:
+/// #       bar(z) = 0
+/// ```
+/// in which the statement `x > 4` is part of the invariant, and `bar(z) = 0` is part of
+/// `exists z where:`, inside `forall y in 0..x`.
+///
+/// [`ProofStmtKind`]: enum.ProofStmtKind.html
 #[derive(Debug)]
 pub struct ProofStmt<'a> {
     pub kind: ProofStmtKind<'a>,
     pub(super) src: TokenSlice<'a>,
 }
 
+/// The different types of proof statements available
+///
+/// For information on proof statments, refer to the documentation for [`ProofStmt`].
+///
+/// [`ProofStmt`]: struct.ProofStmt.html
 #[derive(Debug)]
 pub enum ProofStmtKind<'a> {
+    /// Single implication: `Expr "=>" Expr`
     Implies(Expr<'a>, Expr<'a>),
+    /// Double implication: `Expr "<=>" Expr`
     DoubleImplies(Expr<'a>, Expr<'a>),
+    /// A single value that is given to be true
     Predicate(Expr<'a>),
     Invariant {
-        name: Option<String>,
+        name: (), // Option<StringLiteral>
         stmts: Vec<ProofStmt<'a>>,
-        poisoned: bool,
+    },
+    Forall {
+        pattern: (), // Pattern
+        iter: (),    // Expr
+        stmts: Vec<ProofStmt<'a>>,
+    },
+    Exists {
+        pattern: (), // Pattern
+        iter: (),    // Expr
+        stmts: Vec<ProofStmt<'a>>,
     },
 }
 
@@ -423,8 +487,8 @@ impl<'a> Item<'a> {
         //     ├────────────┼─────────┼───────┤
         //     │ FnDecl     │   Yes   │  Yes  │
         //     │ MacroDef   │   Yes   │  Yes  │
-        //     │ TypeDecl    │   Yes   │  Yes  │
-        //     │ TraitDef  │   Yes   │  Yes  │
+        //     │ TypeDecl   │   Yes   │  Yes  │
+        //     │ TraitDef   │   Yes   │  Yes  │
         //     │ ImplBlock  │   No    │  No   │
         //     │ ConstStmt  │   No    │  Yes  │
         //     │ StaticStmt │   Yes   │  Yes  │
@@ -477,129 +541,85 @@ impl<'a> Item<'a> {
         //
         // `FnDecl`s must have [ "pure" ] "fn" following "const", and `ConstStmt`s must have an
         // identifier.
+        //
+        // We'll set up a couple macros to make this a little cleaner. The first is `consume`,
+        // which provides a small wrapper around the various associated `consume` functions for
+        // certain types. This allows us to make what's going on a little bit more dense.
+        macro_rules! consume {
+            (
+                $base_ty:ident,
+                $item_kind:expr
+                $(, @tokens: $tokens:expr)?
+                $(, @consumed: $consumed:expr)?
+                $(, $args:expr)* $(,)?
+            ) => {
+                $base_ty::consume(
+                    consume!(@tokens $($tokens)?),
+                    consume!(@consumed $($consumed)?),
+                    ends_early,
+                    containing_token,
+                    errors,
+                    $($args,)*
+                ).map($item_kind)
+            };
+
+            (@tokens) => {{ tokens }};
+            (@tokens $ts:expr) => {{ $ts }};
+            (@consumed) => {{ consumed + 1 }};
+            (@consumed $cs:expr) => {{ $cs }};
+        }
+
+        // And then we have `disallow` - A helper macro for producing an error if some pieces
+        // preceeded an item that weren't allowed there - either a visibility qualifier or proof
+        // statements.
+        macro_rules! disallow {
+            (@Vis, $res:expr, $item_kind:ident) => {
+                // Generally, we only want to produce an error if we know that the item itself was
+                // successfully parsed - otherwise, we might be misinterpreting what the user meant
+                // that item to be (and so this error would be unhelpful).
+                if $res.is_ok() {
+                    if let Some(vis) = vis {
+                        errors.push(Error::VisDisallowedBeforeItem {
+                            vis: vis.src(),
+                            item_kind: errors::ItemKind::$item_kind,
+                        });
+                    }
+                }
+            };
+
+            (@Proof, $res:expr, $item_kind:ident) => {
+                if $res.is_ok() && has_proof_stmts {
+                    errors.push(Error::ProofStmtsDisallowedBeforeItem {
+                        stmts: &tokens[..proof_stmts_consumed],
+                        item_kind: errors::ItemKind::$item_kind,
+                    });
+                }
+            };
+        }
 
         match kwd {
-            Macro => MacroDef::consume(
-                tokens,
-                consumed + 1,
-                ends_early,
-                containing_token,
-                errors,
-                proof_stmts,
-                vis,
-            )
-            .map(Item::Macro),
-            Type => TypeDecl::consume(
-                tokens,
-                consumed + 1,
-                ends_early,
-                containing_token,
-                errors,
-                proof_stmts,
-                vis,
-            )
-            .map(Item::Type),
-            Trait => TraitDef::consume(
-                tokens,
-                consumed + 1,
-                ends_early,
-                containing_token,
-                errors,
-                proof_stmts,
-                vis,
-            )
-            .map(Item::Trait),
+            Macro => consume!(MacroDef, Item::Macro, proof_stmts, vis),
+            Type => consume!(TypeDecl, Item::Type, proof_stmts, vis),
+            Trait => consume!(TraitDef, Item::Trait, proof_stmts, vis),
             Impl => {
-                let res =
-                    ImplBlock::consume(tokens, consumed + 1, ends_early, containing_token, errors)
-                        .map(Item::Impl);
-
-                if res.is_ok() {
-                    if let Some(vis) = vis {
-                        errors.push(Error::VisDisallowedBeforeItem {
-                            vis: vis.src(),
-                            item_kind: errors::ItemKind::ImplBlock,
-                        });
-                    }
-
-                    if has_proof_stmts {
-                        errors.push(Error::ProofStmtsDisallowedBeforeItem {
-                            stmts: &tokens[..proof_stmts_consumed],
-                            item_kind: errors::ItemKind::ImplBlock,
-                        });
-                    }
-                }
-
+                let res = consume!(ImplBlock, Item::Impl);
+                disallow!(@Vis, res, ImplBlock);
+                disallow!(@Proof, res, ImplBlock);
                 res
             }
-
-            Static => StaticStmt::consume(
-                tokens,
-                consumed + 1,
-                ends_early,
-                containing_token,
-                errors,
-                proof_stmts,
-                vis,
-            )
-            .map(Item::Static),
+            Static => consume!(StaticStmt, Item::Static, proof_stmts, vis),
             Import => {
-                let res =
-                    ImportStmt::consume(tokens, consumed + 1, ends_early, containing_token, errors)
-                        .map(Item::Import);
-
-                if res.is_ok() {
-                    if let Some(vis) = vis {
-                        errors.push(Error::VisDisallowedBeforeItem {
-                            vis: vis.src(),
-                            item_kind: errors::ItemKind::ImplBlock,
-                        });
-                    }
-
-                    if has_proof_stmts {
-                        errors.push(Error::ProofStmtsDisallowedBeforeItem {
-                            stmts: &tokens[..proof_stmts_consumed],
-                            item_kind: errors::ItemKind::ImplBlock,
-                        });
-                    }
-                }
-
+                let res = consume!(ImportStmt, Item::Import);
+                disallow!(@Vis, res, ImportStmt);
+                disallow!(@Proof, res, ImportStmt);
                 res
             }
             Use => {
-                let res = UseStmt::consume(
-                    tokens,
-                    consumed + 1,
-                    ends_early,
-                    containing_token,
-                    errors,
-                    vis,
-                )
-                .map(Item::Use);
-
-                if res.is_ok() && has_proof_stmts {
-                    errors.push(Error::ProofStmtsDisallowedBeforeItem {
-                        stmts: &tokens[..proof_stmts_consumed],
-                        item_kind: errors::ItemKind::ImplBlock,
-                    });
-                }
-
+                let res = consume!(UseStmt, Item::Use, vis);
+                disallow!(@Proof, res, UseStmt);
                 res
             }
-            Fn => {
-                FnDecl::consume(
-                    tokens,
-                    consumed + 1, // ident_idx
-                    ends_early,
-                    containing_token,
-                    errors,
-                    proof_stmts,
-                    vis,
-                    None, // is_const
-                    None, // is_pure
-                )
-                .map(Item::Fn)
-            }
+            Fn => consume!(FnDecl, Item::Fn, proof_stmts, vis, None, None),
 
             // Const is a special case, as given above
             Const => {
@@ -622,46 +642,22 @@ impl<'a> Item<'a> {
                 match &snd.kind {
                     // As noted above, this is a constant statement.
                     Ident(_) => {
-                        let res = ConstStmt::consume(
-                            &tokens[proof_stmts_consumed..], // tokens
-                            consumed - proof_stmts_consumed, // ident_idx
-                            ends_early,
-                            containing_token,
-                            errors,
-                            vis,
-                        );
-
-                        // If the parsing was successful (or at least enough to be sure that this
-                        // was intended to be a const statement), we'll check that we didn't
-                        // previously have proof lines -- they aren't allowed before const
-                        // statements.
-                        if res.is_ok() && has_proof_stmts {
-                            errors.push(Error::ProofStmtsDisallowedBeforeItem {
-                                stmts: &tokens[..proof_stmts_consumed],
-                                item_kind: errors::ItemKind::Const,
-                            });
-                        }
-
-                        match res {
-                            Ok(stmt) => Ok(Item::Const(stmt)),
-                            Err(Some(consumed)) => Err(Some(proof_stmts_consumed + consumed)),
-                            Err(None) => Err(None),
-                        }
-                    }
-                    Keyword(Fn) => {
-                        FnDecl::consume(
-                            tokens,
-                            consumed, // start_idx
-                            ends_early,
-                            containing_token,
-                            errors,
-                            proof_stmts,
-                            vis,
-                            is_const,
-                            None, // is_pure
+                        let res = consume!(
+                            ConstStmt,
+                            Item::Const,
+                            @tokens: &tokens[proof_stmts_consumed..],
+                            @consumed: consumed - proof_stmts_consumed,
+                            vis
                         )
-                        .map(Item::Fn)
+                        .map_err(|opt_cons| match opt_cons {
+                            Some(consumed) => Some(proof_stmts_consumed + consumed),
+                            None => None,
+                        });
+
+                        disallow!(@Proof, res, Const);
+                        res
                     }
+                    Keyword(Fn) => consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, None),
                     Keyword(Pure) => {
                         // If we encounter a "pure", there's unfortunately *one* last check that we
                         // need to do. We *still* need to make sure that the next token is an "fn"
@@ -683,18 +679,7 @@ impl<'a> Item<'a> {
                         );
 
                         if let Keyword(Fn) = expected_fn_token.kind {
-                            FnDecl::consume(
-                                tokens,
-                                consumed + 1, // start_idx
-                                ends_early,
-                                containing_token,
-                                errors,
-                                proof_stmts,
-                                vis,
-                                is_const,
-                                is_pure,
-                            )
-                            .map(Item::Fn)
+                            consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, is_pure)
                         } else {
                             errors.push(Error::ConstPureExpectedFn {
                                 before: [fst, snd],
@@ -734,20 +719,7 @@ impl<'a> Item<'a> {
                 );
 
                 match &snd.kind {
-                    Keyword(Fn) => {
-                        FnDecl::consume(
-                            tokens,
-                            consumed + 1, // start_idx
-                            ends_early,
-                            containing_token,
-                            errors,
-                            proof_stmts,
-                            vis,
-                            None, // is_const
-                            is_pure,
-                        )
-                        .map(Item::Fn)
-                    }
+                    Keyword(Fn) => consume!(FnDecl, Item::Fn, proof_stmts, vis, None, is_pure),
                     Keyword(Const) => {
                         consumed += 1;
                         let is_const = Some(snd);
@@ -767,18 +739,7 @@ impl<'a> Item<'a> {
                         );
 
                         if let Keyword(Fn) = expected_fn_token.kind {
-                            FnDecl::consume(
-                                tokens,
-                                consumed + 1, // start_idx
-                                ends_early,
-                                containing_token,
-                                errors,
-                                proof_stmts,
-                                vis,
-                                is_const,
-                                is_pure,
-                            )
-                            .map(Item::Fn)
+                            consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, is_pure)
                         } else {
                             errors.push(Error::ConstPureExpectedFn {
                                 before: [fst, snd],
