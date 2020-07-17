@@ -16,7 +16,7 @@ pub enum Error<'a> {
     /// Function declarations are started by `[ "const" ] [ "pure" ] "fn"`, whereas const
     /// statements are started by `"const" Ident`.
     ///
-    /// This is a more specialized error because it exists for a very specific case to provie a
+    /// This is a more specialized error because it exists for a very specific case to provide a
     /// better error message.
     ExpectedAfterItemConst {
         /// The token giving us the "const" keyword

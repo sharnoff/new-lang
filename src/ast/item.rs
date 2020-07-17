@@ -145,7 +145,7 @@ pub struct TraitDef<'a> {
 /// An "impl" block - either as a standalone type or for implementing a trait
 ///
 /// While syntactically allowed as normal items, "impl" blocks are not allowed within trait
-/// definitions or other ipml blocks.
+/// definitions or other impl blocks.
 ///
 /// The BNF for impl blocks is fairly simple:
 /// ```text
@@ -163,8 +163,8 @@ pub struct TraitDef<'a> {
 ///
 /// [`ProofStmts`]: struct.ProofStmts.html
 /// [`Vis`]: enum.Vis.html
-/// [`ProofStmtsDisallowedBeforeItem`]: error/enum.Error.html#variant.ProofStmtsDisallowedBeforeItem
-/// [`VisDisallowedBeforeItem`]: error/enum.Error.html#variant.VisDisallowedBeforeItem
+/// [`ProofStmtsDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.ProofStmtsDisallowedBeforeItem
+/// [`VisDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.VisDisallowedBeforeItem
 #[derive(Debug)]
 pub struct ImplBlock<'a> {
     pub(super) src: TokenSlice<'a>,
@@ -286,7 +286,7 @@ pub struct ImportStmt<'a> {
 /// Multiple items under a single namespace may be brought into scope with curly braces (as seen by
 /// the first variant of [`UsePath`]). Items may also be renamed as they are brought into scope.
 ///
-/// [`UsePath`]: enum.usePath.html
+/// [`UsePath`]: enum.UsePath.html
 #[derive(Debug)]
 pub struct UseStmt<'a> {
     pub(super) src: TokenSlice<'a>,
@@ -842,9 +842,9 @@ impl<'a> FnDecl<'a> {
     /// ```
     /// `ident_idx` will be equal to 2. The tokens up to `ident_idx` are guaranteed to be valid for
     /// a function declaration (with the values parsed from them given by the various parameters:
-    /// `proof_stmts`, `vis`, `is_const`, and `is_pure`). While it is given that `tokens[ident_idx
-    /// - 1]` will be the "fn" keyword, it is not guaranteed that there is an identifier token at
-    /// `ident_idx`.
+    /// `proof_stmts`, `vis`, `is_const`, and `is_pure`). While it is given that
+    /// `tokens[ident_idx - 1]` will be the "fn" keyword, it is not guaranteed that there is an
+    /// identifier token at `ident_idx`.
     ///
     /// In the event of an error, this function may either return `None` to indicate that parsing
     /// within the current token tree should not continue, or `Some` to give the number of tokens
