@@ -59,7 +59,7 @@ pub struct Token<'a> {
     trailing_whitespace: &'a [SimpleToken<'a>],
     // Note: `src` doesn't contain leading or trailing whitespace
     src: &'a [SimpleToken<'a>],
-    kind: TokenKind<'a>,
+    pub kind: TokenKind<'a>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,8 +86,53 @@ pub enum Error<'a> {
     UnclosedDelim(Delim, &'a [SimpleToken<'a>]),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Kwd {}
+macro_rules! kwds {
+    (
+        $($variant:ident => $str:expr,)*
+    ) => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+        pub enum Kwd {
+            $($variant,)*
+        }
+
+        impl Kwd {
+            fn try_from(ident: &str) -> Option<Kwd> {
+                match ident {
+                    $($str => Some(Kwd::$variant),)*
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+kwds! {
+    As => "as",
+    Assign => "assign",
+    Const => "const",
+    Else => "else",
+    Exists => "exists",
+    Fn => "fn",
+    For => "for",
+    Forall => "forall",
+    If => "if",
+    Init => "init",
+    Impl => "impl",
+    Import => "import",
+    Invariant => "invariant",
+    Let => "let",
+    Macro => "macro",
+    Match => "match",
+    Mut => "mut",
+    Pub => "pub",
+    Pure => "pure",
+    Ref => "ref",
+    Static => "static",
+    Trait => "trait",
+    Type => "type",
+    Use => "use",
+    While => "while",
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Delim {
@@ -117,14 +162,6 @@ pub enum Punc {
     Minus,  // "-"
     Star,   // "*"
     Slash,  // "/"
-}
-
-impl Kwd {
-    fn try_from(ident: &str) -> Option<Kwd> {
-        match ident {
-            _ => None,
-        }
-    }
 }
 
 impl Delim {

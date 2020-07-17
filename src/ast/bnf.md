@@ -54,44 +54,48 @@ declarations.
 ```
 Item = FnDecl
      | MacroDef
-     | TypeDef
-     | TraitDecl
+     | TypeDecl
+     | TraitDef
      | ImplBlock
      | ConstStmt
      | StaticStmt
      | ImportStmt
      | UseStmt .
 
-FnDecl = ProofLines Vis [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
+FnDecl = ProofStmts Vis [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
          FnParams [ "->" Type ] ( ";" | BlockExpr ) .
 
-MacroDef   = ProofLines Vis "macro" Ident MacroParams .
-TypeDef    = ProofLines Vis "type" Ident [ GenericParams ] [ "=" ] Type .
-TraitDecl  = ProofLines Vis "trait" Ident [ GenericParams ] "{" ImplBody "}" .
-ImplBlock  = ProofLines     "impl" [ Trait "for" ] Ident [ GenericArgs ] "{" ImplBody "}" .
-ConstStmt  = ProofLines Vis "const" VarField "=" Expr ";" .
-StaticStmt = ProofLines Vis "static" VarField "=" Expr ";" .
+MacroDef   = ProofStmts Vis "macro" Ident MacroParams MacroBody .
+TypeDecl   = ProofStmts Vis "type" Ident [ GenericParams ]
+             [ TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
+TraitDef   = ProofStmts Vis "trait" Ident [ GenericParams ] [ TypeBound ] ( ImplBody | ";" ) .
+ImplBlock  =                "impl" [ Trait "for" ] Type ImplBody .
+ConstStmt  =            Vis "const"  StructField ";" .
+StaticStmt = ProofStmts Vis "static" StructField ";" .
 
-ImportStmt = "import" StringLiteral ~ StringLiteral [ as "Ident" ] .
+ImportStmt = "import" StringLiteral [ "~" StringLiteral ] [ "as" Ident ] .
 
-UseStmt = "use" Path "." "{" UseFragement [ { "," UseFragment } ] "}"
-        | "use" UseFragement .
-UseFragment = Path [ "as Ident ] .
-
+UseStmt = Vis "use" UsePath ";" .
+UsePath = Path "." "{" UsePath { "," UsePath } [ "," ] "}" .
+        | UseKind Path [ "as" Ident ] .
+UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
 Path = Ident { "." Ident } .
 
 Vis = [ "pub" ] .
 
-ProofLines = { "#" ProofStmt "\n" } .
+ProofStmts = { "#" ProofStmt "\n" } .
 ProofStmt = Expr ( "=>" | "<=>" ) Expr
           | Expr
           | "invariant" [ StringLiteral ] ":"
           | "forall" Pattern [ "in" Expr ] ":"
           | "exists" Pattern [ "in" Expr ] where ":" .
 
-FnParams = "(" [ ] { "," } [ "," ]")" .
-MacroParams = { Token } .
-ImplBody = { Item } .
+> MacroParams = TODO
+> MacroBody = TODO
+
+FnParams = "(" [ "&" [ "mut" ] "self" [ "," ] ] [ StructField { "," StructField } [ "," ] ] ")" .
+
+ImplBody = "{" { Item } "}" .
 
 GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">"
 GenericParam = Ident [ "::" Trait ] [ "=" Type ]
@@ -109,13 +113,15 @@ Type = Ident [ GenericArgs ] Refinements
      | "&" Refinements Type 
      | [ "!" ] "mut" Type
      | "[" Type [ ";" Expr ] "]" Refinemnts
-     | "{" { StructField "," } "}"
-     | "(" { TupleField "," } ")"
+     | "{" [ StructField { "," StructField } [ "," ] ] "}"
+     | "(" [ Type        { "," Type        } [ "," ] ] ")"
      | "enum" "{" { EnumVariant "," } "}" .
 
-Refinements = [ "|" Refinement { "," Refinement } "|" ] .
+Refinements = [ "|" Refinement { "," Refinement } [ "," ] "|" ] .
 Refinement = "ref" [ "mut" ] Expr
-           | [ "!" | "?" ] "init"
+           | [ "!" | "?" ] "init" .
+StructField = Ident ( ":" Type | TypeBound ) [ "=" Expr ] .
+TypeBound = "::" Refinements Trait { "+" Trait } .
 
 Stmt = BigExpr
      | Expr ";"
@@ -168,8 +174,8 @@ Pattern = [ Path ] StructPattern
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .
 FloatLiteral = IntLiteral "." IntLiteral .
 
-StructFieldsExpr = { StructField { "," StructField } [ "," ] } .
-StructField = Ident [ ":" Expr ] .
+StructFieldsExpr = { StructFieldExpr { "," StructFieldExpr } [ "," ] } .
+StructFieldExpr = Ident [ ":" Expr ] .
 ```
 
 ### Notes on ambiguity
