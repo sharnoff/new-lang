@@ -1,8 +1,12 @@
-//! Parsing submodule for `Item`s
+//! `Item` parsing
 
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
 use super::*;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// `Item` variants                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
 pub enum Item<'a> {
@@ -59,11 +63,11 @@ pub struct FnDecl<'a> {
     vis: Option<Vis<'a>>,
     is_const: Option<&'a Token<'a>>,
     is_pure: Option<&'a Token<'a>>,
-    name: (),           // Ident
-    generic_params: (), // GenericParams
-    params: (),         // FnParams
-    return_ty: (),      // Type
-    body: (),           // Option<BlockExpr>
+    name: Ident<'a>,
+    generic_params: Option<GenericParams<'a>>,
+    params: FnParams<'a>,
+    return_ty: Type<'a>,
+    body: BlockExpr<'a>,
 }
 
 /// A macro definition
@@ -102,11 +106,11 @@ pub struct MacroDef<'a> {
 #[derive(Debug)]
 pub struct TypeDecl<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: (),           // Ident
-    generic_params: (), // GenericParams
-    bound: (),          // Option<TypeBound>
-    is_alias: bool,     //
-    def: (),            // Option<Type>
+    name: Ident<'a>,
+    generic_params: Option<GenericParams<'a>>,
+    bound: Option<TypeBound<'a>>,
+    is_alias: bool,
+    def: Option<Type<'a>>,
 }
 
 /// A trait definition
@@ -137,10 +141,10 @@ pub struct TraitDef<'a> {
     pub(super) src: TokenSlice<'a>,
     proof_stmts: ProofStmts<'a>,
     vis: Option<Vis<'a>>,
-    name: (),           // Ident
-    generic_params: (), // GenericParams
-    super_traits: (),   // Option<TypeBound>
-    body: (),           // Option<ImplBody>
+    name: Ident<'a>,
+    generic_params: Option<GenericParams<'a>>,
+    super_traits: Option<TypeBound<'a>>,
+    body: Option<ImplBody<'a>>,
 }
 
 /// An "impl" block - either as a standalone type or for implementing a trait
@@ -150,7 +154,7 @@ pub struct TraitDef<'a> {
 ///
 /// The BNF for impl blocks is fairly simple:
 /// ```text
-/// ImplBlock = "impl" [ Trait "for" ] Type ImplBody .
+/// ImplBlock = "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
 /// ```
 /// Because some of the prefixes that are allowed for other items aren't allowed here (namely:
 /// [`ProofStmts`] and [`Vis`]), there are a few steps taken in constructing error messages to be
@@ -169,9 +173,9 @@ pub struct TraitDef<'a> {
 #[derive(Debug)]
 pub struct ImplBlock<'a> {
     pub(super) src: TokenSlice<'a>,
-    trait_impl: (), // Trait
-    impl_ty: (),    // Type
-    body: (),       // ImplBody
+    trait_impl: Option<Trait<'a>>,
+    impl_ty: Type<'a>,
+    body: Option<ImplBody<'a>>,
 }
 
 /// A `const` statment
@@ -211,10 +215,10 @@ pub struct ImplBlock<'a> {
 pub struct ConstStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     vis: Option<Vis<'a>>,
-    name: (),     // Ident
-    value_ty: (), // Option<Type>
-    bound: (),    // Option<TypeBound>
-    value: (),    // Option<Expr>
+    name: Ident<'a>,
+    value_ty: Option<Type<'a>>,
+    bound: Option<TypeBound<'a>>,
+    value: Option<Expr<'a>>,
 }
 
 /// A `static` statement
@@ -231,10 +235,10 @@ pub struct StaticStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     proof_stmts: ProofStmts<'a>,
     vis: Option<Vis<'a>>,
-    name: (),     // Ident
-    value_ty: (), // Option<Type>
-    bound: (),    // Option<TypeBound>
-    value: (),    // Option<Expr>
+    name: Ident<'a>,
+    value_ty: Option<Type<'a>>,
+    bound: Option<TypeBound<'a>>,
+    value: Option<Expr<'a>>,
 }
 
 /// An import statment
@@ -263,9 +267,9 @@ pub struct StaticStmt<'a> {
 #[derive(Debug)]
 pub struct ImportStmt<'a> {
     pub(super) src: TokenSlice<'a>,
-    source: (),  // StringLiteral
-    version: (), // Option<StringLiteral>
-    as_name: (), // Ident
+    source: StringLiteral<'a>,
+    version: Option<StringLiteral<'a>>,
+    as_name: Ident<'a>,
 }
 
 /// A "use" statment
@@ -292,97 +296,7 @@ pub struct ImportStmt<'a> {
 pub struct UseStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     vis: Option<Vis<'a>>,
-    path: (), // UsePath
-}
-
-/// A collection of proof statements, given before an item
-///
-/// This is provided so that we can track groups of proof statements together, keeping certain
-/// attributes (like whether the values have been poisoned) as part of this struct instead of
-/// elsewhere.
-///
-/// For more information on the structure of proof statements, see [`ProofStmt`].
-///
-/// [`ProofStmt`]: struct.ProofStmt.html
-#[derive(Debug)]
-pub struct ProofStmts<'a> {
-    pub stmts: Vec<ProofStmt<'a>>,
-    pub poisoned: bool,
-    pub(super) src: TokenSlice<'a>,
-}
-
-/// A single proof statment - i.e. a single line starting with `#`
-///
-/// There are multiple types of the statments possibe; these are given by the `kind` field.
-///
-/// The BNF for proof statements is:
-/// ```text
-/// ProofStmts = { "#" ProofStmt "\n" } .
-/// ProofStmt = Expr ( "=>" | "<=>" ) Expr
-///           | Expr
-///           | "invariant" [ StringLiteral ] ":"
-///           | "forall" Pattern [ "in" Expr ] ":"
-///           | "exists" Pattern [ "in" Expr ] where ":"
-/// ```
-/// Please note that these are likely to change - the precise syntax here is far from final.
-///
-/// The first `ProofStmt` variant indicates single- or double-implication between certain
-/// conditions, given by expressions. The second simply gives a boolean statement that is always
-/// true (or always required). The remaining three should hopefully be relatively clear without
-/// further detail.
-///
-/// These types of statmeents are enumerated in the variants of [`ProofStmtKind`].
-///
-/// ## Structure
-///
-/// Broadly speaking, the nesting of proof statements is given by their indentation level; the BNF
-/// here accurately describes single lines, but not the tree structure created between them.
-///
-/// For example, one might write the following:
-/// ```text
-/// # invariant "foo":
-/// #   x > 4
-/// # forall y in 0..x:
-/// #   exists z where:
-/// #       bar(z) = 0
-/// ```
-/// in which the statement `x > 4` is part of the invariant, and `bar(z) = 0` is part of
-/// `exists z where:`, inside `forall y in 0..x`.
-///
-/// [`ProofStmtKind`]: enum.ProofStmtKind.html
-#[derive(Debug)]
-pub struct ProofStmt<'a> {
-    pub kind: ProofStmtKind<'a>,
-    pub(super) src: TokenSlice<'a>,
-}
-
-/// The different types of proof statements available
-///
-/// For information on proof statments, refer to the documentation for [`ProofStmt`].
-///
-/// [`ProofStmt`]: struct.ProofStmt.html
-#[derive(Debug)]
-pub enum ProofStmtKind<'a> {
-    /// Single implication: `Expr "=>" Expr`
-    Implies(Expr<'a>, Expr<'a>),
-    /// Double implication: `Expr "<=>" Expr`
-    DoubleImplies(Expr<'a>, Expr<'a>),
-    /// A single value that is given to be true
-    Predicate(Expr<'a>),
-    Invariant {
-        name: (), // Option<StringLiteral>
-        stmts: Vec<ProofStmt<'a>>,
-    },
-    Forall {
-        pattern: (), // Pattern
-        iter: (),    // Expr
-        stmts: Vec<ProofStmt<'a>>,
-    },
-    Exists {
-        pattern: (), // Pattern
-        iter: (),    // Expr
-        stmts: Vec<ProofStmt<'a>>,
-    },
+    path: UsePath<'a>,
 }
 
 impl<'a> Item<'a> {
@@ -930,6 +844,204 @@ impl<'a> UseStmt<'a> {
     ) -> Result<UseStmt<'a>, Option<usize>> {
         todo!()
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper types                                                                                   //
+// * ProofStmts                                                                                   //
+//   * ProofStmt                                                                                  //
+//   * ProofStmtKind                                                                              //
+// * ImplBody                                                                                     //
+// * UsePath                                                                                      //
+//   * MultiUse                                                                                   //
+//   * SingleUse                                                                                  //
+//   * UseKind                                                                                    //
+// * FnParams                                                                                     //
+// * GenericParams                                                                                //
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// A collection of proof statements, given before an item
+///
+/// This is provided so that we can track groups of proof statements together, keeping certain
+/// attributes (like whether the values have been poisoned) as part of this struct instead of
+/// elsewhere.
+///
+/// For more information on the structure of proof statements, see [`ProofStmt`].
+///
+/// [`ProofStmt`]: struct.ProofStmt.html
+#[derive(Debug)]
+pub struct ProofStmts<'a> {
+    pub stmts: Vec<ProofStmt<'a>>,
+    pub poisoned: bool,
+    pub(super) src: TokenSlice<'a>,
+}
+
+/// A single proof statment - i.e. a single line starting with `#`
+///
+/// There are multiple types of the statments possibe; these are given by the `kind` field.
+///
+/// The BNF for proof statements is:
+/// ```text
+/// ProofStmts = { "#" ProofStmt "\n" } .
+/// ProofStmt = Expr ( "=>" | "<=>" ) Expr
+///           | Expr
+///           | "invariant" [ StringLiteral ] ":"
+///           | "forall" Pattern [ "in" Expr ] ":"
+///           | "exists" Pattern [ "in" Expr ] where ":"
+/// ```
+/// Please note that these are likely to change - the precise syntax here is far from final.
+///
+/// The first `ProofStmt` variant indicates single- or double-implication between certain
+/// conditions, given by expressions. The second simply gives a boolean statement that is always
+/// true (or always required). The remaining three should hopefully be relatively clear without
+/// further detail.
+///
+/// These types of statements are enumerated in the variants of [`ProofStmtKind`].
+///
+/// ## Structure
+///
+/// Broadly speaking, the nesting of proof statements is given by their indentation level; the BNF
+/// here accurately describes single lines, but not the tree structure created between them.
+///
+/// For example, one might write the following:
+/// ```text
+/// # invariant "foo":
+/// #   x > 4
+/// # forall y in 0..x:
+/// #   exists z where:
+/// #       bar(z) = 0
+/// ```
+/// in which the statement `x > 4` is part of the invariant, and `bar(z) = 0` is part of
+/// `exists z where:`, inside `forall y in 0..x`.
+///
+/// [`ProofStmtKind`]: enum.ProofStmtKind.html
+#[derive(Debug)]
+pub struct ProofStmt<'a> {
+    pub kind: ProofStmtKind<'a>,
+    pub(super) src: TokenSlice<'a>,
+}
+
+/// The different types of proof statements available
+///
+/// For information on proof statments, refer to the documentation for [`ProofStmt`].
+///
+/// [`ProofStmt`]: struct.ProofStmt.html
+#[derive(Debug)]
+pub enum ProofStmtKind<'a> {
+    /// Single implication: `Expr "=>" Expr`
+    Implies(Expr<'a>, Expr<'a>),
+    /// Double implication: `Expr "<=>" Expr`
+    DoubleImplies(Expr<'a>, Expr<'a>),
+    /// A single value that is given to be true
+    Predicate(Expr<'a>),
+    Invariant {
+        name: Option<StringLiteral<'a>>,
+        stmts: Vec<ProofStmt<'a>>,
+    },
+    Forall {
+        pattern: Pattern<'a>,
+        iter: Option<Expr<'a>>,
+        stmts: Vec<ProofStmt<'a>>,
+    },
+    Exists {
+        pattern: Pattern<'a>,
+        iter: Option<Expr<'a>>,
+        stmts: Vec<ProofStmt<'a>>,
+    },
+}
+
+#[derive(Debug)]
+pub struct ImplBody<'a> {
+    pub(super) src: &'a Token<'a>,
+    items: Vec<Item<'a>>,
+}
+
+#[derive(Debug)]
+pub enum UsePath<'a> {
+    Multi(MultiUse<'a>),
+    Single(SingleUse<'a>),
+}
+
+#[derive(Debug)]
+pub struct MultiUse<'a> {
+    pub(super) src: TokenSlice<'a>,
+    root: Path<'a>,
+    children: Vec<UsePath<'a>>,
+}
+
+#[derive(Debug)]
+pub struct SingleUse<'a> {
+    pub(super) src: TokenSlice<'a>,
+    kind: UseKind,
+    path: Path<'a>,
+    use_as: Option<Ident<'a>>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum UseKind {
+    /// `fn`
+    Fn,
+    /// `macro`
+    Macro,
+    /// `type`
+    Type,
+    /// `trait`
+    Trait,
+    /// `const`
+    Const,
+    /// `static`
+    Static,
+}
+
+#[derive(Debug)]
+pub struct FnParams<'a> {
+    pub(super) src: &'a Token<'a>,
+    self_prefix: Option<FnParamsReceiver<'a>>,
+    args: Vec<StructTypeField<'a>>,
+}
+
+#[derive(Debug)]
+pub struct FnParamsReceiver<'a> {
+    pub(super) src: TokenSlice<'a>,
+    is_ref: Option<&'a Token<'a>>,
+    ref_refinements: Option<Refinements<'a>>,
+    is_mut: Option<&'a Token<'a>>,
+    self_refinements: Option<Refinements<'a>>,
+}
+
+#[derive(Debug)]
+pub struct GenericParams<'a> {
+    pub(super) src: TokenSlice<'a>,
+    params: Vec<GenericParam<'a>>,
+}
+
+#[derive(Debug)]
+pub enum GenericParam<'a> {
+    Type(GenericTypeParam<'a>),
+    Const(GenericConstParam<'a>),
+    Ref(GenericRefParam<'a>),
+}
+
+#[derive(Debug)]
+pub struct GenericTypeParam<'a> {
+    pub(super) src: TokenSlice<'a>,
+    name: Ident<'a>,
+    bound: Option<TypeBound<'a>>,
+    default: Option<Type<'a>>,
+}
+
+#[derive(Debug)]
+pub struct GenericConstParam<'a> {
+    pub(super) src: TokenSlice<'a>,
+    name: Ident<'a>,
+    ty: Type<'a>,
+    default: Option<Expr<'a>>,
+}
+
+#[derive(Debug)]
+pub struct GenericRefParam<'a> {
+    pub(super) src: TokenSlice<'a>,
+    ref_name: Ident<'a>,
 }
 
 impl<'a> ProofStmts<'a> {

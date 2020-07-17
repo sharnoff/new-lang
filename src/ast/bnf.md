@@ -69,17 +69,17 @@ MacroDef   = ProofStmts Vis "macro" Ident MacroParams MacroBody .
 TypeDecl   = ProofStmts Vis "type" Ident [ GenericParams ]
              [ TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
 TraitDef   = ProofStmts Vis "trait" Ident [ GenericParams ] [ TypeBound ] ( ImplBody | ";" ) .
-ImplBlock  =                "impl" [ Trait "for" ] Type ImplBody .
+ImplBlock  =                "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
 ConstStmt  =            Vis "const"  StructField ";" .
 StaticStmt = ProofStmts Vis "static" StructField ";" .
 
 ImportStmt = "import" StringLiteral [ "~" StringLiteral ] [ "as" Ident ] .
 
 UseStmt = Vis "use" UsePath ";" .
-UsePath = Path "." "{" UsePath { "," UsePath } [ "," ] "}" .
+UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
         | UseKind Path [ "as" Ident ] .
 UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
-Path = Ident { "." Ident } .
+Path = { Ident [ GenericArgs ] "." } Ident .
 
 Vis = [ "pub" ] .
 
@@ -93,21 +93,23 @@ ProofStmt = Expr ( "=>" | "<=>" ) Expr
 > MacroParams = TODO
 > MacroBody = TODO
 
-FnParams = "(" [ "&" [ "mut" ] "self" [ "," ] ] [ StructField { "," StructField } [ "," ] ] ")" .
+FnParams = "(" [ FnParamsReceiver [ "," ] ] [ StructField { "," StructField } [ "," ] ] ")" .
+FnParamsReceiver = [ "&" [ Refinements ] ] [ "mut" ] "self" [ Refinements ] .
 
 ImplBody = "{" { Item } "}" .
 
 GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">"
-GenericParam = Ident [ "::" Trait ] [ "=" Type ]
-             | Ident ":" Type [ "=" Expr ] .
+GenericParam = Ident [ TypeBound ] [ "=" Type ]
+             | "const" Ident ":" Type [ "=" Expr ] .
              | "|" "ref" Ident "|" .
 
 GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
-GenericArg = [ Ident "=" ] Type
-           | [ Ident "=" ] "{" Expr "}"
+GenericArg = [ Ident ":" ] Type
+           | Ident TypeBound
+           | [ Ident ":" ] "{" Expr "}"
            | "|" "ref" Expr "|" .
 
-Trait = Ident [ GenericArgs ] .
+Trait = Path [ GenericArgs ] .
 
 Type = Ident [ GenericArgs ] Refinements
      | "&" Refinements Type 
@@ -115,17 +117,21 @@ Type = Ident [ GenericArgs ] Refinements
      | "[" Type [ ";" Expr ] "]" Refinemnts
      | "{" [ StructField { "," StructField } [ "," ] ] "}"
      | "(" [ Type        { "," Type        } [ "," ] ] ")"
-     | "enum" "{" { EnumVariant "," } "}" .
+     | "enum" "{" { Ident Type "," } "}" .
 
 Refinements = [ "|" Refinement { "," Refinement } [ "," ] "|" ] .
 Refinement = "ref" [ "mut" ] Expr
            | [ "!" | "?" ] "init" .
 StructField = Ident ( ":" Type | TypeBound ) [ "=" Expr ] .
+EnumVariant = Ident Type .
 TypeBound = "::" Refinements Trait { "+" Trait } .
 
 Stmt = BigExpr
      | Expr ";"
-     | ( "*" Expr | Path ) AssignOp Expr ";" .
+     | Assignee AssignOp Expr ";"
+     | Item .
+Assignee = "*" Expr
+         | Path .
 
 Expr = Literal
      | Expr "." Ident                                      # Struct fields
@@ -134,23 +140,25 @@ Expr = Literal
      | Expr BinOp Expr
      | Expr PostfixOp
      | "let" Pattern [ ":" Type ] [ "=" Expr ]             # Let expressions
-     | [ Expr [ GenericArgs ] ] "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
+     |   Expr [ GenericArgs ]   "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
      | [ Path [ GenericArgs ] ] "{" StructFieldsExpr "}"   # (Named?) structs 
      | "[" Expr { "," Expr } [ "," ] "]"                   # Array literals
      | "(" Expr { "," Expr } [ "," ] ")"                   # Tuples
      | BlockExpr                                           # Blocks
      | ForExpr                                             # For loops
      | WhileExpr                                           # While loops
+     | DoWhileExpr                                         # Do-while loops
      | LoopExpr                                            # "Loop" loops
      | IfExpr                                              # Ifs
      | MatchExpr .                                         # Matches
 
-BigExpr   = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
+BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
 
-IfExpr    = "if" Expr BlockExpr [ "else" BigExpr ] .
-ForExpr   = "for" Pattern "in" Expr BlockExpr [ "else" BigExpr ] .
-WhileExpr = "while" Expr BlockExpr [ "else" BigExpr ] .
-BlockExpr = "{" { Stmt | Item } [ Expr ] "}" .
+IfExpr      = "if" Expr BlockExpr [ "else" BigExpr ] .
+ForExpr     = "for" Pattern "in" Expr BlockExpr [ "else" BigExpr ] .
+DoWhileExpr = "do" BlockExpr "while" Expr [ "else" BigExpr ] .
+WhileExpr   = "while" Expr BlockExpr [ "else" BigExpr ] .
+BlockExpr   = "{" { Stmt } [ Expr ] "}" .
 
 MatchExpr = "match" Expr "{" { MatchArm } "}" .
 MatchArm = Pattern "=>" ( BigExpr "\n" | Expr "," ) .
@@ -168,8 +176,15 @@ AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
 FnArgs = "(" StructFieldsExpr ")" .
 
 Pattern = [ Path ] StructPattern
-        | [ Path ] "(" Pattern { "," Pattern } [ "," ] ")"
-        | "assign" Ident .
+        | [ Path ] "(" ElementsPattern ")"
+        | "[" ElementsPattern "]"
+        | Ident
+        | "assign" Assignee 
+        | "&" Pattern .
+StructPattern = "{" [ FieldPattern [ "," FieldPattern ] [ "," ] ] [ ".." ] "}" .
+FieldPattern = Ident [ ":" Pattern ] .
+
+ElementsPattern = [ Pattern { "," Pattern } [ "," ] ] [ ".." ] .
 
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .
 FloatLiteral = IntLiteral "." IntLiteral .

@@ -20,82 +20,138 @@ impl<T: Consumed> Consumed for Option<T> {
     }
 }
 
-impl<'a> Consumed for Item<'a> {
-    fn consumed(&self) -> usize {
-        use Item::*;
+macro_rules! impl_all {
+    ($($(@$single:ident:)? $ty:ident $({$($variants:ident),* $(,)?})?),* $(,)?) => {
+        $(impl_all!(@internal $(@$single)? $ty $($($variants)*)?);)*
+    };
 
-        match self {
-            Fn(fn_decl) => fn_decl.consumed(),
-            Macro(macro_def) => macro_def.consumed(),
-            Type(type_def) => type_def.consumed(),
-            Trait(trait_decl) => trait_decl.consumed(),
-            Impl(impl_block) => impl_block.consumed(),
-            Const(const_stmt) => const_stmt.consumed(),
-            Static(static_stmt) => static_stmt.consumed(),
-            Import(import_stmt) => import_stmt.consumed(),
-            Use(use_stmt) => use_stmt.consumed(),
+    (@internal $ty:ident) => {
+        impl<'a> Consumed for $ty<'a> {
+            fn consumed(&self) -> usize {
+                self.src.len()
+            }
         }
-    }
+    };
+
+    (@internal @$single:ident $ty:ident) => {
+        impl<'a> Consumed for $ty<'a> {
+            fn consumed(&self) -> usize {
+                // A compatability check to ensure that the source remains a single token
+                let _: &Token = self.src;
+                1
+            }
+        }
+    };
+
+    (@internal $ty:ident $($variants:ident)*) => {
+        impl<'a> Consumed for $ty<'a> {
+            fn consumed(&self) -> usize {
+                match self {
+                    $($ty::$variants(t) => t.consumed(),)*
+                }
+            }
+        }
+    };
 }
 
-impl<'a> Consumed for FnDecl<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
+impl_all! {
+    // Items
+    Item { Fn, Macro, Type, Trait, Impl, Const, Static, Import, Use },
+    FnDecl,
+    MacroDef,
+    TypeDecl,
+    TraitDef,
+    ImplBlock,
+    ConstStmt,
+    StaticStmt,
+    ImportStmt,
+    UseStmt,
+    // Item helper bits
+    ProofStmts,
+    ProofStmt,
+    @Single: ImplBody,
+    UsePath { Multi, Single },
+    MultiUse,
+    SingleUse,
+    @Single: FnParams,
+    FnParamsReceiver,
+    GenericParams,
+    GenericParam { Type, Const, Ref },
+    GenericTypeParam,
+    GenericConstParam,
+    GenericRefParam,
 
-impl<'a> Consumed for MacroDef<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
+    // Expressions
+    Expr {
+        Access, TypeBinding, PrefixOp, BinOp, PostfixOp, Let, FnCall, Struct,
+        Array, Tuple, Block, For, While, DoWhile, Loop, If, Match,
+    },
+    AccessExpr,
+    TypeBindExpr,
+    PrefixOpExpr,
+    BinOpExpr,
+    PostfixOpExpr,
+    LetExpr,
+    FnCallExpr,
+    StructExpr,
+    ArrayLitExpr,
+    TupleExpr,
+    BlockExpr,
+    ForExpr,
+    WhileExpr,
+    DoWhileExpr,
+    LoopExpr,
+    IfExpr,
+    MatchExpr,
+    // Expression helper bits
+    @Single: Ident,
+    @Single: StringLiteral,
+    Path,
+    PathComponent,
+    PrefixOp,
+    BinOp,
+    PostfixOp,
+    StructFieldsExpr,
 
-impl<'a> Consumed for TypeDecl<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
+    // Statements
+    Stmt { BigExpr, LittleExpr, Assign, Item },
+    LittleExprStmt,
+    AssignStmt,
+    // Statement helper bits
+    Assignee { Deref, Path },
 
-impl<'a> Consumed for TraitDef<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
+    // Patterns
+    Pattern { Struct, Tuple, Array, Name, Assign, Ref },
+    StructPattern,
+    TuplePattern,
+    @Single: ArrayPattern,
+    AssignPattern,
+    RefPattern,
+    // Pattern helper bits
 
-impl<'a> Consumed for ImplBlock<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
-
-impl<'a> Consumed for ConstStmt<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
-
-impl<'a> Consumed for StaticStmt<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
-
-impl<'a> Consumed for ImportStmt<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
-
-impl<'a> Consumed for UseStmt<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
-}
-
-impl<'a> Consumed for ProofStmts<'a> {
-    fn consumed(&self) -> usize {
-        self.src.len()
-    }
+    // Types
+    Type { Named, Ref, Mut, Array, Struct, Tuple, Enum },
+    NamedType,
+    RefType,
+    MutType,
+    @Single: StructType,
+    @Single: ArrayType,
+    @Single: TupleType,
+    EnumType,
+    // Types helper bits
+    StructTypeField,
+    Refinements,
+    Refinement { Ref, Init },
+    RefRefinement,
+    InitRefinement,
+    TypeBound,
+    GenericArgs,
+    GenericArg { Type, Bound, Const, Ref },
+    TypeGenericArg,
+    TypeBoundGenericArg,
+    ConstGenericArg,
+    RefGenericArg,
+    Trait,
 }
 
 impl<'a> Consumed for Vis<'a> {

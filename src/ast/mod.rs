@@ -8,8 +8,12 @@ pub mod errors;
 
 // We blanket import everything from the parser submodules so that everything can be under a single
 // namespace.
+mod expr;
 mod item;
-pub use item::*;
+mod pattern;
+mod stmt;
+mod types;
+pub use self::{expr::*, item::*, pattern::*, stmt::*, types::*};
 
 use crate::token_tree::{self, Kwd, Token, TokenKind};
 use consumed::Consumed;
@@ -39,17 +43,6 @@ pub fn try_parse<'a>(
     }
 
     (items, errors)
-}
-
-#[derive(Debug)]
-pub struct Expr<'a> {
-    pub kind: ExprKind<'a>,
-    src: TokenSlice<'a>,
-}
-
-#[derive(Debug)]
-pub enum ExprKind<'a> {
-    Placeholder(&'a str),
 }
 
 #[derive(Debug, Copy, Clone)]
