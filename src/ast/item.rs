@@ -71,7 +71,8 @@ pub struct FnDecl<'a> {
 /// This feature is a work-in-progress, and so this type has not yet been defined.
 #[derive(Debug)]
 pub struct MacroDef<'a> {
-    placeholder: &'a (),
+    pub(super) src: TokenSlice<'a>,
+    placeholder: (),
 }
 
 /// A type declaration, independent of where it might occur
