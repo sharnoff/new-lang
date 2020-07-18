@@ -126,9 +126,9 @@ StructField = Ident ( ":" Type | TypeBound ) [ "=" Expr ] .
 EnumVariant = Ident Type .
 TypeBound = "::" Refinements Trait { "+" Trait } .
 
-Stmt = BigExpr
+Stmt = BigExpr "\n"
      | Expr ";"
-     | Assignee AssignOp Expr ";"
+     | Assignee AssignOp ( Expr ";" | BigExpr "\n" )
      | Item .
 Assignee = "*" Expr
          | Path .
