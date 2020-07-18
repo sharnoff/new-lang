@@ -14,11 +14,11 @@ fn main() {
     files.reserve("test_input.tc");
 
     let test_input_file = files.file("test_input.tc");
-    let token_tree = test_input_file.get_token_tree(|err| panic!("Failed to open file: {:?}", err));
+    let ast = test_input_file.get_ast(|err| panic!("Faild to open file: {:?}", err));
 
-    println!("{:?}", std::ops::Deref::deref(&token_tree));
+    println!("{:?}", std::ops::Deref::deref(&ast));
 
-    drop(token_tree);
+    drop(ast);
     drop(test_input_file);
 
     let num_errors = files.print_errors();

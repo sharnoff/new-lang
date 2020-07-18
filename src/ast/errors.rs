@@ -1,7 +1,9 @@
 //! Error types and messages for parsing into the AST
 
 use super::TokenSlice;
+use crate::error::{Builder as ErrorBuilder, ToError};
 use crate::token_tree::{self, Kwd, Token};
+use std::ops::Range;
 
 pub enum Error<'a> {
     /// One of the leading keywords for an item was expected, but some other token was found.
@@ -72,4 +74,10 @@ pub enum ItemKind {
     ImplBlock,
     ImportStmt,
     UseStmt,
+}
+
+impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
+    fn to_error(self, _aux: &(F, &str)) -> ErrorBuilder {
+        todo!()
+    }
 }

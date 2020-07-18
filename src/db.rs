@@ -346,7 +346,7 @@ impl<'a> FileState {
             if write_guard.is_none() {
                 let simple_tokens = self.get_simple_tokens(handle_err);
                 match Deref::deref(&simple_tokens) {
-                    None => *write_guard = None,
+                    None => *write_guard = Some(None),
                     Some(tokens) => {
                         let token_tree: FileTokenTree =
                             crate::token_tree::file_tree(&tokens.tokens, tokens.early_err);
@@ -412,10 +412,62 @@ impl<'a> FileState {
     /// [`ast::try_parse`]: ../ast/fn.try_parse.html
     pub fn get_ast(
         &'a self,
-        _handle_err: impl FnOnce(&io::Error) -> error::Builder,
+        handle_err: impl FnOnce(&io::Error) -> error::Builder,
     ) -> impl 'a + Deref<Target = Option<AstOutput<'a>>> {
-        // TODO ~ FIXME
-        Box::new(None) as Box<Option<AstOutput<'a>>>
+        // If we haven't already parsed the ast, we'll do that here
+        if self.ast.read().unwrap().is_none() {
+            let mut write_guard = self.ast.write().unwrap();
+            if write_guard.is_none() {
+                let token_tree = self.get_token_tree(handle_err);
+                match Deref::deref(&token_tree) {
+                    None => *write_guard = Some(None),
+                    Some(tt) => {
+                        // We can unwrap `simple_tokens` twice because (1) we know it's already been
+                        // calculated by the time `get_token_tree` finishes, and (2) if the inner
+                        // option were `None`, so would `token_tree`.
+                        let early_err = (self.simple_tokens.read().unwrap())
+                            .as_ref()
+                            .unwrap()
+                            .as_ref()
+                            .unwrap()
+                            .early_err;
+
+                        let (items, ast_errors) = crate::ast::try_parse(&tt.tokens, early_err);
+                        if !ast_errors.is_empty() {
+                            let info_guard = self.file_info.read().unwrap();
+                            let content: &str =
+                                &info_guard.as_ref().unwrap().as_ref().unwrap().content;
+
+                            let offset_fn = |line: &str| {
+                                let start = (line as *const str as *const u8 as usize)
+                                    - (content as *const str as *const u8 as usize);
+
+                                start..start + line.len()
+                            };
+
+                            let mut errors = self.errors.lock().unwrap();
+                            errors.reserve(ast_errors.len());
+                            errors.extend(
+                                ast_errors
+                                    .into_iter()
+                                    .map(|t| t.to_error(&(offset_fn, &self.path))),
+                            );
+                        }
+
+                        let items: Vec<crate::ast::Item<'static>> =
+                            unsafe { std::mem::transmute(items) };
+                        *write_guard = Some(Some(items));
+                    }
+                }
+            }
+        }
+
+        let read_guard = self.ast.read().unwrap();
+
+        crate::utils::Guard {
+            provider: read_guard,
+            map: |ref guard| guard.as_ref().unwrap(),
+        }
     }
 
     /// A convenience wrapper for calling [`FileInfo::line_idx`]
