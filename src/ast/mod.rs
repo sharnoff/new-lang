@@ -3,6 +3,8 @@
 //! The definition of the syntax can be found in the neighboring file, 'bnf.md'. This is how each
 //! piece of the parser is defined, with additional ambiguities elaborated upon.
 
+#[macro_use]
+mod macros;
 mod consumed;
 pub mod errors;
 
