@@ -143,25 +143,28 @@ pub enum Delim {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Punc {
-    Semi,   // ";"
-    Colon,  // ":"
-    Comma,  // ","
-    Dot,    // "."
-    EqEq,   // "=="
-    Eq,     // "="
-    Le,     // "<="
-    Lt,     // "<"
-    Ge,     // ">="
-    Gt,     // ">"
-    AndAnd, // "&&"
-    And,    // "&"
-    OrOr,   // "||"
-    Pipe,   // "|"
-    Not,    // "!"
-    Plus,   // "+"
-    Minus,  // "-"
-    Star,   // "*"
-    Slash,  // "/"
+    Semi,       // ";"
+    Colon,      // ":"
+    Comma,      // ","
+    Dot,        // "."
+    ThinArrow,  // "->"
+    ThickArrow, // "=>"
+    DoubleImpl, // "<=>"
+    EqEq,       // "=="
+    Eq,         // "="
+    Le,         // "<="
+    Lt,         // "<"
+    Ge,         // ">="
+    Gt,         // ">"
+    AndAnd,     // "&&"
+    And,        // "&"
+    OrOr,       // "||"
+    Pipe,       // "|"
+    Not,        // "!"
+    Plus,       // "+"
+    Minus,      // "-"
+    Star,       // "*"
+    Slash,      // "/"
 }
 
 impl Delim {
@@ -246,6 +249,9 @@ impl<'a> Token<'a> {
             [Colon, ..] => punc!(Colon, 1),
             [Comma, ..] => punc!(Comma, 1),
             [Dot, ..] => punc!(Dot, 1),
+            [Minus, Gt, ..] => punc!(ThinArrow, 2),
+            [Eq, Gt, ..] => punc!(ThickArrow, 2),
+            [Lt, Eq, Gt, ..] => punc!(DoubleImpl, 3),
             [Eq, Eq, ..] => punc!(EqEq, 2),
             [Eq, ..] => punc!(Eq, 1),
             [Lt, Eq, ..] => punc!(Le, 2),

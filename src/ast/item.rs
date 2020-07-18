@@ -60,14 +60,15 @@ pub enum Vis<'a> {
 #[derive(Debug)]
 pub struct FnDecl<'a> {
     pub(super) src: TokenSlice<'a>,
+    proof_stmts: Option<ProofStmts<'a>>,
     vis: Option<Vis<'a>>,
     is_const: Option<&'a Token<'a>>,
     is_pure: Option<&'a Token<'a>>,
     name: Ident<'a>,
     generic_params: Option<GenericParams<'a>>,
     params: FnParams<'a>,
-    return_ty: Type<'a>,
-    body: BlockExpr<'a>,
+    return_ty: Option<Type<'a>>,
+    body: Option<BlockExpr<'a>>,
 }
 
 /// A macro definition
@@ -139,7 +140,7 @@ pub struct TypeDecl<'a> {
 #[derive(Debug)]
 pub struct TraitDef<'a> {
     pub(super) src: TokenSlice<'a>,
-    proof_stmts: ProofStmts<'a>,
+    proof_stmts: Option<ProofStmts<'a>>,
     vis: Option<Vis<'a>>,
     name: Ident<'a>,
     generic_params: Option<GenericParams<'a>>,
@@ -233,7 +234,7 @@ pub struct ConstStmt<'a> {
 #[derive(Debug)]
 pub struct StaticStmt<'a> {
     pub(super) src: TokenSlice<'a>,
-    proof_stmts: ProofStmts<'a>,
+    proof_stmts: Option<ProofStmts<'a>>,
     vis: Option<Vis<'a>>,
     name: Ident<'a>,
     value_ty: Option<Type<'a>>,
@@ -331,13 +332,13 @@ impl<'a> Item<'a> {
         // We'll only indicate that parsing must stop completely if one of the given tokens was an
         // error - if this happens, it's very difficult to accurately recover (primarily because
         // tokenizer errors are usually due to mismatched or unclosed delimeters).
-        let proof_stmts_res = ProofStmts::consume(tokens, ends_early, errors);
+        let proof_stmts_res = ProofStmts::try_consume(tokens, ends_early, errors);
         let (proof_stmts, mut consumed) = match proof_stmts_res {
             Ok(ps) => {
                 let consumed = ps.consumed();
                 (ps, consumed)
             }
-            Err(Some((ps, consumed))) => (ps, consumed),
+            Err(Some(consumed)) => (None, consumed),
             Err(None) => {
                 // At this point, an error should have already been added due to this ~ we'll
                 // return -- this token tree is probably damaged beyond repair
@@ -495,7 +496,15 @@ impl<'a> Item<'a> {
                 disallow!(@Proof, res, UseStmt);
                 res
             }
-            Fn => consume!(FnDecl, Item::Fn, proof_stmts, vis, None, None),
+            Fn => consume!(
+                FnDecl,
+                Item::Fn,
+                proof_stmts,
+                proof_stmts_consumed,
+                vis,
+                None,
+                None
+            ),
 
             // Const is a special case, as given above
             Const => {
@@ -533,7 +542,15 @@ impl<'a> Item<'a> {
                         disallow!(@Proof, res, Const);
                         res
                     }
-                    Keyword(Fn) => consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, None),
+                    Keyword(Fn) => consume!(
+                        FnDecl,
+                        Item::Fn,
+                        proof_stmts,
+                        proof_stmts_consumed,
+                        vis,
+                        is_const,
+                        None
+                    ),
                     Keyword(Pure) => {
                         // If we encounter a "pure", there's unfortunately *one* last check that we
                         // need to do. We *still* need to make sure that the next token is an "fn"
@@ -555,7 +572,15 @@ impl<'a> Item<'a> {
                         );
 
                         if let Keyword(Fn) = expected_fn_token.kind {
-                            consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, is_pure)
+                            consume!(
+                                FnDecl,
+                                Item::Fn,
+                                proof_stmts,
+                                proof_stmts_consumed,
+                                vis,
+                                is_const,
+                                is_pure
+                            )
                         } else {
                             errors.push(Error::ConstPureExpectedFn {
                                 before: [fst, snd],
@@ -595,7 +620,15 @@ impl<'a> Item<'a> {
                 );
 
                 match &snd.kind {
-                    Keyword(Fn) => consume!(FnDecl, Item::Fn, proof_stmts, vis, None, is_pure),
+                    Keyword(Fn) => consume!(
+                        FnDecl,
+                        Item::Fn,
+                        proof_stmts,
+                        proof_stmts_consumed,
+                        vis,
+                        None,
+                        is_pure
+                    ),
                     Keyword(Const) => {
                         consumed += 1;
                         let is_const = Some(snd);
@@ -615,7 +648,15 @@ impl<'a> Item<'a> {
                         );
 
                         if let Keyword(Fn) = expected_fn_token.kind {
-                            consume!(FnDecl, Item::Fn, proof_stmts, vis, is_const, is_pure)
+                            consume!(
+                                FnDecl,
+                                Item::Fn,
+                                proof_stmts,
+                                proof_stmts_consumed,
+                                vis,
+                                is_const,
+                                is_pure
+                            )
                         } else {
                             errors.push(Error::ConstPureExpectedFn {
                                 before: [fst, snd],
@@ -692,12 +733,221 @@ impl<'a> FnDecl<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: ProofStmts<'a>,
+        proof_stmts: Option<ProofStmts<'a>>,
+        proof_stmts_consumed: usize,
         vis: Option<Vis<'a>>,
         is_const: Option<&'a Token<'a>>,
         is_pure: Option<&'a Token<'a>>,
     ) -> Result<FnDecl<'a>, Option<usize>> {
-        todo!()
+        make_getter!(macro_rules! get, tokens, ends_early, errors);
+
+        // A helper value for providing the source in error cases where we ran out of tokens
+        let end_source = match containing_token {
+            Some(tt) => Source::EndDelim(tt),
+            None => Source::EOF,
+        };
+
+        // The first token that we're given is an identifier - we'll get the token here.
+        let name = Ident::parse(
+            tokens.get(ident_idx),
+            IdentContext::FnDeclName(&tokens[proof_stmts_consumed..ident_idx]),
+            end_source,
+            errors,
+        )
+        .map_err(|()| Some(tokens.len().min(ident_idx + 1)))?;
+
+        let mut consumed = ident_idx + 1;
+
+        let generic_params = GenericParams::try_consume(
+            &tokens[consumed..],
+            GenericParamsContext::FnDecl(&tokens[proof_stmts_consumed..consumed]),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
+
+        consumed += generic_params.consumed();
+
+        // A temporary enum for marking where to go next if parsing the parameters failed
+        // The relevance of this type is made clear below.
+        enum FailedParamsGoto {
+            ReturnType,
+            Body,
+        }
+
+        // After any generic parameters, we expect the parameters to the function. Because these
+        // are in a parentheses-enclosed token tree, we only pass a single token
+        let params = match FnParams::parse(tokens.get(consumed), end_source, errors) {
+            Ok(ps) => {
+                // We account for `consumed` here because some of the error cases
+                // *don't* increment it
+                consumed += 1;
+                Ok(ps)
+            }
+            Err(()) => {
+                // If we failed to parse the function parameters, we'll check whether continuing is
+                // feasible. This is essentialy a set of heuristics for guessing whether the user
+                // *did* intend to write a function here.
+                //
+                // Here's some examples that we might want to explicitly account for have:
+                //   fn foo -> Bar { ... }    // forgetting the parens, 1/2
+                //   fn foo { ... }           // forgetting the parens, 2/2
+                //   fn foo = bar() + baz;    // you aren't allowed to assign to functions
+                //   fn foo \n\n type Bar ... // user forgot to finish writing this
+                // Because of this, we get the following table of tokens that would cause us to
+                // continue (and to which point):
+                //     ┌────────────────┬─────────────────────┐
+                //     │ Token sequence │ Continue (where)?   │
+                //     ├────────────────┼─────────────────────┤
+                //     │ [ "->", .. ]   │ Yes (return type)   │
+                //     │ [ "{",  .. ]   │ Yes (body)*         │
+                //     │ [ "=",  .. ]   │ No (custom error)** │
+                //     │ else           │ No                  │
+                //     └────────────────┴─────────────────────┘
+                //      * Curly braces could also be a type, but the function body will be more
+                //        common, so we use that instead.
+                //     ** This error message is actually taken care of inside of `FnParams::parse`
+
+                use token_tree::Error::UnclosedDelim;
+
+                match tokens.get(consumed) {
+                    Some(Ok(t)) => match &t.kind {
+                        Punctuation(Punc::ThinArrow) => Err(FailedParamsGoto::ReturnType),
+                        Tree {
+                            delim: Delim::Curlies,
+                            ..
+                        } => Err(FailedParamsGoto::Body),
+                        _ => return Err(Some(consumed)),
+                    },
+                    // If we encounter an unclosed delimeter, we *could* try to parse the body, but
+                    // we're better of getting the user to resolve that issue first - we're likely
+                    // to get *many* later errors instead.
+                    Some(Err(UnclosedDelim(Curlies, _))) => return Err(None),
+                    Some(Err(_)) => return Err(None),
+                    None => return Err(Some(consumed)),
+                }
+            }
+        };
+
+        let do_ret_ty = match &params {
+            Ok(_) | Err(FailedParamsGoto::ReturnType) => true,
+            Err(FailedParamsGoto::Body) => false,
+        };
+
+        let return_ty = if !do_ret_ty {
+            None
+        } else {
+            // The return type may or may not be present - if it is, it'll be preceeded by a
+            // thin-arrow ("->").
+            let thin_arrow = get!(
+                consumed,
+                Err(e) => Error::Expected {
+                    kind: ExpectedKind::FnBodyOrReturnType { fn_src: &tokens[..consumed] },
+                    found: Source::TokenResult(Err(*e)),
+                },
+                None => Error::Expected {
+                    kind: ExpectedKind::FnBodyOrReturnType { fn_src: &tokens[..consumed] },
+                    found: end_source,
+                },
+            );
+
+            match &thin_arrow.kind {
+                Punctuation(Punc::ThinArrow) => {
+                    consumed += 1;
+
+                    Some(
+                        Type::consume(
+                            &tokens[consumed..],
+                            TypeContext::FnDeclReturn(&tokens[..consumed]),
+                            ends_early,
+                            containing_token,
+                            errors,
+                        )
+                        .map_err(|cs| cs.map(|c| c + consumed))?,
+                    )
+                }
+                // The next token might be either of: curlies or a semicolon to account for the
+                // function body.
+                Tree {
+                    delim: Delim::Curlies,
+                    ..
+                } => None,
+                Punctuation(Punc::Semi) => None,
+
+                // Anything else must be an error, so we'll give one as such
+                _ => {
+                    errors.push(Error::Expected {
+                        kind: ExpectedKind::FnBodyOrReturnType {
+                            fn_src: &tokens[..consumed],
+                        },
+                        found: Source::TokenResult(Ok(thin_arrow)),
+                    });
+
+                    return Err(Some(consumed));
+                }
+            }
+        };
+
+        // Get the function body - this might instead be left as a semicolon, so we're looking
+        // for tokens that are either ";" or "{" .. "}".
+
+        let body_token = get!(
+            consumed,
+            Err(e) => Error::Expected {
+                kind: ExpectedKind::FnBody { fn_src: &tokens[..consumed] },
+                found: Source::TokenResult(Err(*e)),
+            },
+            None => Error::Expected {
+                kind: ExpectedKind::FnBody { fn_src: &tokens[..consumed] },
+                found: end_source,
+            },
+        );
+
+        use TokenKind::{Punctuation, Tree};
+
+        let body = match &body_token.kind {
+            // The body of the function may be left out in certain cases.
+            Punctuation(Punc::Semi) => {
+                consumed += 1;
+                None
+            }
+            Tree {
+                delim: Delim::Curlies,
+                ..
+            } => match BlockExpr::parse(tokens.get(consumed), end_source, errors) {
+                Ok(expr) => Some(expr),
+                Err(()) if consumed < tokens.len() => return Err(Some(consumed)),
+                Err(()) => return Err(None),
+            },
+            // We didn't find either here
+            _ => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::FnBody {
+                        fn_src: &tokens[..consumed],
+                    },
+                    found: Source::TokenResult(Ok(body_token)),
+                });
+
+                return Err(Some(consumed));
+            }
+        };
+
+        match params {
+            Err(_) => Err(Some(consumed)),
+            Ok(params) => Ok(FnDecl {
+                src: &tokens[..consumed],
+                proof_stmts,
+                vis,
+                is_const,
+                is_pure,
+                name,
+                generic_params,
+                params,
+                return_ty,
+                body,
+            }),
+        }
     }
 }
 
@@ -708,7 +958,7 @@ impl<'a> MacroDef<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: ProofStmts<'a>,
+        proof_stmts: Option<ProofStmts<'a>>,
         vis: Option<Vis<'a>>,
     ) -> Result<MacroDef<'a>, Option<usize>> {
         todo!()
@@ -722,7 +972,7 @@ impl<'a> TypeDecl<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: ProofStmts<'a>,
+        proof_stmts: Option<ProofStmts<'a>>,
         vis: Option<Vis<'a>>,
     ) -> Result<TypeDecl<'a>, Option<usize>> {
         todo!()
@@ -736,7 +986,7 @@ impl<'a> TraitDef<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: ProofStmts<'a>,
+        proof_stmts: Option<ProofStmts<'a>>,
         vis: Option<Vis<'a>>,
     ) -> Result<TraitDef<'a>, Option<usize>> {
         todo!()
@@ -775,7 +1025,7 @@ impl<'a> StaticStmt<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: ProofStmts<'a>,
+        proof_stmts: Option<ProofStmts<'a>>,
         vis: Option<Vis<'a>>,
     ) -> Result<StaticStmt<'a>, Option<usize>> {
         todo!()
@@ -1007,13 +1257,41 @@ pub struct GenericRefParam<'a> {
 
 impl<'a> ProofStmts<'a> {
     /// Consumes multiple `ProofStmt`s as a prefix of the tokens given
-    ///
-    /// In the event of an error, there are two forms of failure. One may occur when the
-    fn consume(
+    fn try_consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<ProofStmts<'a>, Option<(ProofStmts<'a>, usize)>> {
+    ) -> Result<Option<ProofStmts<'a>>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> GenericParams<'a> {
+    /// Attempts to consume generic parameters from the given tokens
+    fn try_consume(
+        tokens: TokenSlice<'a>,
+        ctx: GenericParamsContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Option<GenericParams<'a>>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> FnParams<'a> {
+    /// Parses function parameters from the given token
+    ///
+    /// Because function parameters are always enclosed in parentheses, the single token is
+    /// expected to be a parentheses-enclosed block.
+    ///
+    /// `none_source` indicates the value to use as the source if the token is `None` - this
+    /// typically corresponds to the source used for running out of tokens within a token tree.
+    fn parse(
+        token: Option<&'a TokenResult<'a>>,
+        none_source: Source<'a>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<FnParams<'a>, ()> {
         todo!()
     }
 }

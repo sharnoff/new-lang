@@ -65,6 +65,19 @@ pub struct EnumType<'a> {
     variants: Vec<(Ident<'a>, Type<'a>)>,
 }
 
+impl<'a> Type<'a> {
+    /// Consumes a `Type` as a prefix of the given tokens
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ctx: TypeContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Type<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper bits                                                                                    //
 // * StructTypeField                                                                              //

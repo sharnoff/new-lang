@@ -60,20 +60,56 @@ pub enum Error<'a> {
         /// The token (or EOF) that we found instead
         found: Source<'a>,
     },
+
+    /// A catch-all error for generically expecting certain tokens or syntax elements
+    Expected {
+        kind: ExpectedKind<'a>,
+        found: Source<'a>,
+    },
 }
 
 /// An individual source for a range of the source text, used within error messages.
+#[derive(Debug, Copy, Clone)]
 pub enum Source<'a> {
     EndDelim(&'a Token<'a>),
     TokenResult(Result<&'a Token<'a>, token_tree::Error<'a>>),
     EOF,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ItemKind {
     Const,
     ImplBlock,
     ImportStmt,
     UseStmt,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum ExpectedKind<'a> {
+    Ident(IdentContext<'a>),
+    FnBody { fn_src: TokenSlice<'a> },
+    FnBodyOrReturnType { fn_src: TokenSlice<'a> },
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum IdentContext<'a> {
+    /// The identifier used to name functions, provided immediately following the `fn` keyword. The
+    /// attached slice of tokens gives the keywords used that indicate a function declaration.
+    FnDeclName(TokenSlice<'a>),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum GenericParamsContext<'a> {
+    /// The generic parameters used in a function declaration. The attached slice of tokens gives
+    /// the keywords and name that indicate a function declaration.
+    FnDecl(TokenSlice<'a>),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TypeContext<'a> {
+    /// The optional return type used in a function declaration. The attached slice of tokens gives
+    /// all of the preceeding parts of the item.
+    FnDeclReturn(TokenSlice<'a>),
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
