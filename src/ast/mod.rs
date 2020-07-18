@@ -32,7 +32,7 @@ pub fn try_parse<'a>(
     let mut errors = Vec::new();
 
     while !tokens.is_empty() {
-        match Item::consume_from(tokens, ends_early, None, &mut errors) {
+        match Item::consume(tokens, ends_early, None, &mut errors) {
             Ok(item) => {
                 tokens = &tokens[item.consumed()..];
                 items.push(item);

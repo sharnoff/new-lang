@@ -305,7 +305,7 @@ impl<'a> Item<'a> {
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current block should immediately stop, and `Some` if parsing may continue, indicating the
     /// number of tokens that were marked as invalid here.
-    pub(super) fn consume_from(
+    pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
@@ -370,7 +370,7 @@ impl<'a> Item<'a> {
         // We'll only indicate that parsing must stop completely if one of the given tokens was an
         // error - if this happens, it's very difficult to accurately recover (primarily because
         // tokenizer errors are usually due to mismatched or unclosed delimeters).
-        let proof_stmts_res = ProofStmts::consume_from(tokens, ends_early, errors);
+        let proof_stmts_res = ProofStmts::consume(tokens, ends_early, errors);
         let (proof_stmts, mut consumed) = match proof_stmts_res {
             Ok(ps) => {
                 let consumed = ps.consumed();
@@ -1048,7 +1048,7 @@ impl<'a> ProofStmts<'a> {
     /// Consumes multiple `ProofStmt`s as a prefix of the tokens given
     ///
     /// In the event of an error, there are two forms of failure. One may occur when the
-    fn consume_from(
+    fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         errors: &mut Vec<Error<'a>>,
