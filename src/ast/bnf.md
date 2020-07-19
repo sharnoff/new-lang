@@ -106,7 +106,7 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
 GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
 GenericArg = [ Ident ":" ] Type
            | Ident "::" TypeBound
-           | [ "const" Ident ":" ] "{" Expr "}"
+           | [ "const" Ident ":" ] BlockExpr
            | "ref" Expr .
 
 Trait = Path [ GenericArgs ] .
