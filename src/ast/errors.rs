@@ -111,6 +111,12 @@ pub enum ExpectedKind<'a> {
         ctx: GenericParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
+    TypeParamFollowOn {
+        after_type_bound: bool,
+        ctx: GenericParamsContext<'a>,
+        prev_tokens: TokenSlice<'a>,
+        param: TokenSlice<'a>,
+    },
     FnBody {
         fn_src: TokenSlice<'a>,
     },
@@ -124,6 +130,11 @@ pub enum IdentContext<'a> {
     /// The identifier used to name functions, provided immediately following the `fn` keyword. The
     /// attached slice of tokens gives the keywords used that indicate a function declaration.
     FnDeclName(TokenSlice<'a>),
+
+    /// The name at the start of a generic type parameter, given as part of a function declaration
+    /// or type declaration. The attached slice of tokens gives the set of tokens already parsed as
+    /// part of the list of generic parameters.
+    TypeParam(GenericParamsContext<'a>, TokenSlice<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -138,6 +149,10 @@ pub enum TypeContext<'a> {
     /// The optional return type used in a function declaration. The attached slice of tokens gives
     /// all of the preceeding parts of the item.
     FnDeclReturn(TokenSlice<'a>),
+    GenericTypeParam {
+        param: TokenSlice<'a>,
+        ctx: GenericParamsContext<'a>,
+    },
     GenericConstParam {
         param: TokenSlice<'a>,
         ctx: GenericParamsContext<'a>,

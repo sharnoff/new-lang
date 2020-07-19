@@ -1261,12 +1261,28 @@ pub enum GenericParam<'a> {
     Ref(GenericRefParam<'a>),
 }
 
+/// A generic type parameter, given as part of a type or function declaration
+///
+/// Type parameters are the most common generic parameter. There are however, two others - to see
+/// the full set, refer to [`GenericParam`].
+///
+/// The BNF definition for a single generic type parameter is:
+/// ```text
+/// GenericTypeParam = Ident [ "::" TypeBound ] [ "=" Type ] .
+/// ```
+/// All type parameters are given by their name, possibly followed by a [type bound], which
+/// restricts type arguments to those that implement a set of traits. Additionally, default values
+/// for these types can be given by the trailing [`"=" Type`].
+///
+/// [`GenericParam`]: struct.GenericParam.html
+/// [type bound]: ../types/struct.TypeBound.html
+/// [`"=" Type`]: ../types/enum.Type.html
 #[derive(Debug)]
 pub struct GenericTypeParam<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
     bound: Option<TypeBound<'a>>,
-    default: Option<Type<'a>>,
+    default_type: Option<Type<'a>>,
 }
 
 #[derive(Debug)]
@@ -1424,6 +1440,9 @@ impl<'a> GenericParam<'a> {
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
+    ///
+    /// The value of `prev_tokens` gives the tokens already used in the greater scope of consuming
+    /// a set of generic parameters, so that error messages may mention it explicitly.
     fn consume(
         tokens: TokenSlice<'a>,
         ctx: GenericParamsContext<'a>,
@@ -1523,8 +1542,15 @@ impl<'a> GenericParam<'a> {
 
         match &snd_token.kind {
             TokenKind::Punctuation(Punc::DoubleColon) => {
-                return GenericTypeParam::consume(tokens, ends_early, containing_token, errors)
-                    .map(GenericParam::Type)
+                return GenericTypeParam::consume(
+                    tokens,
+                    ctx,
+                    &tokens[..consumed],
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(GenericParam::Type)
             }
 
             // We're leaving the advanced error handling to *this* function, so we'll continue.
@@ -1533,8 +1559,15 @@ impl<'a> GenericParam<'a> {
             // For anything else, we leave it to `GenericTypeParam::consume` to generate the proper
             // error message
             _ => {
-                return GenericTypeParam::consume(tokens, ends_early, containing_token, errors)
-                    .map(GenericParam::Type)
+                return GenericTypeParam::consume(
+                    tokens,
+                    ctx,
+                    &tokens[..consumed],
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(GenericParam::Type)
             }
         }
 
@@ -1576,8 +1609,15 @@ impl<'a> GenericParam<'a> {
         // type bound, so we can check again later if the thing parsed as a trait here turns out to
         // actually be a type.
         if type_bound_errors.is_empty() && type_bound_res.is_ok() {
-            return GenericTypeParam::consume(tokens, ends_early, containing_token, errors)
-                .map(GenericParam::Type);
+            return GenericTypeParam::consume(
+                tokens,
+                ctx,
+                &tokens[..consumed],
+                ends_early,
+                containing_token,
+                errors,
+            )
+            .map(GenericParam::Type);
         }
 
         // Otherwise, we'll see if this can be successfully parsed as as a type
@@ -1620,13 +1660,118 @@ impl<'a> GenericParam<'a> {
 }
 
 impl<'a> GenericTypeParam<'a> {
+    /// Consumes a single generic type parameter as a prefix of the given tokens
+    ///
+    /// In the event of an error, the returned `Option` will be `None` if parsing within the
+    /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
+    /// the number of tokens that were marked as invalid here.
     fn consume(
         tokens: TokenSlice<'a>,
+        ctx: GenericParamsContext<'a>,
+        prev_tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<GenericTypeParam<'a>, Option<usize>> {
-        todo!()
+        // Generic type parameters have the following form:
+        //   Ident [ "::" TypeBound ] [ "=" Type ]
+        // The rest of this function is fairly simple, following from this.
+        make_getter!(macro_rules! get, tokens, ends_early, errors);
+        let mut consumed = 0;
+
+        let ident_ctx = IdentContext::TypeParam(ctx, prev_tokens);
+        let name = Ident::parse(
+            tokens.get(consumed),
+            IdentContext::TypeParam(ctx, prev_tokens),
+            end_source!(containing_token),
+            errors,
+        )
+        // TODO: Recover after failure here
+        .map_err(|()| None)?;
+
+        consumed += 1;
+
+        let mut bound = None;
+        let mut default_type = None;
+
+        for _ in 0..2 {
+            let after_type_bound = bound.is_some();
+            let expected_kind = ExpectedKind::TypeParamFollowOn {
+                after_type_bound,
+                ctx,
+                prev_tokens,
+                param: &tokens[..consumed],
+            };
+
+            let token = get!(
+                consumed,
+                Err(e) => Error::Expected {
+                    kind: expected_kind,
+                    found: Source::TokenResult(Err(*e)),
+                },
+                None => Error::Expected {
+                    kind: expected_kind,
+                    found: end_source!(containing_token),
+                },
+            );
+
+            use TokenKind::Punctuation;
+
+            match &token.kind {
+                Punctuation(Punc::DoubleColon) if !after_type_bound => {
+                    consumed += 1;
+                    bound = Some(
+                        TypeBound::consume(
+                            &tokens[consumed..],
+                            TypeBoundContext::GenericTypeParam {
+                                param: &tokens[..consumed],
+                                ctx,
+                            },
+                            ends_early,
+                            containing_token,
+                            errors,
+                        )
+                        .map_err(|_| None)?,
+                    );
+                }
+                Punctuation(Punc::Eq) => {
+                    consumed += 1;
+                    default_type = Some(
+                        Type::consume(
+                            &tokens[consumed..],
+                            TypeContext::GenericTypeParam {
+                                param: &tokens[..consumed],
+                                ctx,
+                            },
+                            ends_early,
+                            containing_token,
+                            errors,
+                        )
+                        .map_err(|_| None)?,
+                    );
+
+                    break;
+                }
+                // We'll also note the other possible tokens that are allowed to follow this
+                Punctuation(Punc::Gt) | Punctuation(Punc::Comma) => break,
+                _ => {
+                    errors.push(Error::Expected {
+                        kind: expected_kind,
+                        found: Source::TokenResult(Ok(token)),
+                    });
+
+                    // TODO: recover after failure here
+                    return Err(None);
+                }
+            }
+        }
+
+        Ok(GenericTypeParam {
+            src: &tokens[..consumed],
+            name,
+            bound,
+            default_type,
+        })
     }
 }
 
