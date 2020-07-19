@@ -221,9 +221,9 @@ two examples are the only existing forms of this ambiguitiy. For clarity, it's e
 of the form:
 
 ```
-Ident "<" Ident "," Ident ">" "(" Ident ")"
+Ident "<" Ident { "," Ident } "," Ident ">" "(" Ident ")"
                      or
-Ident "<" Ident "," Ident ">" "{" Ident "}"
+Ident "<" Ident { "," Ident } "," Ident ">" "{" Ident "}"
 ```
 
 We can therefore store exactly these cases where necessary and handle them later (once types are
@@ -236,4 +236,9 @@ containing a single identifier, which can either be an anonymous struct with a s
 initialized by a local variable with the same name *OR* a block expression where the identifier is a
 trailing expression.
 
-This one is somewhat more complex to handle, but is also resolved through type-checking.
+This one is somewhat more complex to handle, but is also resolved through type-checking. These
+exactly take the form of:
+
+```
+"{" Ident "}"
+```
