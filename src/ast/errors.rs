@@ -98,6 +98,7 @@ pub enum ItemKind {
 pub enum ExpectedKind<'a> {
     Ident(IdentContext<'a>),
     GenericParams(GenericParamsContext<'a>),
+    Type(TypeContext<'a>),
     TypeBound(TypeBoundContext<'a>),
     GenericParam {
         ctx: GenericParamsContext<'a>,

@@ -111,6 +111,7 @@ kwds! {
     Assign => "assign",
     Const => "const",
     Else => "else",
+    Enum => "enum",
     Exists => "exists",
     Fn => "fn",
     For => "for",

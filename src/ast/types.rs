@@ -8,6 +8,33 @@ use super::*;
 // Types                                                                                          //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A single concrete type
+///
+/// The BNF definition for types is:
+/// ```text
+/// Type = Ident [ GenericArgs ] [ Refinements ]
+///      | "&" [ Refinements ] Type
+///      | [ "!" ] "mut" Type
+///      | "[" Type [ ";" Expr ] "]" Refinemnts
+///      | "{" [ StructField { "," StructField } [ "," ] ] "}"
+///      | "(" [ Type        { "," Type        } [ "," ] ] ")"
+///      | "enum" "{" { Ident Type "," } "}" .
+/// ```
+/// There *are* many different variants here. These definitions could be equally written with the
+/// types that represent them, with:
+/// ```text
+/// Type = NamedType
+///      | RefType
+///      | MutType
+///      | ArrayType
+///      | StructType
+///      | TupleType
+///      | EnumType .
+/// ```
+///
+/// One of the last key things to note is that while `[ "!" ] "mut"` is *syntactically* allowed
+/// before any type (hence `mut mut int` is valid), repetitions of this prefix are not
+/// *semantically* allowed. This validation is left until later.
 #[derive(Debug)]
 pub enum Type<'a> {
     Named(NamedType<'a>),
@@ -67,6 +94,10 @@ pub struct EnumType<'a> {
 
 impl<'a> Type<'a> {
     /// Consumes a `Type` as a prefix of the given tokens
+    ///
+    /// In the event of an error, the returned `Option` will be `None` if parsing within the
+    /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
+    /// the number of tokens that were marked as invalid here.
     pub fn consume(
         tokens: TokenSlice<'a>,
         ctx: TypeContext<'a>,
@@ -74,6 +105,125 @@ impl<'a> Type<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Type<'a>, Option<usize>> {
+        // This parser is relatively simple; we can just parse based on the type of token that we
+        // find. The syntax for each individual type is fairly distinct; we don't need to account
+        // for special cases.
+        make_getter!(macro_rules! get, tokens, ends_early, errors);
+
+        let fst = get!(
+            0,
+            Err(e) => Error::Expected {
+                kind: ExpectedKind::Type(ctx),
+                found: Source::TokenResult(Err(*e)),
+            },
+            None => Error::Expected {
+                kind: ExpectedKind::Type(ctx),
+                found: end_source!(containing_token),
+            },
+        );
+
+        macro_rules! consume {
+            ($type:ident, $variant:ident) => {{
+                $type::consume(tokens, ends_early, containing_token, errors).map(Type::$variant)
+            }};
+        }
+
+        use Delim::{Curlies, Parens, Squares};
+        use TokenKind::{Ident, Keyword, Punctuation, Tree};
+
+        match &fst.kind {
+            Ident(_) => consume!(NamedType, Named),
+            Punctuation(Punc::And) => consume!(RefType, Ref),
+            Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut),
+            Tree { delim: Squares, .. } => consume!(ArrayType, Array),
+            Tree { delim: Curlies, .. } => consume!(StructType, Struct),
+            Tree { delim: Parens, .. } => consume!(TupleType, Tuple),
+            Keyword(Kwd::Enum) => consume!(EnumType, Enum),
+            _ => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::Type(ctx),
+                    found: Source::TokenResult(Ok(fst)),
+                });
+
+                return Err(None);
+            }
+        }
+    }
+}
+
+impl<'a> NamedType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<NamedType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> RefType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<RefType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> MutType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<MutType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> ArrayType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<ArrayType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> StructType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<StructType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> TupleType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<TupleType<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> EnumType<'a> {
+    fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<EnumType<'a>, Option<usize>> {
         todo!()
     }
 }
