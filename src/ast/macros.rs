@@ -49,3 +49,12 @@ macro_rules! make_getter {
         }
     }
 }
+
+macro_rules! end_source {
+    ($containing_token:expr) => {{
+        match $containing_token {
+            Some(tt) => Source::EndDelim(tt),
+            None => Source::EOF,
+        }
+    }};
+}

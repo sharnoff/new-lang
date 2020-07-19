@@ -67,8 +67,8 @@ FnDecl = ProofStmts Vis [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
 
 MacroDef   = ProofStmts Vis "macro" Ident MacroParams MacroBody .
 TypeDecl   = ProofStmts Vis "type" Ident [ GenericParams ]
-             [ TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
-TraitDef   = ProofStmts Vis "trait" Ident [ GenericParams ] [ TypeBound ] ( ImplBody | ";" ) .
+             [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
+TraitDef   = ProofStmts Vis "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
 ImplBlock  =                "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
 ConstStmt  =            Vis "const"  StructField ";" .
 StaticStmt = ProofStmts Vis "static" StructField ";" .
@@ -98,33 +98,33 @@ FnParamsReceiver = [ "&" [ Refinements ] ] [ "mut" ] "self" [ Refinements ] .
 
 ImplBody = "{" { Item } "}" .
 
-GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">"
-GenericParam = Ident [ TypeBound ] [ "=" Type ]
+GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" .
+GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
              | "const" Ident ":" Type [ "=" Expr ] .
-             | "|" "ref" Ident "|" .
+             | "ref" Ident" .
 
 GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
 GenericArg = [ Ident ":" ] Type
-           | Ident TypeBound
-           | [ Ident ":" ] "{" Expr "}"
-           | "|" "ref" Expr "|" .
+           | Ident "::" TypeBound
+           | [ "const" Ident ":" ] "{" Expr "}"
+           | "ref" Expr .
 
 Trait = Path [ GenericArgs ] .
 
-Type = Ident [ GenericArgs ] Refinements
-     | "&" Refinements Type 
+Type = Ident [ GenericArgs ] [ Refinements ]
+     | "&" [ Refinements ] Type 
      | [ "!" ] "mut" Type
      | "[" Type [ ";" Expr ] "]" Refinemnts
      | "{" [ StructField { "," StructField } [ "," ] ] "}"
      | "(" [ Type        { "," Type        } [ "," ] ] ")"
      | "enum" "{" { Ident Type "," } "}" .
 
-Refinements = [ "|" Refinement { "," Refinement } [ "," ] "|" ] .
+Refinements = "|" Refinement { "," Refinement } [ "," ] "|" .
 Refinement = "ref" [ "mut" ] Expr
            | [ "!" | "?" ] "init" .
-StructField = Ident ( ":" Type | TypeBound ) [ "=" Expr ] .
+StructField = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] .
 EnumVariant = Ident Type .
-TypeBound = "::" Refinements Trait { "+" Trait } .
+TypeBound = [ Refinements ] Trait { "+" Trait } .
 
 Stmt = BigExpr "\n"
      | Expr ";"
@@ -178,7 +178,7 @@ FnArgs = "(" StructFieldsExpr ")" .
 Pattern = [ Path ] StructPattern
         | [ Path ] "(" ElementsPattern ")"
         | "[" ElementsPattern "]"
-        | Ident
+        | [ "mut" ] Ident
         | "assign" Assignee 
         | "&" Pattern .
 StructPattern = "{" [ FieldPattern [ "," FieldPattern ] [ "," ] ] [ ".." ] "}" .

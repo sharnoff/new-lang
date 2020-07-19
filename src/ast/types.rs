@@ -182,3 +182,15 @@ pub struct Trait<'a> {
     path: Path<'a>,
     generic_args: GenericArgs<'a>,
 }
+
+impl<'a> TypeBound<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ctx: TypeBoundContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<TypeBound<'a>, Option<usize>> {
+        todo!()
+    }
+}

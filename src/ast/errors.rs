@@ -6,6 +6,12 @@ use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
 
 pub enum Error<'a> {
+    /// A catch-all error for generically expecting certain tokens or syntax elements
+    Expected {
+        kind: ExpectedKind<'a>,
+        found: Source<'a>,
+    },
+
     /// One of the leading keywords for an item was expected, but some other token was found.
     ExpectedItemKwd {
         kwds: &'static [Kwd],
@@ -61,10 +67,14 @@ pub enum Error<'a> {
         found: Source<'a>,
     },
 
-    /// A catch-all error for generically expecting certain tokens or syntax elements
-    Expected {
-        kind: ExpectedKind<'a>,
-        found: Source<'a>,
+    /// Generic const parameters are required to start with the keyword "const". This error results
+    /// from cases where we expect the user has mistakenly missed this piece.
+    GenericConstParamMissingConst {
+        /// The complete source for the generic parameter that's been parsed. The first two tokens
+        /// here are guaranteed to match `[ Ident, ":" ]`.
+        full_src: TokenSlice<'a>,
+        /// The source for the *type* we parsed.
+        type_src: TokenSlice<'a>,
     },
 }
 
@@ -87,8 +97,26 @@ pub enum ItemKind {
 #[derive(Debug, Copy, Clone)]
 pub enum ExpectedKind<'a> {
     Ident(IdentContext<'a>),
-    FnBody { fn_src: TokenSlice<'a> },
-    FnBodyOrReturnType { fn_src: TokenSlice<'a> },
+    GenericParams(GenericParamsContext<'a>),
+    TypeBound(TypeBoundContext<'a>),
+    GenericParam {
+        ctx: GenericParamsContext<'a>,
+        prev_tokens: TokenSlice<'a>,
+    },
+    GenericTypeParamColons {
+        ctx: GenericParamsContext<'a>,
+        prev_tokens: TokenSlice<'a>,
+    },
+    GenericParamDelimComma {
+        ctx: GenericParamsContext<'a>,
+        prev_tokens: TokenSlice<'a>,
+    },
+    FnBody {
+        fn_src: TokenSlice<'a>,
+    },
+    FnBodyOrReturnType {
+        fn_src: TokenSlice<'a>,
+    },
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -110,6 +138,19 @@ pub enum TypeContext<'a> {
     /// The optional return type used in a function declaration. The attached slice of tokens gives
     /// all of the preceeding parts of the item.
     FnDeclReturn(TokenSlice<'a>),
+    GenericConstParam {
+        param: TokenSlice<'a>,
+        ctx: GenericParamsContext<'a>,
+    },
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TypeBoundContext<'a> {
+    /// The optional type bound given for generic type parameters
+    GenericTypeParam {
+        param: TokenSlice<'a>,
+        ctx: GenericParamsContext<'a>,
+    },
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {

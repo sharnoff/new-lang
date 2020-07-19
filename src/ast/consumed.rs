@@ -125,6 +125,7 @@ impl_all! {
     StructPattern,
     TuplePattern,
     @Single: ArrayPattern,
+    NamePattern,
     AssignPattern,
     RefPattern,
     // Pattern helper bits

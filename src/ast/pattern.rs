@@ -13,7 +13,7 @@ pub enum Pattern<'a> {
     Struct(StructPattern<'a>),
     Tuple(TuplePattern<'a>),
     Array(ArrayPattern<'a>),
-    Name(Ident<'a>),
+    Name(NamePattern<'a>),
     Assign(AssignPattern<'a>),
     Ref(RefPattern<'a>),
 }
@@ -40,6 +40,13 @@ pub struct ArrayPattern<'a> {
     path: Option<Path<'a>>,
     elements: Vec<Pattern<'a>>,
     has_dots: Option<&'a Token<'a>>,
+}
+
+#[derive(Debug)]
+pub struct NamePattern<'a> {
+    pub(super) src: TokenSlice<'a>,
+    is_mut: Option<&'a Token<'a>>,
+    name: Ident<'a>,
 }
 
 #[derive(Debug)]
