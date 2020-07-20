@@ -12,7 +12,7 @@ use super::*;
 ///
 /// The BNF definition for types is:
 /// ```text
-/// Type = Ident [ GenericArgs ] [ Refinements ]
+/// Type = Path [ GenericArgs ] [ Refinements ]
 ///      | "&" [ Refinements ] Type
 ///      | [ "!" ] "mut" Type
 ///      | "[" Type [ ";" Expr ] "]" Refinemnts
@@ -46,11 +46,28 @@ pub enum Type<'a> {
     Enum(EnumType<'a>),
 }
 
+/// A named type
+///
+/// Named types are given by their path (including optional generic arguments) and any refinements.
+///
+/// The BNF is defined as:
+/// ```text
+/// NamedType = Path [ Refinements ] .
+/// ```
+/// Note that [`Path`] is defined such that we can expand this definition to:
+/// ```text
+/// NamedType = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } [ Refinements ] .
+/// ```
+/// which then shows where generics arguments are allowed.
+///
+/// All of the carefulness around path ambiguity applies here - as such, the standard parser for
+/// this type cannot be used in cases where there might be ambiguity around the generic arguments.
+///
+/// [`Path`]: ../expr/struct.Path.html
 #[derive(Debug)]
 pub struct NamedType<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Ident<'a>,
-    generic_args: GenericArgs<'a>,
+    path: Path<'a>,
     refinements: Option<Refinements<'a>>,
 }
 
@@ -152,13 +169,37 @@ impl<'a> Type<'a> {
 }
 
 impl<'a> NamedType<'a> {
+    /// Consumes a named type as a prefix of the given tokens
+    ///
+    /// Please note that this function should not be used wherever there might be ambiguity about
+    /// generic arguments.
+    ///
+    /// In the event of an error, the returned `Option` will be `None` if parsing within the
+    /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
+    /// the number of tokens that were marked as invalid here.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<NamedType<'a>, Option<usize>> {
-        todo!()
+        // The BNF is duplicated here for a brief explanation:
+        //   Path [ GenericArgs ] [ Refinements ]
+        // The rest of the function is pretty short, so this should suffice.
+
+        let path = Path::consume(tokens, ends_early, containing_token, errors).map_err(|_| None)?;
+        let mut consumed = path.consumed();
+
+        let refinements =
+            Refinements::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+                .map_err(|_| None)?;
+        consumed += refinements.consumed();
+
+        Ok(NamedType {
+            src: &tokens[..consumed],
+            path,
+            refinements,
+        })
     }
 }
 
@@ -239,7 +280,6 @@ impl<'a> EnumType<'a> {
 //     * TypeGenericArg                                                                           //
 //     * ConstGenericArg                                                                          //
 //     * RefGenericArg                                                                            //
-// * Trait                                                                                        //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -281,14 +321,14 @@ pub struct InitRefinement<'a> {
 pub struct TypeBound<'a> {
     pub(super) src: TokenSlice<'a>,
     refinements: Option<Refinements<'a>>,
-    traits: Vec<Trait<'a>>,
+    traits: Vec<Path<'a>>,
 }
 
 #[derive(Debug)]
 pub struct GenericArgs<'a> {
     pub(super) src: TokenSlice<'a>,
     args: Vec<GenericArg<'a>>,
-    traits: Vec<Trait<'a>>,
+    traits: Vec<Path<'a>>,
 }
 
 #[derive(Debug)]
@@ -326,11 +366,15 @@ pub struct RefGenericArg<'a> {
     refinement: Refinement<'a>,
 }
 
-#[derive(Debug)]
-pub struct Trait<'a> {
-    pub(super) src: TokenSlice<'a>,
-    path: Path<'a>,
-    generic_args: GenericArgs<'a>,
+impl<'a> Refinements<'a> {
+    pub fn try_consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Option<Refinements<'a>>, Option<usize>> {
+        todo!()
+    }
 }
 
 impl<'a> TypeBound<'a> {
@@ -341,6 +385,17 @@ impl<'a> TypeBound<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<TypeBound<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
+impl<'a> GenericArgs<'a> {
+    pub fn try_consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Option<GenericArgs<'a>>, Option<usize>> {
         todo!()
     }
 }

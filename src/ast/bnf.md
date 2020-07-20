@@ -79,7 +79,7 @@ UseStmt = Vis "use" UsePath ";" .
 UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
         | UseKind Path [ "as" Ident ] .
 UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
-Path = { Ident [ GenericArgs ] "." } Ident .
+Path = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } .
 
 Vis = [ "pub" ] .
 
@@ -109,9 +109,9 @@ GenericArg = [ Ident ":" ] Type
            | [ "const" Ident ":" ] BlockExpr
            | "ref" Expr .
 
-Trait = Path [ GenericArgs ] .
+Trait = Path .
 
-Type = Ident [ GenericArgs ] [ Refinements ]
+Type = Path [ Refinements ]
      | "&" [ Refinements ] Type 
      | [ "!" ] "mut" Type
      | "[" Type [ ";" Expr ] "]" Refinemnts

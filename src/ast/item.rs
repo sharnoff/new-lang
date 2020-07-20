@@ -174,7 +174,7 @@ pub struct TraitDef<'a> {
 #[derive(Debug)]
 pub struct ImplBlock<'a> {
     pub(super) src: TokenSlice<'a>,
-    trait_impl: Option<Trait<'a>>,
+    trait_impl: Option<Path<'a>>,
     impl_ty: Type<'a>,
     body: Option<ImplBody<'a>>,
 }

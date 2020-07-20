@@ -85,7 +85,6 @@ pub struct FnCallExpr<'a> {
 pub struct StructExpr<'a> {
     pub(super) src: TokenSlice<'a>,
     ty_name: Option<Path<'a>>,
-    generic_args: Option<GenericArgs<'a>>,
     fields: Option<StructFieldsExpr<'a>>,
 }
 
@@ -204,7 +203,6 @@ pub struct StringLiteral<'a> {
 pub struct Path<'a> {
     pub(super) src: TokenSlice<'a>,
     components: Vec<PathComponent<'a>>,
-    tail: Ident<'a>,
 }
 
 #[derive(Debug)]
@@ -345,5 +343,16 @@ impl<'a> Ident<'a> {
         };
 
         Ok(Ident { name, src: token })
+    }
+}
+
+impl<'a> Path<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Path<'a>, Option<usize>> {
+        todo!()
     }
 }

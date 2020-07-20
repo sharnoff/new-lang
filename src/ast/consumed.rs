@@ -152,7 +152,6 @@ impl_all! {
     TypeBoundGenericArg,
     ConstGenericArg,
     RefGenericArg,
-    Trait,
 }
 
 impl<'a> Consumed for Vis<'a> {
