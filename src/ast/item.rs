@@ -1386,14 +1386,14 @@ impl<'a> GenericParams<'a> {
             let next = get!(
                 consumed,
                 Err(e) => Error::Expected {
-                    kind: ExpectedKind::GenericParam {
+                    kind: ExpectedKind::GenericParamDelim {
                         ctx,
                         prev_tokens: &tokens[..consumed],
                     },
                     found: Source::TokenResult(Err(*e)),
                 },
                 None => Error::Expected {
-                    kind: ExpectedKind::GenericParam {
+                    kind: ExpectedKind::GenericParamDelim {
                         ctx,
                         prev_tokens: &tokens[..consumed],
                     },
@@ -1414,7 +1414,7 @@ impl<'a> GenericParams<'a> {
                 }
                 _ => {
                     errors.push(Error::Expected {
-                        kind: ExpectedKind::GenericParamDelimComma {
+                        kind: ExpectedKind::GenericParamDelim {
                             ctx,
                             prev_tokens: &tokens[..consumed],
                         },

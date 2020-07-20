@@ -108,9 +108,24 @@ pub enum ExpectedKind<'a> {
         ctx: GenericParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
-    GenericParamDelimComma {
+    GenericParamDelim {
         ctx: GenericParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
+    },
+    GenericArg {
+        prev_tokens: TokenSlice<'a>,
+    },
+    GenericArgDelim {
+        prev_tokens: TokenSlice<'a>,
+    },
+    // Any of the tokens that may follow a leading identifier in a generics argument
+    GenericArgFollowIdent {
+        prev_tokens: TokenSlice<'a>,
+        ident: &'a Token<'a>,
+    },
+    GenericArgAfterIdent {
+        prev_tokens: TokenSlice<'a>,
+        name: Option<&'a Token<'a>>,
     },
     TypeParamFollowOn {
         after_type_bound: bool,
@@ -160,6 +175,10 @@ pub enum TypeContext<'a> {
     GenericConstParam {
         param: TokenSlice<'a>,
         ctx: GenericParamsContext<'a>,
+    },
+    GenericArg {
+        prev_tokens: TokenSlice<'a>,
+        name: Option<&'a Token<'a>>,
     },
 }
 

@@ -83,8 +83,8 @@ impl_all! {
 
     // Expressions
     Expr {
-        Access, TypeBinding, PrefixOp, BinOp, PostfixOp, Let, FnCall, Struct,
-        Array, Tuple, Block, For, While, DoWhile, Loop, If, Match,
+        Named, Access, TypeBinding, PrefixOp, BinOp, PostfixOp, Let, FnCall,
+        Struct, Array, Tuple, Block, For, While, DoWhile, Loop, If, Match,
     },
     AccessExpr,
     TypeBindExpr,
@@ -147,9 +147,8 @@ impl_all! {
     InitRefinement,
     TypeBound,
     GenericArgs,
-    GenericArg { Type, Bound, Const, Ref },
+    GenericArg { Type, Const, Ref },
     TypeGenericArg,
-    TypeBoundGenericArg,
     ConstGenericArg,
     RefGenericArg,
 }

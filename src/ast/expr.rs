@@ -10,6 +10,7 @@ use super::*;
 
 #[derive(Debug)]
 pub enum Expr<'a> {
+    Named(Ident<'a>),
     Access(AccessExpr<'a>),
     TypeBinding(Box<TypeBindExpr<'a>>),
     PrefixOp(PrefixOpExpr<'a>),

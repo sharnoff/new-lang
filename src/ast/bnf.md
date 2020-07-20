@@ -105,8 +105,7 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
 
 GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
 GenericArg = [ Ident ":" ] Type
-           | Ident "::" TypeBound
-           | [ "const" Ident ":" ] BlockExpr
+           | [ Ident ":" ] BlockExpr
            | "ref" Expr .
 
 Trait = Path .
@@ -133,14 +132,15 @@ Stmt = BigExpr "\n"
 Assignee = "*" Expr
          | Path .
 
-Expr = Literal
+Expr = Ident
+     | Literal
      | Expr "." Ident                             # Struct fields
      | Expr "~" Type                              # Type binding
      | PrefixOp Expr
      | Expr BinOp Expr
      | Expr PostfixOp
      | "let" Pattern [ ":" Type ] [ "=" Expr ]    # Let expressions
-     | [ Expr | Path ] "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
+     | ( Expr | Path ) "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
      | [        Path ] "{" StructFieldsExpr "}"   # (Named?) structs 
      | "[" Expr { "," Expr } [ "," ] "]"          # Array literals
      | "(" Expr { "," Expr } [ "," ] ")"          # Tuples
