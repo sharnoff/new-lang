@@ -134,23 +134,24 @@ Assignee = "*" Expr
          | Path .
 
 Expr = Literal
-     | Expr "." Ident                                      # Struct fields
-     | Expr "~" Type                                       # Type binding
+     | Expr "." Ident                             # Struct fields
+     | Expr "~" Type                              # Type binding
      | PrefixOp Expr
      | Expr BinOp Expr
      | Expr PostfixOp
-     | "let" Pattern [ ":" Type ] [ "=" Expr ]             # Let expressions
-     |   Expr [ GenericArgs ]   "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
-     | [ Path [ GenericArgs ] ] "{" StructFieldsExpr "}"   # (Named?) structs 
-     | "[" Expr { "," Expr } [ "," ] "]"                   # Array literals
-     | "(" Expr { "," Expr } [ "," ] ")"                   # Tuples
-     | BlockExpr                                           # Blocks
-     | ForExpr                                             # For loops
-     | WhileExpr                                           # While loops
-     | DoWhileExpr                                         # Do-while loops
-     | LoopExpr                                            # "Loop" loops
-     | IfExpr                                              # Ifs
-     | MatchExpr .                                         # Matches
+     | "let" Pattern [ ":" Type ] [ "=" Expr ]    # Let expressions
+     | [ Expr | Path ] "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
+     | [        Path ] "{" StructFieldsExpr "}"   # (Named?) structs 
+     | "[" Expr { "," Expr } [ "," ] "]"          # Array literals
+     | "(" Expr { "," Expr } [ "," ] ")"          # Tuples
+     | BlockExpr                                  # Blocks
+     | ForExpr                                    # For loops
+     | WhileExpr                                  # While loops
+     | DoWhileExpr                                # Do-while loops
+     | LoopExpr                                   # "Loop" loops
+     | IfExpr                                     # Ifs
+     | MatchExpr .                                # Matches
+
 
 BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
 

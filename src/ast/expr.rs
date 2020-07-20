@@ -199,12 +199,36 @@ pub struct StringLiteral<'a> {
     pub value: &'a str,
 }
 
+/// A path to an item in scope
+///
+/// The standard image of a path contains no generic arguments: it is simply a chain of identifiers
+/// linked together by dots (`"."`). Note, however, that they *can* have generics arguments at any
+/// component. For example, `foo<int>.Bar<String>` is a valid path.
+///
+/// Because of their usage of generics arguments, certain ambiguities arise within expression
+/// parsing - this is not managed by the primary parser provided by this type.
+///
+/// For reference, the BNF is defined as:
+/// ```text
+/// Path = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } .
+/// ```
+///
+/// The helper type [`PathComponent`] is defined as well to manage the token sources for individual
+/// elements, where its BNF is:
+/// ```text
+/// PathComponent = Ident [ GenericArgs ] .
+/// ```
+///
+/// [`PathComponent`]: struct.PathComponent.html
 #[derive(Debug)]
 pub struct Path<'a> {
     pub(super) src: TokenSlice<'a>,
     components: Vec<PathComponent<'a>>,
 }
 
+/// A single component of a type
+///
+/// For more information, refer to the documentation of [`Path`](struct.Path.html).
 #[derive(Debug)]
 pub struct PathComponent<'a> {
     pub(super) src: TokenSlice<'a>,
@@ -347,12 +371,95 @@ impl<'a> Ident<'a> {
 }
 
 impl<'a> Path<'a> {
+    /// Consumes a `Path` as a prefix of the given tokens
+    ///
+    /// Note that this function should not be used where there may be ambiguity with generics
+    /// arguments (primarily within expression parsing). Additionally, this function should not be
+    /// used if a dot (`"."`) is allowed after a path at the desired position; it will be parsed as
+    /// a path separator and will expect a following path component.
+    ///
+    /// In the event of an error, the returned `Option` will be `None` if parsing within the
+    /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
+    /// the number of tokens that were marked as invalid here.
     pub fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Path<'a>, Option<usize>> {
-        todo!()
+        // We always require a first element in the path
+        let fst = PathComponent::consume(tokens, None, ends_early, containing_token, errors)
+            .map_err(|_| None)?;
+        let mut consumed = fst.consumed();
+
+        let mut components = vec![fst];
+
+        loop {
+            // If we find a path separator token ("."), we'll look for another path component
+            match tokens.get(consumed) {
+                Some(Ok(t)) => match &t.kind {
+                    TokenKind::Punctuation(Punc::Dot) => consumed += 1,
+                    _ => break,
+                },
+                _ => break,
+            };
+
+            let next = PathComponent::consume(
+                &tokens[consumed..],
+                Some(&tokens[..consumed]),
+                ends_early,
+                containing_token,
+                errors,
+            )
+            .map_err(|_| None)?;
+            consumed += next.consumed();
+            components.push(next);
+        }
+
+        Ok(Path {
+            src: &tokens[..consumed],
+            components,
+        })
+    }
+}
+
+impl<'a> PathComponent<'a> {
+    /// Consumes a single `PathComponent` as a prefix of the given tokens
+    ///
+    /// This exists solely as a helper function for [`Path::consume`].
+    ///
+    /// [`Path::consume`]: struct.Path.html#method.consume
+    fn consume(
+        tokens: TokenSlice<'a>,
+        prev_tokens: Option<TokenSlice<'a>>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<PathComponent<'a>, Option<usize>> {
+        // Path components are composed of - at most - two pieces: an identifier and optional
+        // generic arguments.
+        let ctx = PathComponentContext { prev_tokens };
+
+        let name = Ident::parse(
+            tokens.first(),
+            IdentContext::PathComponent(ctx),
+            end_source!(containing_token),
+            errors,
+        )
+        .map_err(|_| None)?;
+
+        let mut consumed = name.consumed();
+
+        let generic_args =
+            GenericArgs::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+                .map_err(|_| None)?;
+
+        consumed += generic_args.consumed();
+
+        Ok(PathComponent {
+            src: &tokens[..consumed],
+            name,
+            generic_args,
+        })
     }
 }

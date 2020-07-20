@@ -136,6 +136,9 @@ pub enum IdentContext<'a> {
     /// or type declaration. The attached slice of tokens gives the set of tokens already parsed as
     /// part of the list of generic parameters.
     TypeParam(GenericParamsContext<'a>, TokenSlice<'a>),
+
+    /// Path components expect an identifier
+    PathComponent(PathComponentContext<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -167,6 +170,13 @@ pub enum TypeBoundContext<'a> {
         param: TokenSlice<'a>,
         ctx: GenericParamsContext<'a>,
     },
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct PathComponentContext<'a> {
+    /// The previous tokens within the greater path; this will be `None` if the expected path
+    /// component is the first.
+    pub prev_tokens: Option<TokenSlice<'a>>,
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {

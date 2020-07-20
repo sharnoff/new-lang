@@ -1,3 +1,6 @@
+// #![allow(unused_variables)]
+// #![allow(dead_code)]
+
 mod ast;
 mod db;
 mod error;
