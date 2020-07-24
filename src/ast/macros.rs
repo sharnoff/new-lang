@@ -58,3 +58,82 @@ macro_rules! end_source {
         }
     }};
 }
+
+macro_rules! binding_power {
+    (
+        $(#[$attrs:meta])*
+        $vis:vis enum $binding_power:ident {
+            $($($variant:ident),+;)*
+        }
+    ) => {
+        $(#[$attrs])*
+        $vis enum $binding_power {
+            $($($variant,)+)*
+        }
+
+        impl $binding_power {
+            // A helper function to return a unique value for each level of binding power.
+            // NOTE: This does *not* start at zero.
+            fn __level(&self) -> u8 {
+                let mut count = 0;
+                $(
+                // we increment here because otherwise we get a warning at the bottom
+                count += 1;
+
+                match &self {
+                    $($binding_power::$variant => return count,)+
+                    _ => (),
+                }
+                )*
+
+                unreachable!()
+            }
+
+            /// Returns the `BindingPower` variant corresponding to
+            #[allow(unused_assignments)]
+            pub fn inc(&self) -> Option<BindingPower> {
+                let mut higher = None;
+
+                $(
+                match &self {
+                    $($binding_power::$variant => return higher,)+
+                    _ => (),
+                }
+
+                higher = Some(first!($($binding_power::$variant),+));
+                )*
+
+                unreachable!()
+            }
+        }
+
+        impl PartialOrd for $binding_power {
+            fn partial_cmp(&self, other: &$binding_power) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl Ord for $binding_power {
+            fn cmp(&self, other: &$binding_power) -> std::cmp::Ordering {
+                // We reverse the ordering because high binding power is listed first in the macro,
+                // causing them to have a small `__level`
+                self.__level().cmp(&other.__level()).reverse()
+            }
+        }
+
+        impl PartialEq for $binding_power {
+            fn eq(&self, other: &$binding_power) -> bool {
+                self.__level() == other.__level()
+            }
+        }
+
+        impl Eq for $binding_power {}
+    }
+}
+
+// A helper macro for yielding the first expression of a list
+macro_rules! first {
+    ($head:expr $(, $tail:expr)*) => {{
+        $head
+    }};
+}

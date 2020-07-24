@@ -13,10 +13,11 @@ use errors::*;
 // namespace.
 mod expr;
 mod item;
+mod literals;
 mod pattern;
 mod stmt;
 mod types;
-pub use self::{expr::*, item::*, pattern::*, stmt::*, types::*};
+pub use self::{expr::*, item::*, literals::*, pattern::*, stmt::*, types::*};
 
 use crate::token_tree::{self, Delim, Kwd, Punc, Token, TokenKind};
 use consumed::Consumed;

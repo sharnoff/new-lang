@@ -83,20 +83,18 @@ impl_all! {
 
     // Expressions
     Expr {
-        Named, Access, TypeBinding, PrefixOp, BinOp, PostfixOp, Let, FnCall,
-        Struct, Array, Tuple, Block, For, While, DoWhile, Loop, If, Match,
+        Literal, Named, PrefixOp, BinOp, PostfixOp, Struct, Array,
+        Tuple, Block, AmbiguousBlock, Let, For, While, DoWhile, Loop, If, Match,
     },
-    AccessExpr,
-    TypeBindExpr,
     PrefixOpExpr,
     BinOpExpr,
     PostfixOpExpr,
-    LetExpr,
-    FnCallExpr,
     StructExpr,
     ArrayLitExpr,
     TupleExpr,
     BlockExpr,
+    @Single: AmbiguousBlockExpr,
+    LetExpr,
     ForExpr,
     WhileExpr,
     DoWhileExpr,
@@ -104,8 +102,6 @@ impl_all! {
     IfExpr,
     MatchExpr,
     // Expression helper bits
-    @Single: Ident,
-    @Single: StringLiteral,
     Path,
     PathComponent,
     PrefixOp,
@@ -147,10 +143,19 @@ impl_all! {
     InitRefinement,
     TypeBound,
     GenericArgs,
-    GenericArg { Type, Const, Ref },
+    GenericArg { Type, Const, Ref, Ambiguous },
     TypeGenericArg,
     ConstGenericArg,
     RefGenericArg,
+    AmbiguousGenericArg,
+
+    // Literals
+    @Single: Ident,
+    Literal { Char, String, Int, Float },
+    @Single: CharLiteral,
+    @Single: StringLiteral,
+    @Single: IntLiteral,
+    FloatLiteral,
 }
 
 impl<'a> Consumed for Vis<'a> {

@@ -56,7 +56,7 @@ pub struct FileTokenTree<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
-    trailing_whitespace: &'a [SimpleToken<'a>],
+    pub trailing_whitespace: &'a [SimpleToken<'a>],
     // Note: `src` doesn't contain leading or trailing whitespace
     src: &'a [SimpleToken<'a>],
     pub kind: TokenKind<'a>,
@@ -110,6 +110,7 @@ kwds! {
     As => "as",
     Assign => "assign",
     Const => "const",
+    Do => "do",
     Else => "else",
     Enum => "enum",
     Exists => "exists",
@@ -117,11 +118,13 @@ kwds! {
     For => "for",
     Forall => "forall",
     If => "if",
+    In => "in",
     Init => "init",
     Impl => "impl",
     Import => "import",
     Invariant => "invariant",
     Let => "let",
+    Loop => "loop",
     Macro => "macro",
     Match => "match",
     Mut => "mut",
@@ -158,15 +161,19 @@ pub enum Punc {
     Lt,          // "<"
     Ge,          // ">="
     Gt,          // ">"
-    AndAnd,      // "&&"
     And,         // "&"
     OrOr,        // "||"
-    Pipe,        // "|"
+    Or,          // "|"
+    NotEq,       // "!="
     Not,         // "!"
     Plus,        // "+"
     Minus,       // "-"
     Star,        // "*"
     Slash,       // "/"
+    Percent,     // "%"
+    Caret,       // "^"
+    Tilde,       // "~"
+    Question,    // "?"
 }
 
 impl Delim {
@@ -199,6 +206,9 @@ impl<'a> Token<'a> {
         assert!(tokens.len() >= 1);
 
         macro_rules! punc {
+            ($variant:ident) => {
+                punc!($variant, 1)
+            };
             ($variant:ident, $len:expr) => {{
                 (Ok(TokenKind::Punctuation(Punc::$variant)), $len)
             }};
@@ -247,29 +257,33 @@ impl<'a> Token<'a> {
             },
 
             // And all of the punctuation
-            [Semi, ..] => punc!(Semi, 1),
+            [Semi, ..] => punc!(Semi),
             [Colon, Colon, ..] => punc!(DoubleColon, 2),
-            [Colon, ..] => punc!(Colon, 1),
-            [Comma, ..] => punc!(Comma, 1),
-            [Dot, ..] => punc!(Dot, 1),
+            [Colon, ..] => punc!(Colon),
+            [Comma, ..] => punc!(Comma),
+            [Dot, ..] => punc!(Dot),
             [Minus, Gt, ..] => punc!(ThinArrow, 2),
             [Eq, Gt, ..] => punc!(ThickArrow, 2),
             [Lt, Eq, Gt, ..] => punc!(DoubleImpl, 3),
             [Eq, Eq, ..] => punc!(EqEq, 2),
-            [Eq, ..] => punc!(Eq, 1),
+            [Eq, ..] => punc!(Eq),
             [Lt, Eq, ..] => punc!(Le, 2),
-            [Lt, ..] => punc!(Lt, 1),
+            [Lt, ..] => punc!(Lt),
             [Gt, Eq, ..] => punc!(Ge, 2),
-            [Gt, ..] => punc!(Gt, 1),
-            [And, And, ..] => punc!(AndAnd, 2),
-            [And, ..] => punc!(And, 1),
+            [Gt, ..] => punc!(Gt),
+            [And, ..] => punc!(And),
             [Pipe, Pipe, ..] => punc!(OrOr, 2),
-            [Pipe, ..] => punc!(Pipe, 1),
-            [Not, ..] => punc!(Not, 1),
-            [Plus, ..] => punc!(Plus, 1),
-            [Minus, ..] => punc!(Minus, 1),
-            [Star, ..] => punc!(Star, 1),
-            [Slash, ..] => punc!(Slash, 1),
+            [Pipe, ..] => punc!(Or),
+            [Not, Eq, ..] => punc!(NotEq, 2),
+            [Not, ..] => punc!(Not),
+            [Plus, ..] => punc!(Plus),
+            [Minus, ..] => punc!(Minus),
+            [Star, ..] => punc!(Star),
+            [Slash, ..] => punc!(Slash),
+            [Percent, ..] => punc!(Percent),
+            [Caret, ..] => punc!(Caret),
+            [Tilde, ..] => punc!(Tilde),
+            [Question, ..] => punc!(Question),
         };
 
         // We'll additionally consume any trailing whitespace.

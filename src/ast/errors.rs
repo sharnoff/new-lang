@@ -76,6 +76,14 @@ pub enum Error<'a> {
         /// The source for the *type* we parsed.
         type_src: TokenSlice<'a>,
     },
+
+    /// In some places (e.g. 'if' conditions or match scrutinee expressions), curly braces are not
+    /// allowed as they are ambiguous with the curly braces of the following block.
+    CurliesDisallowed {
+        ctx: NoCurlyContext,
+        /// The curly brace that was found
+        source: Source<'a>,
+    },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -97,6 +105,10 @@ pub enum ItemKind {
 #[derive(Debug, Copy, Clone)]
 pub enum ExpectedKind<'a> {
     Ident(IdentContext<'a>),
+    ExprLhs,
+    GenericArgOrExpr,
+    LetColonOrEq(LetContext<'a>),
+    LetEq(LetContext<'a>),
     GenericParams(GenericParamsContext<'a>),
     Type(TypeContext<'a>),
     TypeBound(TypeBoundContext<'a>),
@@ -180,6 +192,7 @@ pub enum TypeContext<'a> {
         prev_tokens: TokenSlice<'a>,
         name: Option<&'a Token<'a>>,
     },
+    LetHint(LetContext<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -196,6 +209,18 @@ pub struct PathComponentContext<'a> {
     /// The previous tokens within the greater path; this will be `None` if the expected path
     /// component is the first.
     pub prev_tokens: Option<TokenSlice<'a>>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum NoCurlyContext {
+    IfExpr,
+    MatchScrutinee,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct LetContext<'a> {
+    pub let_kwd: &'a Token<'a>,
+    pub pat: TokenSlice<'a>,
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {

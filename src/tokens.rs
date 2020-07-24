@@ -170,7 +170,9 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<SimpleToken<'a>, Invalid<'a
             '}' => single!(CloseCurly),
             '[' => single!(OpenSquare),
             ']' => single!(CloseSquare),
-            ';' => single!(Semi),
+            // We have two "semicolons" here because the second one is actually a greek
+            // question mark- with unicode value U+037E
+            ';' | ';' => single!(Semi),
             ':' => single!(Colon),
             ',' => single!(Comma),
             '.' => single!(Dot),
@@ -184,6 +186,10 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<SimpleToken<'a>, Invalid<'a
             '-' => single!(Minus),
             '*' => single!(Star),
             '/' => single!(Slash),
+            '%' => single!(Percent),
+            '^' => single!(Caret),
+            '~' => single!(Tilde),
+            '?' => single!(Question),
 
             // Final case - if we couldn't match any of the characters we wanted, we'll mark this
             // as an invalid character
@@ -249,6 +255,10 @@ pub enum TokenKind {
     Minus,       // "-"
     Star,        // "*"
     Slash,       // "/"
+    Percent,     // "%"
+    Caret,       // "^"
+    Tilde,       // "~"
+    Question,    // "?"
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

@@ -12,10 +12,10 @@ use super::*;
 ///
 /// The BNF definition for types is:
 /// ```text
-/// Type = Path [ GenericArgs ] [ Refinements ]
+/// Type = Path [ Refinements ]
 ///      | "&" [ Refinements ] Type
 ///      | [ "!" ] "mut" Type
-///      | "[" Type [ ";" Expr ] "]" Refinemnts
+///      | "[" Type [ ";" Expr ] "]" [ Refinemnts ]
 ///      | "{" [ StructField { "," StructField } [ "," ] ] "}"
 ///      | "(" [ Type        { "," Type        } [ "," ] ] ")"
 ///      | "enum" "{" { Ident Type "," } "}" .
@@ -112,6 +112,9 @@ pub struct EnumType<'a> {
 impl<'a> Type<'a> {
     /// Consumes a `Type` as a prefix of the given tokens
     ///
+    /// Please note that this function should not be used wherever there might be ambiguity about
+    /// generic arguments - e.g. in type binding expressions.
+    ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
@@ -145,16 +148,21 @@ impl<'a> Type<'a> {
             }};
         }
 
-        use Delim::{Curlies, Parens, Squares};
         use TokenKind::{Ident, Keyword, Punctuation, Tree};
 
         match &fst.kind {
             Ident(_) => consume!(NamedType, Named),
             Punctuation(Punc::And) => consume!(RefType, Ref),
             Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut),
-            Tree { delim: Squares, .. } => consume!(ArrayType, Array),
-            Tree { delim: Curlies, .. } => consume!(StructType, Struct),
-            Tree { delim: Parens, .. } => consume!(TupleType, Tuple),
+            Tree { delim, .. } => {
+                let res = match delim {
+                    Delim::Squares => ArrayType::parse(fst, errors).map(Type::Array),
+                    Delim::Curlies => StructType::parse(fst, errors).map(Type::Struct),
+                    Delim::Parens => TupleType::parse(fst, errors).map(Type::Tuple),
+                };
+
+                res.map_err(|()| Some(1))
+            }
             Keyword(Kwd::Enum) => consume!(EnumType, Enum),
             _ => {
                 errors.push(Error::Expected {
@@ -226,34 +234,19 @@ impl<'a> MutType<'a> {
 }
 
 impl<'a> ArrayType<'a> {
-    fn consume(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ArrayType<'a>, Option<usize>> {
+    fn parse(token: &'a Token<'a>, errors: &mut Vec<Error<'a>>) -> Result<ArrayType<'a>, ()> {
         todo!()
     }
 }
 
 impl<'a> StructType<'a> {
-    fn consume(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<StructType<'a>, Option<usize>> {
+    fn parse(token: &'a Token<'a>, errors: &mut Vec<Error<'a>>) -> Result<StructType<'a>, ()> {
         todo!()
     }
 }
 
 impl<'a> TupleType<'a> {
-    fn consume(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TupleType<'a>, Option<usize>> {
+    fn parse(token: &'a Token<'a>, errors: &mut Vec<Error<'a>>) -> Result<TupleType<'a>, ()> {
         todo!()
     }
 }
@@ -280,6 +273,8 @@ impl<'a> EnumType<'a> {
 //     * TypeGenericArg                                                                           //
 //     * ConstGenericArg                                                                          //
 //     * RefGenericArg                                                                            //
+//     * AmbiguousGenericArg                                                                      //
+//     * TypeOrExpr                                                                               //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -377,6 +372,7 @@ pub enum GenericArg<'a> {
     Type(TypeGenericArg<'a>),
     Const(ConstGenericArg<'a>),
     Ref(RefGenericArg<'a>),
+    Ambiguous(AmbiguousGenericArg<'a>),
 }
 
 #[derive(Debug)]
@@ -397,6 +393,25 @@ pub struct ConstGenericArg<'a> {
 pub struct RefGenericArg<'a> {
     pub(super) src: TokenSlice<'a>,
     expr: Expr<'a>,
+}
+
+#[derive(Debug)]
+pub struct AmbiguousGenericArg<'a> {
+    pub(super) src: TokenSlice<'a>,
+    name: Option<Ident<'a>>,
+    refs: Vec<&'a Token<'a>>,
+    path: PathComponent<'a>,
+}
+
+#[derive(Debug)]
+pub enum TypeOrExpr<'a> {
+    Type(Type<'a>),
+    Expr(Expr<'a>),
+    Ambiguous {
+        consumed: usize,
+        refs: Vec<&'a Token<'a>>,
+        path: PathComponent<'a>,
+    },
 }
 
 impl<'a> Refinements<'a> {
@@ -560,15 +575,9 @@ impl<'a> GenericArg<'a> {
 
         let mut name = match &fst.kind {
             TokenKind::Keyword(Kwd::Ref) => {
-                return RefGenericArg::consume(
-                    tokens,
-                    prev_tokens,
-                    ends_early,
-                    containing_token,
-                    errors,
-                )
-                .map_err(|_| None)
-                .map(GenericArg::Ref);
+                return RefGenericArg::consume(tokens, ends_early, containing_token, errors)
+                    .map_err(|_| None)
+                    .map(GenericArg::Ref);
             }
             TokenKind::Ident(name) => Some(Ident { src: fst, name }),
             _ => None,
@@ -637,98 +646,61 @@ impl<'a> GenericArg<'a> {
             }
         }
 
-        // Past this point, we now consume what we have left as either a type or a block
-        // expression. We'll attempt to parse it as an expression first, but only if the
-
-        let next = get!(
-            consumed,
-            Err(e) => Error::Expected {
-                kind: ExpectedKind::GenericArgAfterIdent {
-                    prev_tokens,
-                    name: name.map(|_| fst),
-                },
-                found: Source::TokenResult(Err(*e)),
-            },
-            None => Error::Expected {
-                kind: ExpectedKind::GenericArgAfterIdent {
-                    prev_tokens,
-                    name: name.map(|_| fst),
-                },
-                found: end_source!(containing_token),
-            },
-        );
-
-        let can_be_block_expr = match &next.kind {
-            TokenKind::Tree {
-                delim: Delim::Curlies,
-                ..
-            } => true,
-            _ => false,
-        };
-
-        if can_be_block_expr && !must_be_type {
-            let mut block_expr_errors = Vec::new();
-            let block_expr = BlockExpr::parse(
-                tokens.get(consumed),
-                end_source!(containing_token),
-                &mut block_expr_errors,
-            )
-            .map(Expr::Block)
-            .ok();
-
-            if let Some(value) = block_expr {
-                if block_expr_errors.is_empty() {
-                    consumed += value.consumed();
-                    return Ok(GenericArg::Const(ConstGenericArg {
-                        src: &tokens[..consumed],
-                        name,
-                        value,
-                    }));
-                }
-            }
-
-            // TODO: Currently, we might get *very* bad errors if the user provides some complex
-            // constant argument here (i.e. large BlockExpr with an error partway through).
-            // Realistically, this should be very rare, but it's an important case to deal with.
-        }
-
-        // Now, we'll try to parse it as a type
-        let mut type_arg_errors = Vec::new();
-        let type_arg = Type::consume(
+        // Past this point, we konw that whatwe hae left is either a type or an expression. We'll
+        // make use of `TypeOrExpr::consume` to handle this.
+        let res = TypeOrExpr::consume(
             &tokens[consumed..],
-            TypeContext::GenericArg {
-                prev_tokens,
-                name: name.map(|_| fst),
-            },
+            prev_tokens,
             ends_early,
             containing_token,
-            &mut type_arg_errors,
-        )
-        .ok();
+            errors,
+        );
 
-        // If there weren't any errors from attempting to parse as a type - or if it couldn't be
-        // anything else, we'll return the type.
-        if let Some(type_arg) = type_arg {
-            if !can_be_block_expr || must_be_type || type_arg_errors.is_empty() {
+        match res {
+            Err(None) => Err(None),
+            Err(Some(c)) => Err(Some(consumed + c)),
+            Ok(TypeOrExpr::Type(type_arg)) => {
                 consumed += type_arg.consumed();
-                return Ok(GenericArg::Type(TypeGenericArg {
+                Ok(GenericArg::Type(TypeGenericArg {
                     src: &tokens[..consumed],
                     name,
                     type_arg,
-                }));
+                }))
+            }
+            Ok(TypeOrExpr::Expr(value)) => {
+                consumed += value.consumed();
+                Ok(GenericArg::Const(ConstGenericArg {
+                    src: &tokens[..consumed],
+                    name,
+                    value,
+                }))
+            }
+            Ok(TypeOrExpr::Ambiguous {
+                consumed: c,
+                refs,
+                path,
+            }) => {
+                consumed += c;
+                Ok(GenericArg::Ambiguous(AmbiguousGenericArg {
+                    src: &tokens[..consumed],
+                    name,
+                    refs,
+                    path,
+                }))
             }
         }
+    }
+}
 
-        // Now, we know that there's errors for both options. We'll generate an appropriate error
-        errors.push(Error::Expected {
-            kind: ExpectedKind::GenericArgAfterIdent {
-                prev_tokens,
-                name: name.map(|_| fst),
-            },
-            found: Source::TokenResult(Ok(next)),
-        });
-
-        Err(None)
+impl<'a> TypeOrExpr<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        prev_tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<TypeOrExpr<'a>, Option<usize>> {
+        todo!()
     }
 }
 
@@ -744,7 +716,6 @@ impl<'a> RefGenericArg<'a> {
     /// the number of tokens that were marked as invalid here.
     fn consume(
         tokens: TokenSlice<'a>,
-        prev_tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -758,17 +729,20 @@ impl<'a> RefGenericArg<'a> {
             res => panic!("Expected keyword `ref`, found {:?}", res),
         }
 
-        /*
-        // FIXME: This must be uncommented once expression parsing is implemented
-        let expr = Expr::consume(___).map_err(|cs| cs.map(|c| c + 1))?;
+        let expr = Expr::consume_no_delim(
+            &tokens[1..],
+            Some(BindingPower::Deref),
+            None,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + 1))?;
         let consumed = expr.consumed() + 1;
 
         Ok(RefGenericArg {
             src: &tokens[..consumed],
             expr,
         })
-        */
-
-        todo!()
     }
 }

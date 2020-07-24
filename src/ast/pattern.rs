@@ -61,6 +61,17 @@ pub struct RefPattern<'a> {
     pat: Box<Pattern<'a>>,
 }
 
+impl<'a> Pattern<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Pattern<'a>, Option<usize>> {
+        todo!()
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper types                                                                                   //
 // * FieldPattern                                                                                 //

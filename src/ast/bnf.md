@@ -79,7 +79,8 @@ UseStmt = Vis "use" UsePath ";" .
 UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
         | UseKind Path [ "as" Ident ] .
 UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
-Path = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } .
+Path = PathComponent { "." PathComponent } .
+PathComponent = Ident [ GenericArgs ] .
 
 Vis = [ "pub" ] .
 
@@ -105,8 +106,8 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
 
 GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
 GenericArg = [ Ident ":" ] Type
-           | [ Ident ":" ] BlockExpr
-           | "ref" Expr .
+           | [ Ident ":" ] Expr    # Limited to BindingPower::Add/Sub or greater
+           | "ref" Expr .          # Limited to BindingPower::Deref or greater
 
 Trait = Path .
 
@@ -132,26 +133,25 @@ Stmt = BigExpr "\n"
 Assignee = "*" Expr
          | Path .
 
-Expr = Ident
-     | Literal
-     | Expr "." Ident                             # Struct fields
-     | Expr "~" Type                              # Type binding
+Expr = Literal
+     | NamedExpr
      | PrefixOp Expr
      | Expr BinOp Expr
      | Expr PostfixOp
-     | "let" Pattern [ ":" Type ] [ "=" Expr ]    # Let expressions
-     | ( Expr | Path ) "(" StructFieldsExpr ")"   # Function calls / (named?) tuples
-     | [        Path ] "{" StructFieldsExpr "}"   # (Named?) structs 
-     | "[" Expr { "," Expr } [ "," ] "]"          # Array literals
-     | "(" Expr { "," Expr } [ "," ] ")"          # Tuples
-     | BlockExpr                                  # Blocks
-     | ForExpr                                    # For loops
-     | WhileExpr                                  # While loops
-     | DoWhileExpr                                # Do-while loops
-     | LoopExpr                                   # "Loop" loops
-     | IfExpr                                     # Ifs
-     | MatchExpr .                                # Matches
+     | [ Path ] "{" StructFieldsExpr "}"    # (Named?) structs 
+     | "[" Expr { "," Expr } [ "," ] "]"    # Array literals
+     | "(" Expr { "," Expr } [ "," ] ")"    # Tuples
+     | BlockExpr                            # Blocks
+     | LetExpr                              # "let" expressions
+     | ForExpr                              # For loops
+     | WhileExpr                            # While loops
+     | DoWhileExpr                          # Do-while loops
+     | LoopExpr                             # "Loop" loops
+     | IfExpr                               # Ifs
+     | MatchExpr .                          # Matches
 
+NamedExpr = PathComponent .
+LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
 
 BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
 
@@ -162,13 +162,22 @@ WhileExpr   = "while" Expr BlockExpr [ "else" BigExpr ] .
 BlockExpr   = "{" { Stmt } [ Expr ] "}" .
 
 MatchExpr = "match" Expr "{" { MatchArm } "}" .
-MatchArm = Pattern "=>" ( BigExpr "\n" | Expr "," ) .
+MatchArm = Pattern [ "if" Expr ] "=>" ( BigExpr "\n" | Expr "," ) .
 
 PrefixOp = "!" | "-" | "&" [ "mut" ] | "*" .
 BinOp = "+" | "-" | "*" | "/" | "%"
       | "&" | "|" | "^" | "<<" | ">>" | "&&" | "||"
       | "<" | ">" | "<=" | ">=" | "==" | "!=" .
-PostfixOp = "?" .
+
+PostfixOp = "[" Expr "]"                # Indexing
+          | "." Ident [ GenericArgs ]   # Field access / method calls
+          | "." IntLiteral              # Tuple indexing
+          | "(" StructFieldsExpr ")"    # Function calls
+          | "~" Type                    # Type binding
+          | "is" Pattern                # Pattern equivalence
+          | "?"                         # "try" operator
+
+PostfixOp = "[" Expr "]" | "?" .
 
 AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
          | "&=" | "|=" | "<<=" | ">>="
@@ -176,8 +185,8 @@ AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
 
 FnArgs = "(" StructFieldsExpr ")" .
 
-Pattern = [ Path ] StructPattern
-        | [ Path ] "(" ElementsPattern ")"
+Pattern = [ "." Ident | Path ] StructPattern
+        | [ "." Ident | Path ] "(" ElementsPattern ")"
         | "[" ElementsPattern "]"
         | [ "mut" ] Ident
         | "assign" Assignee 

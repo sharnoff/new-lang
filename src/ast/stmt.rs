@@ -1,4 +1,10 @@
-//! Statment parsing
+//! Types for statement parsing
+//!
+//! The actual parsing of statments is handled in [`BlockExpr::parse`], because it's only there
+//! that the distinction can be made between additional statements and a tail expression inside the
+//! block.
+//!
+//! [`BlockExpr::parse`]: ../expr/struct.BlockExpr.html#method.parse
 
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
@@ -36,6 +42,7 @@ pub struct AssignStmt<'a> {
 // * AssignOp                                                                                     //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// AKA lvalue - "Assignee" is more intuitive to people who aren't in the know
 #[derive(Debug)]
 pub enum Assignee<'a> {
     Deref(PrefixOpExpr<'a>),
