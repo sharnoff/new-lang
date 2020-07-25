@@ -129,6 +129,8 @@ TypeBound = [ Refinements ] Trait { "+" Trait } .
 Stmt = BigExpr "\n"
      | Expr ";"
      | Assignee AssignOp ( Expr ";" | BigExpr "\n" )
+     | "continue" ";"
+     | "return" Expr ";"
      | Item .
 Assignee = "*" Expr
          | Path .
@@ -138,7 +140,7 @@ Expr = Literal
      | PrefixOp Expr
      | Expr BinOp Expr
      | Expr PostfixOp
-     | [ Path ] "{" StructFieldsExpr "}"    # (Named?) structs 
+     | "{" StructFieldsExpr "}"             # Anonymous structs 
      | "[" Expr { "," Expr } [ "," ] "]"    # Array literals
      | "(" Expr { "," Expr } [ "," ] ")"    # Tuples
      | BlockExpr                            # Blocks
@@ -148,7 +150,10 @@ Expr = Literal
      | DoWhileExpr                          # Do-while loops
      | LoopExpr                             # "Loop" loops
      | IfExpr                               # Ifs
-     | MatchExpr .                          # Matches
+     | MatchExpr                            # Matches
+     | "continue"
+     | "break" [ Expr ]
+     | "return" [ Expr ] .
 
 NamedExpr = PathComponent .
 LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
@@ -172,7 +177,8 @@ BinOp = "+" | "-" | "*" | "/" | "%"
 PostfixOp = "[" Expr "]"                # Indexing
           | "." Ident [ GenericArgs ]   # Field access / method calls
           | "." IntLiteral              # Tuple indexing
-          | "(" StructFieldsExpr ")"    # Function calls
+          | FnArgs                      # Function calls
+          | "{" StructFieldsExpr "}"    # Named structs
           | "~" Type                    # Type binding
           | "is" Pattern                # Pattern equivalence
           | "?"                         # "try" operator
@@ -183,7 +189,8 @@ AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
          | "&=" | "|=" | "<<=" | ">>="
          | "=" .
 
-FnArgs = "(" StructFieldsExpr ")" .
+FnArgs = "(" [ FnArg { "," FnArg } [ "," ] ] ")" .
+FnArg = [ Ident ":" ] Expr .
 
 Pattern = [ "." Ident | Path ] StructPattern
         | [ "." Ident | Path ] "(" ElementsPattern ")"

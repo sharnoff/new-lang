@@ -109,6 +109,7 @@ pub enum ExpectedKind<'a> {
     GenericArgOrExpr,
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
+    ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
     GenericParams(GenericParamsContext<'a>),
     Type(TypeContext<'a>),
     TypeBound(TypeBoundContext<'a>),
@@ -214,6 +215,7 @@ pub struct PathComponentContext<'a> {
 #[derive(Debug, Copy, Clone)]
 pub enum NoCurlyContext {
     IfExpr,
+    ForIter,
     MatchScrutinee,
 }
 

@@ -20,6 +20,12 @@ impl<T: Consumed> Consumed for Option<T> {
     }
 }
 
+impl<T: Consumed> Consumed for Box<T> {
+    fn consumed(&self) -> usize {
+        self.consumed()
+    }
+}
+
 macro_rules! impl_all {
     ($($(@$single:ident:)? $ty:ident $({$($variants:ident),* $(,)?})?),* $(,)?) => {
         $(impl_all!(@internal $(@$single)? $ty $($($variants)*)?);)*
@@ -83,8 +89,8 @@ impl_all! {
 
     // Expressions
     Expr {
-        Literal, Named, PrefixOp, BinOp, PostfixOp, Struct, Array,
-        Tuple, Block, AmbiguousBlock, Let, For, While, DoWhile, Loop, If, Match,
+        Literal, Named, PrefixOp, BinOp, PostfixOp, Struct, Array, Tuple, Block,
+        AmbiguousBlock, Let, For, While, DoWhile, Loop, If, Match, Continue, Break, Return
     },
     PrefixOpExpr,
     BinOpExpr,
@@ -101,13 +107,16 @@ impl_all! {
     LoopExpr,
     IfExpr,
     MatchExpr,
+    ContinueExpr,
+    BreakExpr,
+    ReturnExpr,
     // Expression helper bits
     Path,
     PathComponent,
-    PrefixOp,
-    BinOp,
     PostfixOp,
+    FnArg,
     StructFieldsExpr,
+    ElseBranch,
 
     // Statements
     Stmt { BigExpr, LittleExpr, Assign, Item },

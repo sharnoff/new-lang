@@ -128,19 +128,6 @@ impl<'a> Type<'a> {
         // This parser is relatively simple; we can just parse based on the type of token that we
         // find. The syntax for each individual type is fairly distinct; we don't need to account
         // for special cases.
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
-
-        let fst = get!(
-            0,
-            Err(e) => Error::Expected {
-                kind: ExpectedKind::Type(ctx),
-                found: Source::TokenResult(Err(*e)),
-            },
-            None => Error::Expected {
-                kind: ExpectedKind::Type(ctx),
-                found: end_source!(containing_token),
-            },
-        );
 
         macro_rules! consume {
             ($type:ident, $variant:ident) => {{
@@ -150,11 +137,13 @@ impl<'a> Type<'a> {
 
         use TokenKind::{Ident, Keyword, Punctuation, Tree};
 
-        match &fst.kind {
+        make_expect!(tokens, 0, ends_early, containing_token, errors);
+        expect!((
             Ident(_) => consume!(NamedType, Named),
             Punctuation(Punc::And) => consume!(RefType, Ref),
             Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut),
             Tree { delim, .. } => {
+                let fst = tokens[0].as_ref().unwrap();
                 let res = match delim {
                     Delim::Squares => ArrayType::parse(fst, errors).map(Type::Array),
                     Delim::Curlies => StructType::parse(fst, errors).map(Type::Struct),
@@ -162,17 +151,10 @@ impl<'a> Type<'a> {
                 };
 
                 res.map_err(|()| Some(1))
-            }
+            },
             Keyword(Kwd::Enum) => consume!(EnumType, Enum),
-            _ => {
-                errors.push(Error::Expected {
-                    kind: ExpectedKind::Type(ctx),
-                    found: Source::TokenResult(Ok(fst)),
-                });
-
-                return Err(None);
-            }
-        }
+            @else ExpectedKind::Type(ctx),
+        ))
     }
 }
 
@@ -457,8 +439,6 @@ impl<'a> GenericArgs<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<GenericArgs<'a>>, Option<usize>> {
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
-
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         match tokens.first() {
             Some(Ok(t)) => match &t.kind {
@@ -471,6 +451,8 @@ impl<'a> GenericArgs<'a> {
         let mut consumed = 1;
         let mut poisoned = false;
         let mut args = Vec::new();
+
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         loop {
             let arg_res = GenericArg::consume(
@@ -492,40 +474,19 @@ impl<'a> GenericArgs<'a> {
                 }
             }
 
-            let next = get!(
-                consumed,
-                Err(e) => Error::Expected {
-                    kind: ExpectedKind::GenericArgDelim { prev_tokens: &tokens[consumed..] },
-                    found: Source::TokenResult(Err(*e)),
-                },
-                None => Error::Expected {
-                    kind: ExpectedKind::GenericArgDelim { prev_tokens: &tokens[consumed..] },
-                    found: end_source!(containing_token),
-                },
-            );
-
-            match &next.kind {
+            expect!((
                 // If we find ">", it's the end of the generic arguments.
                 TokenKind::Punctuation(Punc::Gt) => {
                     consumed += 1;
                     break;
-                }
+                },
                 // If we find ",", we're expecting another generic arguments
                 TokenKind::Punctuation(Punc::Comma) => {
                     consumed += 1;
                     continue;
-                }
-                _ => {
-                    errors.push(Error::Expected {
-                        kind: ExpectedKind::GenericArgDelim {
-                            prev_tokens: &tokens[..consumed],
-                        },
-                        found: Source::TokenResult(Ok(next)),
-                    });
-
-                    return Err(None);
-                }
-            }
+                },
+                @else ExpectedKind::GenericArgDelim { prev_tokens: &tokens[consumed..] },
+            ));
         }
 
         Ok(Some(GenericArgs {
@@ -559,7 +520,9 @@ impl<'a> GenericArg<'a> {
         // can be determined immediately becuase they start with "ref", so parsing for those is
         // delegated to `RefGenericArg::consume`
 
+        let mut consumed = 0;
         make_getter!(macro_rules! get, tokens, ends_early, errors);
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         let fst = get!(
             0,
@@ -583,9 +546,6 @@ impl<'a> GenericArg<'a> {
             _ => None,
         };
 
-        let mut must_be_type = false;
-        let mut consumed = 0;
-
         // We make this a loop so that we can break out of the block if it turns out that the name
         // we originally saw wasn't for one of the generics arguments.
         if name.is_some() {
@@ -594,56 +554,28 @@ impl<'a> GenericArg<'a> {
             // If it doesn't, it's entirely possible that the starting identifier was instead as
             // part of a type parameter (not a block expression, though), but only if the token
             // following the identifier is one of the following set:
-            //   { "," , ">" , "<"  }
-            //     └┬┘   └┬┘   └┬┘
-            //      └──┬──┘    Ident is the name of a type, followed by generic arguments
-            //    Ident is *is* the type, followed by next generic arg / end of generic args list
-            let expect_colon_token = get!(
-                1,
-                Err(e) => Error::Expected {
-                    kind: ExpectedKind::GenericArg { prev_tokens },
-                    found: Source::TokenResult(Err(*e)),
+            //   { "|",  "," , ">" , "<" }
+            //     └┬┘   └┬┘   └┬┘   └┬┘
+            //      │     └──┬──┘    Ident is the name of a type, followed by generic arguments
+            //      │   Ident *is* the type, followed by next generic arg / end of generic args
+            //      │   list
+            //  Ident *is* the type, followed by refinements
+            expect!((
+                // Per the comment above, we'll discard the original identifier, as it must be part
+                // of the type.
+                TokenKind::Punctuation(Punc::Comma)
+                | TokenKind::Punctuation(Punc::Gt)
+                | TokenKind::Punctuation(Punc::Or)
+                | TokenKind::Punctuation(Punc::Lt) => name = None,
+                // Otherwise, if we find `Ident ":"`, we'll consume both and parse the type from
+                // the new starting point
+                TokenKind::Punctuation(Punc::Colon) => consumed = 2,
+                // Anything else wouldn't have been vaid either way, so we'll
+                @else ExpectedKind::GenericArgFollowIdent {
+                    prev_tokens,
+                    ident: fst,
                 },
-                None => Error::Expected {
-                    kind: ExpectedKind::GenericArg { prev_tokens },
-                    found: end_source!(containing_token),
-                },
-            );
-
-            match &expect_colon_token.kind {
-                TokenKind::Punctuation(p) => match p {
-                    // Per the comment above, we'll break out of this loop to parse the type
-                    Punc::Comma | Punc::Gt | Punc::Lt => {
-                        name = None;
-                        must_be_type = true;
-                    }
-                    // If we found a colon, we'll mark that we actually used the identifier and
-                    // colon, leaving `name` as it is.
-                    Punc::Colon => consumed = 2,
-                    _ => {
-                        errors.push(Error::Expected {
-                            kind: ExpectedKind::GenericArgFollowIdent {
-                                prev_tokens,
-                                ident: fst,
-                            },
-                            found: Source::TokenResult(Ok(expect_colon_token)),
-                        });
-
-                        return Err(None);
-                    }
-                },
-                _ => {
-                    errors.push(Error::Expected {
-                        kind: ExpectedKind::GenericArgFollowIdent {
-                            prev_tokens,
-                            ident: fst,
-                        },
-                        found: Source::TokenResult(Ok(expect_colon_token)),
-                    });
-
-                    return Err(None);
-                }
-            }
+            ));
         }
 
         // Past this point, we konw that whatwe hae left is either a type or an expression. We'll

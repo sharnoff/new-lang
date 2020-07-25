@@ -137,3 +137,62 @@ macro_rules! first {
         $head
     }};
 }
+
+// We need to have rustfmt skip this, because it otherwise indents one further on every additional
+// run
+#[rustfmt::skip]
+macro_rules! make_expect {
+    ($tokens:expr, $consumed:expr, $ends_early:expr, $containing_token:expr, $errors:expr) => {
+        macro_rules! expect {
+            ($all:tt) => {
+                make_expect!(@inner: $tokens, $consumed, $ends_early, $containing_token, $errors, $all)
+            }
+        }
+    };
+    (
+        @inner:
+        $tokens:expr,
+        $consumed:expr,
+        $ends_early:expr,
+        $containing_token:expr,
+        $errors:expr,
+        ($($($token_kind:pat)|+ => $arm:expr,)+
+        @else $expected_kind:expr $(,)?)
+    ) => {{
+        match $tokens.get($consumed) {
+            // If we run out of tokens (but it ended early), there's no point in reporting the same
+            // error twice
+            None if $ends_early => return Err(None),
+            // Otherwise, we *were* expecting the given token kind!
+            None => {
+                $errors.push(Error::Expected {
+                    kind: $expected_kind,
+                    found: end_source!($containing_token),
+                });
+
+                return Err(None);
+            }
+
+            Some(Err(e)) => {
+                $errors.push(Error::Expected {
+                    kind: $expected_kind,
+                    found: Source::TokenResult(Err(*e)),
+                });
+
+                return Err(None);
+            }
+
+            Some(Ok(t)) => match &t.kind {
+                $($($token_kind)|+ => $arm,)+
+                _ => {
+                    $errors.push(Error::Expected {
+                        kind: $expected_kind,
+                        found: Source::TokenResult(Ok(t)),
+                    });
+
+                    return Err(None);
+                }
+            }
+        }
+    }}
+}
