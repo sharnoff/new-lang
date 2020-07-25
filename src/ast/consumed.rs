@@ -163,7 +163,7 @@ impl_all! {
     Literal { Char, String, Int, Float },
     @Single: CharLiteral,
     @Single: StringLiteral,
-    @Single: IntLiteral,
+    IntLiteral,
     FloatLiteral,
 }
 
