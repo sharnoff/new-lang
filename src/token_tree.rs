@@ -155,6 +155,7 @@ pub enum Punc {
     DoubleColon, // "::"
     Colon,       // ":"
     Comma,       // ","
+    DotDot,      // ".."
     Dot,         // "."
     ThinArrow,   // "->"
     ThickArrow,  // "=>"
@@ -265,6 +266,7 @@ impl<'a> Token<'a> {
             [Colon, Colon, ..] => punc!(DoubleColon, 2),
             [Colon, ..] => punc!(Colon),
             [Comma, ..] => punc!(Comma),
+            [Dot, Dot, ..] => punc!(DotDot, 2),
             [Dot, ..] => punc!(Dot),
             [Minus, Gt, ..] => punc!(ThinArrow, 2),
             [Eq, Gt, ..] => punc!(ThickArrow, 2),

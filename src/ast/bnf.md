@@ -192,16 +192,25 @@ AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
 FnArgs = "(" [ FnArg { "," FnArg } [ "," ] ] ")" .
 FnArg = [ Ident ":" ] Expr .
 
-Pattern = [ "." Ident | Path ] StructPattern
-        | [ "." Ident | Path ] "(" ElementsPattern ")"
-        | "[" ElementsPattern "]"
-        | [ "mut" ] Ident
-        | "assign" Assignee 
-        | "&" Pattern .
+Pattern = NamedPattern
+        | StructPattern
+        | TuplePattern
+        | ArrayPattern
+        | AssignPattern
+        | RefPattern
+        | Literal .
+NamedPattern = PatternPath [ StructPattern | TuplePattern ] .
+PatternPath = "." Ident | Ident { "." Ident } .
+
 StructPattern = "{" [ FieldPattern [ "," FieldPattern ] [ "," ] ] [ ".." ] "}" .
 FieldPattern = Ident [ ":" Pattern ] .
 
-ElementsPattern = [ Pattern { "," Pattern } [ "," ] ] [ ".." ] .
+TuplePattern = "(" [ Pattern { "," Pattern } [ "," ] ] ")" .
+ArrayPattern = "[" [ ElementPattern { "," ElementPattern } [ "," ] ]  "]" .
+ElementPattern = ".." | Pattern .
+
+AssignPattern    = "assign" Assignee .
+RefPattern       = "&" Pattern .
 
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .
 FloatLiteral = IntLiteral "." IntLiteral .

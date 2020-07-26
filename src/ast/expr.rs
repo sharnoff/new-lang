@@ -1334,8 +1334,15 @@ impl<'a> LetExpr<'a> {
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         // Next, we have the pattern to bind to
-        let pat = Pattern::consume(&tokens[consumed..], ends_early, containing_token, errors)
-            .map_err(|cs| cs.map(|c| c + consumed))?;
+        let pat_ctx = PatternContext::Let(let_kwd);
+        let pat = Pattern::consume(
+            &tokens[consumed..],
+            pat_ctx,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
         consumed += pat.consumed();
 
         // If we have a ":" token following the pattern, we'll expect a type
@@ -1427,19 +1434,26 @@ impl<'a> ForExpr<'a> {
         // The first thing we're going to do is just to check that the input we were given *did*
         // start with the `for` keyword.
 
-        match tokens.first() {
+        let for_kwd = match tokens.first() {
             None | Some(Err(_)) => panic!("expected keyword `for`, found {:?}", tokens.first()),
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::For) => (),
+                TokenKind::Keyword(Kwd::For) => t,
                 _ => panic!("expected keyword `for`, found token kind {:?}", t.kind),
             },
-        }
+        };
 
         let mut consumed = 1;
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let pat = Pattern::consume(&tokens[consumed..], ends_early, containing_token, errors)
-            .map_err(|cs| cs.map(|c| c + consumed))?;
+        let pat_ctx = PatternContext::For(for_kwd);
+        let pat = Pattern::consume(
+            &tokens[consumed..],
+            pat_ctx,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
         consumed += pat.consumed();
 
         // After the pattern, we expect the keyword "in"

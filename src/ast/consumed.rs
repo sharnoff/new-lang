@@ -14,6 +14,12 @@ pub(super) trait Consumed {
     fn consumed(&self) -> usize;
 }
 
+impl Consumed for &Token<'_> {
+    fn consumed(&self) -> usize {
+        1
+    }
+}
+
 impl<T: Consumed> Consumed for Option<T> {
     fn consumed(&self) -> usize {
         self.as_ref().map(Consumed::consumed).unwrap_or(0)
@@ -22,7 +28,7 @@ impl<T: Consumed> Consumed for Option<T> {
 
 impl<T: Consumed> Consumed for Box<T> {
     fn consumed(&self) -> usize {
-        self.consumed()
+        std::ops::Deref::deref(&self).consumed()
     }
 }
 
@@ -126,14 +132,16 @@ impl_all! {
     Assignee { Deref, Path },
 
     // Patterns
-    Pattern { Struct, Tuple, Array, Name, Assign, Ref },
-    StructPattern,
-    TuplePattern,
+    Pattern { Named, Struct, Tuple, Array, Assign, Ref, Literal },
+    NamedPattern,
+    NamedPatternKind { Struct, Tuple },
+    @Single: StructPattern,
+    @Single: TuplePattern,
     @Single: ArrayPattern,
-    NamePattern,
     AssignPattern,
     RefPattern,
-    // Pattern helper bits
+    FieldPattern,
+    ElementPattern { Dots, Pattern },
 
     // Types
     Type { Named, Ref, Mut, Array, Struct, Tuple, Enum },

@@ -110,6 +110,14 @@ pub enum ExpectedKind<'a> {
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
     ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
+    Pattern(PatternContext<'a>),
+    StructPatternField(PatternContext<'a>),
+    StructPatternEnd(PatternContext<'a>),
+    StructPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
+    TuplePatternElement(PatternContext<'a>),
+    TuplePatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
+    ArrayPatternElement(PatternContext<'a>),
+    ArrayPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
     GenericParams(GenericParamsContext<'a>),
     Type(TypeContext<'a>),
     TypeBound(TypeBoundContext<'a>),
@@ -167,6 +175,7 @@ pub enum IdentContext<'a> {
 
     /// Path components expect an identifier
     PathComponent(PathComponentContext<'a>),
+    PatternPath(PatternContext<'a>, TokenSlice<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -223,6 +232,13 @@ pub enum NoCurlyContext {
 pub struct LetContext<'a> {
     pub let_kwd: &'a Token<'a>,
     pub pat: TokenSlice<'a>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum PatternContext<'a> {
+    Let(&'a Token<'a>),
+    Match(&'a Token<'a>),
+    For(&'a Token<'a>),
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {

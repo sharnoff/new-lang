@@ -72,3 +72,14 @@ pub enum AssignOp {
     /// `=`
     Eq,
 }
+
+impl<'a> Assignee<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Assignee<'a>, Option<usize>> {
+        todo!()
+    }
+}
