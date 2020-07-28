@@ -110,6 +110,12 @@ pub enum ExpectedKind<'a> {
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
     ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
+    StructFieldExpr,
+    StructFieldExprDelim(&'a Token<'a>), // The containing token
+    ArrayElement,
+    ArrayDelim(&'a Token<'a>), // The containing token
+    TupleElement,
+    TupleDelim(&'a Token<'a>), // The containing token
     Pattern(PatternContext<'a>),
     StructPatternField(PatternContext<'a>),
     StructPatternEnd(PatternContext<'a>),
@@ -225,6 +231,7 @@ pub struct PathComponentContext<'a> {
 pub enum NoCurlyContext {
     IfExpr,
     ForIter,
+    WhileCondition,
     MatchScrutinee,
 }
 

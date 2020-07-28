@@ -300,7 +300,7 @@ impl<'a> Pattern<'a> {
         let mut poisoned = false;
         let mut elements = Vec::new();
 
-        while consumed < inner.len() {
+        loop {
             match inner.get(consumed) {
                 // Running out of tokens is actually fine ~ we'll break out of the loop to do a
                 // normal return.

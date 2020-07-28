@@ -16,7 +16,7 @@ pub enum Expr<'a> {
     BinOp(Box<BinOpExpr<'a>>),
     PostfixOp(PostfixOpExpr<'a>),
     Struct(StructExpr<'a>),
-    Array(ArrayLitExpr<'a>),
+    Array(ArrayExpr<'a>),
     Tuple(TupleExpr<'a>),
     Block(BlockExpr<'a>),
     AmbiguousBlock(AmbiguousBlockExpr<'a>),
@@ -30,6 +30,172 @@ pub enum Expr<'a> {
     Continue(ContinueExpr<'a>),
     Break(BreakExpr<'a>),
     Return(ReturnExpr<'a>),
+}
+
+/// The types of delimeters that may occur around expression parsing
+///
+/// The outer delimeter context is necessary for expression parsing because certain assumptions can
+/// only be made given the outer context. For example, take the following expression:
+/// ```text
+/// Foo<T, S> { x: bar() }
+///      ^ disambiguation point
+/// ```
+/// If we're able to deduce that the comma cannot be interpreted as a delimeter between
+/// *expressions*, then we can immediately parse the first half of the expression as an identifier
+/// with generic arguments. On the other hand, if this isn't known - e.g. if the expression occurs
+/// in a context such as the following - we must wait longer to disambiguate.
+/// ```text
+/// (1, Foo<T,S> { x: bar() }
+///                 ^ disambiguation point
+/// ```
+///
+/// In addition to "temporary" ambiguity like the case above, it is sometimes impossible to know
+/// during parsing how the input tokens should be interpreted. Take the following for example:
+/// ```text
+/// (foo<T, S>(bar + 1))
+/// ```
+/// This could either constitute a single function-call expression (i.e. with generic function
+/// `foo`) or as two comparison expressions (the first being between `foo` and `T`, and the second
+/// between `S` and `(bar + 1)`). There are a few different ways that this ambiguity can appear
+/// inside comma-delimited lists, and a separate class of ambiguities that can appear where colons
+/// are allowed (e.g. struct instantiation). Some of these are listed below:
+///
+/// | Context     | Expression                           |
+/// |-------------|--------------------------------------|
+/// | Tuple/Array | `foo<T, S> ( x + y, z )`             |
+/// | Tuple/Array | `foo<U, T, S> { x: y, z }`*          |
+/// | Tuple/Array | `foo<T, Bar<S, U>> ( x + y, z )`     |
+/// | Struct      | `foo: bar<T, x: Baz, y: T> (z)`      |
+/// \* Not semantically valid (no implementation of `Ord` for anonymous structs)
+#[derive(Copy, Clone, Debug)]
+pub enum ExprDelim {
+    /// Expressions that occur within tuple or array literals
+    Comma,
+    /// Expressions that occur within struct instantiation
+    StructFields,
+    /// Expressions that occur as part of function argumentsf
+    FnArgs,
+}
+
+/// A helper type for use by [`Expr::consume_delimited`]
+///
+/// This provides a uniform representation of the various bits of information that may be used to
+/// construct a single field or element under different expression contexts. This type is then used
+/// by the restriction that the ambiguous fields produced by `Expr::consume_delimited` implement
+/// `From<Delimited<'a>>`, with the additional assumption that each instance of `Delimited` given
+/// to them satisfies the intended requirements (e.g. tuple elements are not named, struct fields
+/// require a name, etc).
+///
+/// [`Expr::consume_delimited`]: enum.Expr.html#method.consume_delimited
+#[derive(Debug)]
+struct Delimited<'a> {
+    src: TokenSlice<'a>,
+    name: Option<Ident<'a>>,
+    expr: Option<Expr<'a>>,
+}
+
+/// A helper type for managing the various ambiguities in parsing
+///
+/// All syntax ambiguities unable to be resolved at parse-time can be determined later, with the
+/// addition of type information. This is exposed here, with the two variants for allowing
+/// ambiguities to be mixed in with concrete values.
+///
+/// ## Examples
+/// ### Bastion of the turbofish
+///
+/// We'll go through a couple examples here to explain (and justify) the usage of this type. The
+/// first is the "simple" ambiguous case presented in Rust's iconic ["bastion of the turbofish"]:
+/// ```
+/// let (oh, woe, is, me) = ("the", "Turbofish", "remains", "undefeated");
+/// let _ = (oh<woe, is>(me));
+/// ```
+/// If we were to ignore the first line, we'd see two different possibilities the internals of the
+/// tuple literal on the second line: either `oh` as taking generic arguments `woe` and `is`, with
+/// a single argument `me` **OR** with all of the above as values, producing two comparison
+/// expressions. We can determine from the type information which one of these it should be, but we
+/// don't have access to that information at parse-time. As such, we'd produce tuple contents that
+/// look something like this:
+/// ```
+/// use Ambiguous::Known;
+///
+/// let contents = [
+///     Ambiguous::Conditional {
+///         all_generic: "oh<woe, is>(me)",
+///         generics: [ ("oh", ["oh<woe", "is>(me)"]) ],
+///     },
+/// ];
+/// ```
+/// We're using strings here as a simpler medium for demonstrating this - note that these are not
+/// *actually* represented using strings, but the full AST types.
+///
+/// Once we have this structure, it's a simple matter to refine the AST later, with more type
+/// information available.
+///
+/// ["bastion of the turbofish"]: https://github.com/rust-lang/rust/blob/2155adbc3aeb4b38466a7127a7f4e92a8f8fc4e5/src/test/ui/bastion-of-the-turbofish.rs
+///
+/// ### A more complex example
+///
+/// There are other, more complex ways that ambiguity can occur (taking into account both temporary
+/// and permenant ambiguity). Let's take the following expression as an example:
+/// ```
+/// (foo<T,S>(y) + bar<T,S>(z))
+/// ```
+/// This ambiguous expression could represent any of the following *three* lists:
+/// ```text
+/// ["foo<T,S>(y) + bar<T,S>(z)"]
+/// ["foo<T", "S>(y) + bar<T,S>(z)"]
+/// ["foo<T,S>(y) + bar<T",S>(z)"]
+/// ```
+///
+/// This is an important detail to note: that there's only three possibilities here is a result of
+/// the general formula for the number of differnet possible interpretations for a single ambiguous
+/// expression. If we have `n` ambiguous sub-expressions that may involve generics arguments, we
+/// can have at most `n + 1` possible valid interpretations.
+///
+/// To see why this is the case, we'll look at the excluded example from above:
+/// ```text
+/// ["foo<T", "S>(y) + bar<T", "S>(z)"]
+/// ```
+/// Here, because we've interpreted both `foo` and `bar` as not having generics arguments, we end
+/// up with chained comparison (of the form `x > y < z`) between them. This happens for any number
+/// of chained sub-expressions with a similar form to `foo` or `bar`, and so we get our upper bound
+/// of `n + 1`.
+///
+/// We represent this with the `Conditional` variant here - `n` sets of expressions with the
+/// `generics` field, and the `+1` from `all_generic`.
+#[derive(Debug)]
+pub enum Ambiguous<'a, T> {
+    Known(T),
+    Conditional {
+        /// The singlular expression if all values are generic
+        all_generic: T,
+
+        /// The set of expressions that we might interpret the set of tokens as, given that a
+        /// determiner expression is *not* generic. These are strictly sorted by when the
+        /// determiner expression appears, so that error messages that are seemingly magic can be
+        /// given.
+        generics: Vec<ConditionalSet<'a, T>>,
+    },
+}
+
+impl<T: Consumed> Consumed for Ambiguous<'_, T> {
+    fn consumed(&self) -> usize {
+        match self {
+            Ambiguous::Known(t) => t.consumed(),
+            Ambiguous::Conditional { all_generic, .. } => all_generic.consumed(),
+        }
+    }
+}
+
+/// A helper type for [`Ambiguous`](#enum.Ambiguous.html)
+#[derive(Debug)]
+pub struct ConditionalSet<'a, T> {
+    /// The expression that must *not* be generic for the tokens to be interpreted as this set
+    determiner: Expr<'a>,
+    /// The set of expressions that are must be generic for the tokens to be interpreted as this
+    /// set
+    implied: Vec<Expr<'a>>,
+    set: Vec<T>,
 }
 
 /// A prefix-operator expression, given by the operator and the right-hand-side expression
@@ -167,30 +333,20 @@ pub enum BinOp {
 ///           | "is" Pattern                # Pattern equivalence
 ///           | "?"                         # "try" operator
 /// ```
-/// The operator is given by a [`PostfixOp`], which is primarily a thin wrapper around
-/// [`PostifxOpKind`].
+/// The operator is given by a [`PostfixOp`], and its source stored separately.
 ///
 /// There are no publicly-exposed functions to produce postfix-operator expressions - this is
 /// because expression parsing is a complex beast that is managed through a key selection of
 /// methods on [`Expr`].
 ///
-/// [`PostfixOp`]: struct.PostfixOp.html
-/// [`PostfixOpKind`]: enum.PostfixOpKind.html
+/// [`PostfixOp`]: enum.PostfixOp.html
 /// [`Expr`]: enum.Expr.html
 #[derive(Debug)]
 pub struct PostfixOpExpr<'a> {
     pub(super) src: TokenSlice<'a>,
     expr: Box<Expr<'a>>,
     op: PostfixOp<'a>,
-}
-
-/// A thin wrapper around [`PostfixOpKind`] to pair it with a source.
-///
-/// [`PostfixOpKind`]: enum.PostfixOpKind.html
-#[derive(Debug)]
-pub struct PostfixOp<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub kind: PostfixOpKind<'a>,
+    op_src: TokenSlice<'a>,
 }
 
 /// The different types of postfix operators available
@@ -200,7 +356,7 @@ pub struct PostfixOp<'a> {
 ///
 /// [`PostfixOpExpr`]: struct.PostfixOpExpr.html
 #[derive(Debug)]
-pub enum PostfixOpKind<'a> {
+pub enum PostfixOp<'a> {
     /// `"[" Expr "]"`
     Index(Box<Expr<'a>>),
     /// `"." Ident [ GenericArgs ]`
@@ -208,9 +364,9 @@ pub enum PostfixOpKind<'a> {
     /// `"." IntLiteral`
     TupleIndex(IntLiteral<'a>),
     /// `"(" [ FnArg { "," FnArg } [ "," ] ] ")"`
-    FnCall(Vec<FnArg<'a>>),
-    /// `"{" StructFieldsExpr "}"`
-    NamedStruct(StructFieldsExpr<'a>),
+    FnCall(Vec<Ambiguous<'a, FnArg<'a>>>),
+    /// `StructExpr`
+    NamedStruct(StructExpr<'a>),
     /// `"~" Type`
     TypeBinding(Box<Type<'a>>),
     /// `"is" Pattern`
@@ -219,36 +375,103 @@ pub enum PostfixOpKind<'a> {
     Try,
 }
 
+/// An anonymous struct expression, given on its own as an atom or available as a postfix operator
+///
+/// The fields are individually given by [`StructFieldExpr`]s. The relevant BNF definitions are:
+/// ```text
+/// StructExpr = "{" [ StructFieldExpr { "," StructFieldExpr } [ "," ] ] "}" .
+/// StructFieldExpr = Ident [ ":" Expr ] .
+/// ```
+/// Like Rust, the expresion used in assignment for the struct definition may be omitted; this is
+/// syntax sugar for assigning to a field the value of a local variable with the same name.
+///
+/// Struct expressions are used in two ways - both as an atomic expression to represent anonymous
+/// struct initialization and as a postfix operator to have named struct initialization. The
+/// postfix representation is selectively disallowed in certain places (e.g. `if` conditions) due
+/// to the ambiguity it causes.
+///
+/// [`StructFieldExpr`]: struct.StructFieldExpr.html
 #[derive(Debug)]
 pub struct StructExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    ty_expr: Option<Box<Expr<'a>>>,
-    fields: StructFieldsExpr<'a>,
+    pub(super) src: &'a Token<'a>,
+    pub fields: Vec<Ambiguous<'a, StructFieldExpr<'a>>>,
+    pub poisoned: bool,
 }
 
+/// A single field of a struct expression
+///
+/// The BNF definition for this is:
+/// ```text
+/// StructFieldExpr = Ident [ ":" Expr ] .
+/// ```
+///
+/// For more information, see [`StructExpr`](#struct.StructExpr.html).
 #[derive(Debug)]
-pub struct ArrayLitExpr<'a> {
+pub struct StructFieldExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    values: Vec<Expr<'a>>,
+    pub name: Ident<'a>,
+    pub value: Option<Expr<'a>>,
 }
 
+/// An array literal, given by a comma-separated list of the elements
+///
+/// The BNF definition for these is:
+/// ```text
+/// ArrayExpr = "[" [ Expr { "," Expr } [ "," ] ] "]
+/// ```
+///
+/// Like tuple literals, possible syntax ambiguities here mean that we might not know exactly how
+/// many elements are represented here before type checking.
+#[derive(Debug)]
+pub struct ArrayExpr<'a> {
+    pub(super) src: &'a Token<'a>,
+    pub values: Vec<Ambiguous<'a, Expr<'a>>>,
+    pub poisoned: bool,
+}
+
+/// A tuple literal, given by a comma-separated list of the elements
+///
+/// The BNF definition for tuple literals is nearly identical to [array literals]
+/// ```text
+/// TupleExpr = "(" [ Expr { "," Expr } [ "," ] ] ")" .
+/// ```
+///
+/// Like array literals, possible syntax ambiguities here mean that we might not know exactly how
+/// many elements are represented here before type checking.
+///
+/// [array literals]: struct.ArrayExpr.html
 #[derive(Debug)]
 pub struct TupleExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    values: Vec<Expr<'a>>,
+    pub(super) src: &'a Token<'a>,
+    pub values: Vec<Ambiguous<'a, Expr<'a>>>,
+    pub poisoned: bool,
 }
 
+/// A curly-brace enclosed block, containing a list of statments with an optional tail expression
+///
+/// Block expressions are fairly simple by themselves (they are composed of complex constructs),
+/// and are defined by the following BNF:
+/// ```text
+/// BlockExpr = "{" { Stmt } [ Expr ] "}" .
+/// ```
 #[derive(Debug)]
 pub struct BlockExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    items: Vec<Stmt<'a>>,
-    tail: Option<Box<Expr<'a>>>,
+    pub(super) src: &'a Token<'a>,
+    pub stmts: Vec<Stmt<'a>>,
+    pub tail: Option<Box<Expr<'a>>>,
 }
 
+/// A block expression or single-field anonymous struct initialization
+///
+/// This is of a few forms of ambiguity that cannot be resolved at parse-time, and always has the
+/// form `"{" Ident "}"`. This could either be a anonymous struct initialization with the field
+/// name abbreviation OR a block expression where the tail expression is the single identifier.
+///
+/// It is represented by the containing token.
 #[derive(Debug)]
 pub struct AmbiguousBlockExpr<'a> {
     pub(super) src: &'a Token<'a>,
-    name: Ident<'a>,
+    pub name: Ident<'a>,
 }
 
 /// A single `let` expression for variable binding
@@ -274,9 +497,9 @@ pub struct AmbiguousBlockExpr<'a> {
 #[derive(Debug)]
 pub struct LetExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    pat: Pattern<'a>,
-    ty: Option<Type<'a>>,
-    expr: Expr<'a>,
+    pub pat: Pattern<'a>,
+    pub ty: Option<Type<'a>>,
+    pub expr: Expr<'a>,
 }
 
 /// A single `for` expression for loops with iterators
@@ -293,10 +516,10 @@ pub struct LetExpr<'a> {
 #[derive(Debug)]
 pub struct ForExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    pat: Pattern<'a>,
-    iter: Expr<'a>,
-    body: BlockExpr<'a>,
-    else_branch: Option<Box<ElseBranch<'a>>>,
+    pub pat: Pattern<'a>,
+    pub iter: Expr<'a>,
+    pub body: BlockExpr<'a>,
+    pub else_branch: Option<Box<ElseBranch<'a>>>,
 }
 
 /// Conditional loops
@@ -314,51 +537,117 @@ pub struct ForExpr<'a> {
 #[derive(Debug)]
 pub struct WhileExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    pred: Box<Expr<'a>>,
-    body: BlockExpr<'a>,
-    else_branch: Option<Box<Expr<'a>>>,
+    pub condition: Box<Expr<'a>>,
+    pub body: BlockExpr<'a>,
+    pub else_branch: Option<Box<ElseBranch<'a>>>,
 }
 
+/// "Do-while" loops
+///
+/// These are similar to C-style "do-while" loops, with the notable exceptions that (1) the
+/// trailing condition may use variables defined inside the loop body and (2) like other loops
+/// here, it may be followed by an [else branch]. The BNF for these is defined as:
+/// ```text
+/// DoWhileExpr = "do" BlockExpr "while" Expr [ "else" BigExpr ] .
+/// ```
+///
+/// [else branch]: struct.ElseBranch.html
 #[derive(Debug)]
 pub struct DoWhileExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    body: BlockExpr<'a>,
-    pred: Box<Expr<'a>>,
-    else_branch: Option<Box<Expr<'a>>>,
+    pub body: BlockExpr<'a>,
+    pub pred: Box<Expr<'a>>,
+    pub else_branch: Option<Box<ElseBranch<'a>>>,
 }
 
+/// Infinite loops
+///
+/// These may only be escaped by breaking out of the loop or returning from the containing function.
+/// Loop expressions are defined by the following BNF definition:
+/// ```text
+/// LoopExpr = "loop" BlockExpr .
+/// ```
+///
+/// Because there cannot be a condition for these loops, there is also no corresponding else branch
+/// permitted.
 #[derive(Debug)]
 pub struct LoopExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    body: BlockExpr<'a>,
+    pub body: BlockExpr<'a>,
 }
 
+/// Conditional `if` expressions
+///
+/// `if` expressions provide the body after the condition only if that condition evaluates to true
+/// - because of this, using the value of an `if` expression requires either that the condition is
+/// infallible or that it has a trailing [else branch]. `if` expressions are given by the following
+/// BNF definition:
+/// ```text
+/// IfExpr = "if" Expr* BlockExpr [ "else" BigExpr ] .
+/// ```
 #[derive(Debug)]
 pub struct IfExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    condition: Box<Expr<'a>>,
-    body: BlockExpr<'a>,
-    else_branch: Option<Box<Expr<'a>>>,
+    pub condition: Box<Expr<'a>>,
+    pub body: BlockExpr<'a>,
+    pub else_branch: Option<Box<ElseBranch<'a>>>,
 }
 
+/// `match` expressions
+///
+/// `match` expressions provide a way to execute branches conditional on successful destructuring
+/// of a certain determinant expression with a pattern. These expressions are defined by the
+/// following relevant BNFs:
+/// ```text
+/// MatchExpr = "match" Expr "{" { MatchArm } "}" .
+/// MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr "," | BigExpr "\n" ) .
+/// ```
 #[derive(Debug)]
 pub struct MatchExpr<'a> {
     pub(super) src: TokenSlice<'a>,
-    expr: Box<Expr<'a>>,
-    arms: Vec<(Pattern<'a>, Expr<'a>)>,
+    pub expr: Box<Expr<'a>>,
+    pub arms: Vec<MatchArm<'a>>,
 }
 
+/// A single `match` arm; a helper type for [`MatchExpr`](#struct.MatchExpr.html)
+#[derive(Debug)]
+pub struct MatchArm<'a> {
+    pub(super) src: TokenSlice<'a>,
+    pub pat: Pattern<'a>,
+    pub cond: Option<Expr<'a>>,
+    pub eval: Expr<'a>,
+}
+
+/// A `continue` expression, to go to the next iteration of a loop
+///
+/// This is essentially a wrapper type for the single-token source (the keyword `continue`), as a
+/// placeholder for more complex syntax that may be added later.
 #[derive(Debug)]
 pub struct ContinueExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
+    pub(super) src: &'a Token<'a>,
 }
 
+/// A `break` expression to exit a loop - optionally with a value, skipping any `else` clause if
+/// present
+///
+/// `break` expressions may also include a value to break with when the loop is used to evaluate to
+/// a given value. The BNF definition for this is:
+/// ```text
+/// BreakExpr = "break" [ Expr ] .
+/// ```
 #[derive(Debug)]
 pub struct BreakExpr<'a> {
     pub(super) src: TokenSlice<'a>,
     value: Option<Box<Expr<'a>>>,
 }
 
+/// A `return` expression to exit a function - optionally with a value
+///
+/// Returning from a function is treated as an expression, and may leave out the right-hand-side
+/// expression to return an empty tuple. The BNF definition for this is:
+/// ```text
+/// ReturnExpr = "return" [ Expr ] .
+/// ```
 #[derive(Debug)]
 pub struct ReturnExpr<'a> {
     pub(super) src: TokenSlice<'a>,
@@ -381,7 +670,7 @@ binding_power! {
     // Internal documentation! The best kind ~
     //
     // The macro is defined so that we give each level of binding power in decreasing order, with
-    // variants delimeted by commas *within* the levels, and the levels delimeted by semicolons.
+    // variants delimited by commas *within* the levels, and the levels delimited by semicolons.
     // There's commentary on each of the sections below, with reference to other languages.
     #[derive(Debug, Copy, Clone)]
     pub enum BindingPower {
@@ -444,12 +733,6 @@ binding_power! {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ExprDelim {
-    Comma,
-    Semi,
-}
-
 impl<'a> Expr<'a> {
     /// Consumes an expression as a prefix of the tokens - assuming that no delimeter occurs within
     /// the binding power.
@@ -460,7 +743,7 @@ impl<'a> Expr<'a> {
     /// a comma, then the binding power must be strictly greater than `Shr` and `Gt` - this is not
     /// checked here.
     ///
-    /// Please additionally note that `no_delim` additionally applies to semicolon-delimeted
+    /// Please additionally note that `no_delim` additionally applies to semicolon-delimited
     /// expressions - because ambiguity only occurs with comma-separated lists of expressions, we
     /// can treat all other cases with this.
     pub fn consume_no_delim(
@@ -502,13 +785,14 @@ impl<'a> Expr<'a> {
                     true => break,
                     false => (),
                 },
-                Ok(Ok(op)) => {
-                    consumed += op.consumed();
+                Ok(Ok((op, op_src))) => {
+                    consumed += op_src.len();
 
                     lhs = Some(Expr::PostfixOp(PostfixOpExpr {
                         src: &tokens[..consumed],
                         expr: Box::new(lhs.take().unwrap()),
                         op,
+                        op_src,
                     }));
 
                     continue;
@@ -642,7 +926,7 @@ impl<'a> Expr<'a> {
 
                         // Square brackets corresond to array literals and parentheses to tuples, so we
                         // parse both as such.
-                        Squares => ArrayLitExpr::parse(fst_token, inner, errors).map(Expr::Array),
+                        Squares => ArrayExpr::parse(fst_token, inner, errors).map(Expr::Array),
                         Parens => TupleExpr::parse(fst_token, inner, errors).map(Expr::Tuple),
                     };
 
@@ -919,19 +1203,118 @@ impl<'a> Expr<'a> {
             // that we're parsing. We'll use `StructFieldsExpr::parse` to do so.
             [TokenKind::Ident(_), Punctuation(Punc::Colon)]
             | [TokenKind::Ident(_), Punctuation(Punc::Comma)] => {
-                let fields = StructFieldsExpr::parse(inner, false, Some(src), errors)?;
-
-                Ok(Expr::Struct(StructExpr {
-                    src: &outer_src[..1],
-                    ty_expr: None,
-                    fields,
-                }))
+                StructExpr::parse(src, inner, errors).map(Expr::Struct)
             }
 
             // Otherwise, this is *most likely* a block expression (if not, it's invalid).
             // We'll give EOF as the source because it's only used in cases where the token source
             // is None, which we can clearly see is not the case here.
             _ => BlockExpr::parse(outer_src.first(), Source::EOF, errors).map(Expr::Block),
+        }
+    }
+
+    /// Consumes a single (possibly ambiguous) expression within a given delimeter context
+    fn consume_delimited<T: From<Delimited<'a>>>(
+        tokens: TokenSlice<'a>,
+        delim: ExprDelim,
+        no_elem_err: ExpectedKind<'a>,
+    ) -> Result<Ambiguous<'a, T>, Option<usize>> {
+        todo!()
+    }
+
+    fn consume_all_delimited<T: From<Delimited<'a>> + Consumed>(
+        src: &'a Token<'a>,
+        inner: TokenSlice<'a>,
+        delim: ExprDelim,
+        no_elem_err: ExpectedKind<'a>,
+        delim_err: fn(&'a Token<'a>) -> ExpectedKind<'a>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<(Vec<Ambiguous<'a, T>>, bool), ()> {
+        let mut consumed = 0;
+        let ends_early = false;
+        let mut poisoned = false;
+        let mut exprs = Vec::new();
+
+        loop {
+            match inner.get(consumed) {
+                // Running out of tokens is fine - it's the end of the list. We'll break out of the
+                // loop to do a normal return.
+                None => {
+                    if ends_early {
+                        poisoned = true;
+                    }
+                    break;
+                }
+
+                Some(_) => {
+                    let res = Expr::consume_delimited(&inner[consumed..], delim, no_elem_err);
+
+                    match res {
+                        Err(None) => {
+                            poisoned = true;
+                            break;
+                        }
+                        Err(Some(c)) => {
+                            poisoned = true;
+                            consumed += c;
+                        }
+                        Ok(ambiguous) => {
+                            consumed += ambiguous.consumed();
+                            exprs.push(ambiguous);
+                        }
+                    }
+                }
+            }
+
+            // Between elements, we'll expect trailing commas
+            match inner.get(consumed) {
+                // If we ran out of tokens, it's because there's no more elements/fields to
+                // consume. That's fine, so we'll exit the loop to return normally.
+                None => {
+                    if ends_early {
+                        poisoned = true;
+                    }
+
+                    break;
+                }
+
+                // If there was a tokenizer error, we'll exit without producing further errors
+                // here.
+                Some(Err(_)) => {
+                    poisoned = true;
+                    break;
+                }
+
+                // Otherwise, we'll check that we *do* have a trailing comma
+                Some(Ok(t)) => match &t.kind {
+                    TokenKind::Punctuation(Punc::Comma) => consumed += 1,
+                    // If we didn't have one, we'll produce an error
+                    _ => {
+                        errors.push(Error::Expected {
+                            kind: delim_err(src),
+                            found: Source::TokenResult(Ok(t)),
+                        });
+
+                        poisoned = true;
+                        break;
+                    }
+                },
+            }
+        }
+
+        Ok((exprs, poisoned))
+    }
+}
+
+impl ExprDelim {
+    /// A convenience method to return whether the expression delimeter context requires the first
+    /// token to be an identifier
+    ///
+    /// This returns true precisely if the `ExprDelim` is the `StructFields` variant.
+    fn requires_name(&self) -> bool {
+        match self {
+            ExprDelim::StructFields => true,
+            ExprDelim::Comma | ExprDelim::FnArgs => false,
         }
     }
 }
@@ -1102,7 +1485,7 @@ impl<'a> PostfixOp<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<Result<PostfixOp<'a>, bool>, Option<usize>> {
+    ) -> Result<Result<(PostfixOp<'a>, TokenSlice<'a>), bool>, Option<usize>> {
         use Delim::{Curlies, Parens, Squares};
 
         match tokens.first() {
@@ -1130,8 +1513,8 @@ impl<'a> PostfixOp<'a> {
                     delim: Squares,
                     inner,
                     ..
-                } => PostfixOp::parse_index(&tokens[..1], inner, errors)
-                    .map(Ok)
+                } => PostfixOp::parse_index(t, inner, errors)
+                    .map(|idx| Ok((idx, &tokens[..1])))
                     .map_err(|()| Some(1)),
 
                 // There's two postfix operators that start with dots, so we'll make a brief
@@ -1158,8 +1541,8 @@ impl<'a> PostfixOp<'a> {
                     delim: Parens,
                     inner,
                     ..
-                } => PostfixOp::parse_fn_args(&tokens[..1], inner, errors)
-                    .map(Ok)
+                } => PostfixOp::parse_fn_args(t, inner, errors)
+                    .map(|args| Ok((args, &tokens[..1])))
                     .map_err(|()| Some(1)),
 
                 // Named structs
@@ -1172,18 +1555,21 @@ impl<'a> PostfixOp<'a> {
                     delim: Curlies,
                     inner,
                     ..
-                } => PostfixOp::parse_named_struct(&tokens[..1], inner, errors)
-                    .map(Ok)
+                } => StructExpr::parse(t, inner, errors)
+                    .map(|st| Ok((PostfixOp::NamedStruct(st), &tokens[..1])))
                     .map_err(|()| Some(1)),
 
                 // Type binding - "~" Type
                 TokenKind::Punctuation(Punc::Tilde) if Some(BindingPower::TypeBinding) < min_bp => {
                     Ok(Err(true))
                 }
-                TokenKind::Punctuation(Punc::Tilde) => {
-                    PostfixOp::consume_type_binding(tokens, ends_early, containing_token, errors)
-                        .map(Ok)
-                }
+                TokenKind::Punctuation(Punc::Tilde) => PostfixOp::consume_type_binding_no_delim(
+                    tokens,
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(Ok),
 
                 // Pattern equivalence - "is" Pattern
                 TokenKind::Keyword(Kwd::Is) if Some(BindingPower::IsPattern) < min_bp => {
@@ -1198,13 +1584,8 @@ impl<'a> PostfixOp<'a> {
                 TokenKind::Punctuation(Punc::Question) if Some(BindingPower::Try) < min_bp => {
                     Ok(Err(true))
                 }
-                TokenKind::Punctuation(Punc::Question) => {
-                    // This one is simple, so we can do it directly
-                    Ok(Ok(PostfixOp {
-                        src: &tokens[..1],
-                        kind: PostfixOpKind::Try,
-                    }))
-                }
+                // This one is simple, so we can do it directly
+                TokenKind::Punctuation(Punc::Question) => Ok(Ok((PostfixOp::Try, &tokens[..1]))),
 
                 // Anything else can't be interpreted as a postfix operator - we'll just return.
                 _ => Ok(Err(false)),
@@ -1212,8 +1593,10 @@ impl<'a> PostfixOp<'a> {
         }
     }
 
+    /// Parses the contents of a square-bracket-delimited token tree as a single expression for
+    /// indexing
     fn parse_index(
-        src_token: TokenSlice<'a>,
+        src: &'a Token<'a>,
         inner: TokenSlice<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<PostfixOp<'a>, ()> {
@@ -1225,32 +1608,24 @@ impl<'a> PostfixOp<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, Option<usize>> {
+    ) -> Result<(PostfixOp<'a>, TokenSlice<'a>), Option<usize>> {
         todo!()
     }
 
     fn parse_fn_args(
-        src_token: TokenSlice<'a>,
+        src: &'a Token<'a>,
         inner: TokenSlice<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<PostfixOp<'a>, ()> {
         todo!()
     }
 
-    fn parse_named_struct(
-        src_token: TokenSlice<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, ()> {
-        todo!()
-    }
-
-    fn consume_type_binding(
+    fn consume_type_binding_no_delim(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, Option<usize>> {
+    ) -> Result<(PostfixOp<'a>, TokenSlice<'a>), Option<usize>> {
         todo!()
     }
 
@@ -1259,18 +1634,66 @@ impl<'a> PostfixOp<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, Option<usize>> {
+    ) -> Result<(PostfixOp<'a>, TokenSlice<'a>), Option<usize>> {
         todo!()
     }
 }
 
-impl<'a> ArrayLitExpr<'a> {
+impl<'a> StructExpr<'a> {
     fn parse(
         src: &'a Token<'a>,
         inner: TokenSlice<'a>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<ArrayLitExpr<'a>, ()> {
-        todo!()
+    ) -> Result<StructExpr<'a>, ()> {
+        let (fields, poisoned) = Expr::consume_all_delimited(
+            src,
+            inner,
+            ExprDelim::StructFields,
+            ExpectedKind::StructFieldExpr,
+            ExpectedKind::StructFieldExprDelim,
+            errors,
+        )?;
+
+        Ok(StructExpr {
+            src,
+            fields,
+            poisoned,
+        })
+    }
+}
+
+impl<'a> From<Delimited<'a>> for StructFieldExpr<'a> {
+    fn from(delim: Delimited<'a>) -> Self {
+        assert!(delim.name.is_some());
+
+        StructFieldExpr {
+            src: delim.src,
+            name: delim.name.unwrap(),
+            value: delim.expr,
+        }
+    }
+}
+
+impl<'a> ArrayExpr<'a> {
+    fn parse(
+        src: &'a Token<'a>,
+        inner: TokenSlice<'a>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<ArrayExpr<'a>, ()> {
+        let (values, poisoned) = Expr::consume_all_delimited(
+            src,
+            inner,
+            ExprDelim::Comma,
+            ExpectedKind::ArrayElement,
+            ExpectedKind::ArrayDelim,
+            errors,
+        )?;
+
+        Ok(ArrayExpr {
+            src,
+            values,
+            poisoned,
+        })
     }
 }
 
@@ -1280,7 +1703,28 @@ impl<'a> TupleExpr<'a> {
         inner: TokenSlice<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<TupleExpr<'a>, ()> {
-        todo!()
+        let (values, poisoned) = Expr::consume_all_delimited(
+            src,
+            inner,
+            ExprDelim::Comma,
+            ExpectedKind::TupleElement,
+            ExpectedKind::TupleDelim,
+            errors,
+        )?;
+
+        Ok(TupleExpr {
+            src,
+            values,
+            poisoned,
+        })
+    }
+}
+
+impl<'a> From<Delimited<'a>> for Expr<'a> {
+    fn from(delim: Delimited<'a>) -> Expr<'a> {
+        assert!(delim.name.is_none());
+
+        delim.expr.unwrap()
     }
 }
 
@@ -1427,7 +1871,8 @@ impl<'a> ForExpr<'a> {
         errors: &mut Vec<Error<'a>>,
     ) -> Result<ForExpr<'a>, Option<usize>> {
         // For loops are fairly simple - the BNF is exactly:
-        //   "for" Pattern "in" Expr BlockExpr [ "else" BigExpr ]
+        //   "for" Pattern "in" Expr* BlockExpr [ "else" BigExpr ]
+        // * excluding structs
         //
         // Our primary task here is just to glue together the other parsers.
         //
@@ -1498,13 +1943,61 @@ impl<'a> ForExpr<'a> {
 }
 
 impl<'a> WhileExpr<'a> {
+    /// Consumes a `while` loop expression as a prefix of the given tokens
+    ///
+    /// This function assumes that the starting token is the keyword "while", and will panic if
+    /// this condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<WhileExpr<'a>, Option<usize>> {
-        todo!()
+        // More simple than `for` loops, while loops have the following BNF:
+        //   "while" Expr* BlockExpr [ "else" BigExpr ]
+        // * excluding structs
+
+        match tokens.first() {
+            None | Some(Err(_)) => panic!("Expected keyword `while`, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::While) => (),
+                _ => panic!("Expected keyword `while`, found token kind {:?}", t.kind),
+            },
+        }
+
+        let mut consumed = 1;
+        let condition = Expr::consume_no_delim(
+            &tokens[..consumed],
+            None,
+            Some(NoCurlyContext::WhileCondition),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
+        consumed += condition.consumed();
+
+        let body = BlockExpr::parse(tokens.get(consumed), end_source!(containing_token), errors)
+            .map_err(|()| Some(consumed))?;
+        consumed += 1;
+
+        // While loops may be optionally followed by an 'else' branch:
+        let else_branch =
+            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+                .map_err(|cs| cs.map(|c| c + consumed))?
+                .map(Box::new);
+        consumed += else_branch.consumed();
+
+        Ok(WhileExpr {
+            src: &tokens[..consumed],
+            condition: Box::new(condition),
+            body,
+            else_branch,
+        })
     }
 }
 
@@ -1520,13 +2013,43 @@ impl<'a> DoWhileExpr<'a> {
 }
 
 impl<'a> LoopExpr<'a> {
+    /// Consumes a `loop` expression as a prefix of the given tokens
+    ///
+    /// This function assumes that the starting token is the keyword "loop", and will panic if this
+    /// condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<LoopExpr<'a>, Option<usize>> {
-        todo!()
+        // Loop expressions are very simple; the BNF is just:
+        //   "loop" BlockExpr
+
+        match tokens.first() {
+            None | Some(Err(_)) => panic!("Expected keyword `loop`, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Loop) => (),
+                _ => panic!("Expected keyword `loop`, found token kind {:?}", t.kind),
+            },
+        }
+
+        // If we won't be able to parse a block expression, due to the token list ending early,
+        // we'll just return an error - we don't want to pass it down to `BlockExpr::parse`
+        if tokens.len() < 2 && ends_early {
+            return Err(None);
+        }
+
+        BlockExpr::parse(tokens.get(1), end_source!(containing_token), errors)
+            .map(|body| LoopExpr {
+                src: &tokens[..2],
+                body,
+            })
+            .map_err(|()| None)
     }
 }
 
@@ -1587,19 +2110,17 @@ impl<'a> ReturnExpr<'a> {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper types                                                                                   //
-// * Ident                                                                                        //
 // * Path                                                                                         //
 //   * PathComponent                                                                              //
-// * PostfixOp                                                                                    //
-//   * PostfixOpKind                                                                              //
-// * StructFieldsExpr                                                                             //
+// * FnArg                                                                                        //
+// * ElseBranch                                                                                   //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A path to an item in scope
 ///
 /// The standard image of a path contains no generic arguments: it is simply a chain of identifiers
 /// linked together by dots (`"."`). Note, however, that they *can* have generics arguments at any
-/// component. For example, `foo<int>.Bar<String>` is a valid path.
+/// component. For example, `foo<i64>.Bar<String>` is a valid path.
 ///
 /// Because of their usage of generics arguments, certain ambiguities arise within expression
 /// parsing - this is not managed by the primary parser provided by this type.
@@ -1619,7 +2140,7 @@ impl<'a> ReturnExpr<'a> {
 #[derive(Debug)]
 pub struct Path<'a> {
     pub(super) src: TokenSlice<'a>,
-    components: Vec<PathComponent<'a>>,
+    pub components: Vec<PathComponent<'a>>,
 }
 
 /// A single component of a type
@@ -1628,27 +2149,44 @@ pub struct Path<'a> {
 #[derive(Debug)]
 pub struct PathComponent<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Ident<'a>,
-    generic_args: Option<GenericArgs<'a>>,
+    pub name: Ident<'a>,
+    pub generic_args: Option<GenericArgs<'a>>,
 }
 
+/// A single function argument; a helper type for [`PostfixOp::FnCall`]
+///
+/// Individual function arguments are defined by the following BNF:
+/// ```text
+/// FnArg = [ Ident ":" ] Expr .
+/// ```
+/// There are semantics regarding the types of expressions allowed here and under which
+/// circumstances (e.g. writing `f(y, x)` for `fn f(x: _, y: _)` is illegal), but those are too
+/// complex to be described here.
+///
+/// [`PostfixOp::FnCall`]: enum.PostfixOp.html#variant.FnCall
 #[derive(Debug)]
 pub struct FnArg<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Option<Ident<'a>>,
-    value: Expr<'a>,
+    pub name: Option<Ident<'a>>,
+    pub value: Expr<'a>,
 }
 
-#[derive(Debug)]
-pub struct StructFieldsExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    fields: Vec<(Ident<'a>, Option<Expr<'a>>)>,
-}
-
+/// An `else` branch, for use after `if` conditions and various loops
+///
+/// Unlike many languages, which only allow `else` to be used after `if` conditions, we
+/// additionally allow "`else` branches" to be added after any conditional loop (i.e. `for`,
+/// `while` and `do..while`). On top of this, we allow more than just block expressions as `else`
+/// branches; anything in the `BigExpr` class is allowed here.
+///
+/// The relevant BNF definitions for these are:
+/// ```text
+/// ElseBranch = "else" BigExpr .
+/// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
+/// ```
 #[derive(Debug)]
 pub struct ElseBranch<'a> {
     pub(super) src: TokenSlice<'a>,
-    expr: Expr<'a>,
+    pub expr: Expr<'a>,
 }
 
 impl<'a> Path<'a> {
@@ -1742,17 +2280,6 @@ impl<'a> PathComponent<'a> {
             name,
             generic_args,
         })
-    }
-}
-
-impl<'a> StructFieldsExpr<'a> {
-    fn parse(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<StructFieldsExpr<'a>, ()> {
-        todo!()
     }
 }
 

@@ -114,7 +114,7 @@ Trait = Path .
 Type = Path [ Refinements ]
      | "&" [ Refinements ] Type 
      | [ "!" ] "mut" Type
-     | "[" Type [ ";" Expr ] "]" Refinemnts
+     | "[" Type [ ";" Expr ] "]" Refinements
      | "{" [ StructField { "," StructField } [ "," ] ] "}"
      | "(" [ Type        { "," Type        } [ "," ] ] ")"
      | "enum" "{" { Ident Type "," } "}" .
@@ -140,22 +140,26 @@ Expr = Literal
      | PrefixOp Expr
      | Expr BinOp Expr
      | Expr PostfixOp
-     | "{" StructFieldsExpr "}"             # Anonymous structs 
-     | "[" Expr { "," Expr } [ "," ] "]"    # Array literals
-     | "(" Expr { "," Expr } [ "," ] ")"    # Tuples
-     | BlockExpr                            # Blocks
-     | LetExpr                              # "let" expressions
-     | ForExpr                              # For loops
-     | WhileExpr                            # While loops
-     | DoWhileExpr                          # Do-while loops
-     | LoopExpr                             # "Loop" loops
-     | IfExpr                               # Ifs
-     | MatchExpr                            # Matches
+     | StructExpr                               # Anonymous structs 
+     | "[" [ Expr { "," Expr } [ "," ] ] "]"    # Array literals
+     | "(" [ Expr { "," Expr } [ "," ] ] ")"    # Tuples
+     | BlockExpr                                # Blocks
+     | LetExpr                                  # "let" expressions
+     | ForExpr                                  # For loops
+     | WhileExpr                                # While loops
+     | DoWhileExpr                              # Do-while loops
+     | LoopExpr                                 # "Loop" loops
+     | IfExpr                                   # Ifs
+     | MatchExpr                                # Matches
      | "continue"
      | "break" [ Expr ]
      | "return" [ Expr ] .
 
 NamedExpr = PathComponent .
+
+StructExpr = "{" [ StructFieldExpr { "," StructFieldExpr } [ "," ] ] "}" .
+StructFieldExpr = Ident [ ":" Expr ] .
+
 LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
 
 BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
@@ -178,7 +182,7 @@ PostfixOp = "[" Expr "]"                # Indexing
           | "." Ident [ GenericArgs ]   # Field access / method calls
           | "." IntLiteral              # Tuple indexing
           | FnArgs                      # Function calls
-          | "{" StructFieldsExpr "}"    # Named structs
+          | StructExpr                  # Named structs
           | "~" Type                    # Type binding
           | "is" Pattern                # Pattern equivalence
           | "?"                         # "try" operator
@@ -214,9 +218,6 @@ RefPattern       = "&" Pattern .
 
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .
 FloatLiteral = IntLiteral "." IntLiteral .
-
-StructFieldsExpr = { StructFieldExpr { "," StructFieldExpr } [ "," ] } .
-StructFieldExpr = Ident [ ":" Expr ] .
 ```
 
 ### Notes on ambiguity
