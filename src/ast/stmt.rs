@@ -45,7 +45,7 @@ pub struct AssignStmt<'a> {
 // AKA lvalue - "Assignee" is more intuitive to people who aren't in the know
 #[derive(Debug)]
 pub enum Assignee<'a> {
-    Deref(PrefixOpExpr<'a>),
+    Deref(Box<PrefixOpExpr<'a>>),
     Path(Path<'a>),
 }
 

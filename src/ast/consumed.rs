@@ -96,7 +96,7 @@ impl_all! {
     // Expressions
     Expr {
         Literal, Named, PrefixOp, BinOp, PostfixOp, Struct, Array, Tuple, Block,
-        AmbiguousBlock, Let, For, While, DoWhile, Loop, If, Match, Continue, Break, Return
+        AmbiguousBlock, For, While, DoWhile, Loop, If, Match, Continue,
     },
     PrefixOpExpr,
     BinOpExpr,
@@ -106,16 +106,14 @@ impl_all! {
     @Single: TupleExpr,
     @Single: BlockExpr,
     @Single: AmbiguousBlockExpr,
-    LetExpr,
     ForExpr,
     WhileExpr,
     DoWhileExpr,
     LoopExpr,
     IfExpr,
     MatchExpr,
+    MatchArm,
     @Single: ContinueExpr,
-    BreakExpr,
-    ReturnExpr,
     // Expression helper bits
     Path,
     PathComponent,

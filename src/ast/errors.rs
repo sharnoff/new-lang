@@ -115,7 +115,9 @@ pub enum ExpectedKind<'a> {
     ArrayElement,
     ArrayDelim(&'a Token<'a>), // The containing token
     TupleElement,
-    TupleDelim(&'a Token<'a>), // The containing token
+    TupleDelim(&'a Token<'a>),     // The containing token
+    MatchBody(&'a Token<'a>),      // The `match` token
+    MatchArmDelim(TokenSlice<'a>), // The arm after which we're expecting a delimiter
     Pattern(PatternContext<'a>),
     StructPatternField(PatternContext<'a>),
     StructPatternEnd(PatternContext<'a>),
@@ -229,10 +231,10 @@ pub struct PathComponentContext<'a> {
 
 #[derive(Debug, Copy, Clone)]
 pub enum NoCurlyContext {
-    IfExpr,
+    IfCondition,
     ForIter,
     WhileCondition,
-    MatchScrutinee,
+    MatchExpr,
 }
 
 #[derive(Debug, Copy, Clone)]

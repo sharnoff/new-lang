@@ -12,7 +12,7 @@ use super::*;
 pub enum Expr<'a> {
     Literal(Literal<'a>),
     Named(PathComponent<'a>),
-    PrefixOp(PrefixOpExpr<'a>),
+    PrefixOp(Box<PrefixOpExpr<'a>>),
     BinOp(Box<BinOpExpr<'a>>),
     PostfixOp(PostfixOpExpr<'a>),
     Struct(StructExpr<'a>),
@@ -20,7 +20,6 @@ pub enum Expr<'a> {
     Tuple(TupleExpr<'a>),
     Block(BlockExpr<'a>),
     AmbiguousBlock(AmbiguousBlockExpr<'a>),
-    Let(Box<LetExpr<'a>>),
     For(Box<ForExpr<'a>>),
     While(WhileExpr<'a>),
     DoWhile(DoWhileExpr<'a>),
@@ -28,8 +27,6 @@ pub enum Expr<'a> {
     If(IfExpr<'a>),
     Match(MatchExpr<'a>),
     Continue(ContinueExpr<'a>),
-    Break(BreakExpr<'a>),
-    Return(ReturnExpr<'a>),
 }
 
 /// The types of delimeters that may occur around expression parsing
@@ -203,7 +200,8 @@ pub struct ConditionalSet<'a, T> {
 /// The operator is given by a [`PrefixOp`] and its source. The relevant BNFs definitions are:
 /// ```text
 /// PrefixOpExpr = PrefixOp Expr .
-/// PrefixOp     = "!" | "-" | "&" [ "mut" ] | "*" .
+/// PrefixOp     = "!" | "-" | "&" [ "mut" ] | "*" | LetPrefix | "break" | "return".
+/// LetPrefix    = "let" Pattern [ ":" Type ] "="
 /// ```
 ///
 /// There are no publicly-exposed functions to produce prefix-operator expressions - this is
@@ -216,7 +214,7 @@ pub struct ConditionalSet<'a, T> {
 pub struct PrefixOpExpr<'a> {
     pub(super) src: TokenSlice<'a>,
     pub op_src: TokenSlice<'a>,
-    pub op: PrefixOp,
+    pub op: PrefixOp<'a>,
     pub expr: Box<Expr<'a>>,
 }
 
@@ -229,7 +227,7 @@ pub struct PrefixOpExpr<'a> {
 ///
 /// For more information, see [`PrefixOpExpr`](struct.PrefixOpExpr.html).
 #[derive(Debug)]
-pub enum PrefixOp {
+pub enum PrefixOp<'a> {
     /// `"!"`
     Not,
     /// `"-"`
@@ -238,6 +236,12 @@ pub enum PrefixOp {
     Ref { is_mut: bool },
     /// `"*"`
     Deref,
+    /// "let" Pattern [ ":" Type ] "="
+    Let(Pattern<'a>, Option<Type<'a>>),
+    /// `"break"`
+    Break,
+    /// `"return"`
+    Return,
 }
 
 /// A binary-operator expression, given by the operator and the expressions on either side
@@ -474,34 +478,6 @@ pub struct AmbiguousBlockExpr<'a> {
     pub name: Ident<'a>,
 }
 
-/// A single `let` expression for variable binding
-///
-/// For fallible bindings (e.g. `let Some(x) = try_thing()`), `let` expressions return booleans -
-/// evaluating to `true` only when the binding was successful. This allows constructs like:
-/// ```rust
-/// let Some(x) = foo() || let x = bar;
-/// ```
-/// or
-/// ```
-/// if let Ok(x) = foo() && Some(y) = bar() {
-///     // ...
-/// }
-/// ```
-/// which is only possible because the expression following the equals (`=`) in `let` expressions
-/// is parsed with binding power greater than logical AND and OR.
-///
-/// Aside from these, `let` expressions are fairly simple; their BNF definition is:
-/// ```text
-/// LetExpr = "let" Pattern [ ":" Type ] = Expr .
-/// ```
-#[derive(Debug)]
-pub struct LetExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub pat: Pattern<'a>,
-    pub ty: Option<Type<'a>>,
-    pub expr: Expr<'a>,
-}
-
 /// A single `for` expression for loops with iterators
 ///
 /// These are standard, and function as would normally be expected. The BNF definition is:
@@ -607,6 +583,7 @@ pub struct MatchExpr<'a> {
     pub(super) src: TokenSlice<'a>,
     pub expr: Box<Expr<'a>>,
     pub arms: Vec<MatchArm<'a>>,
+    pub poisoned: bool,
 }
 
 /// A single `match` arm; a helper type for [`MatchExpr`](#struct.MatchExpr.html)
@@ -625,33 +602,6 @@ pub struct MatchArm<'a> {
 #[derive(Debug)]
 pub struct ContinueExpr<'a> {
     pub(super) src: &'a Token<'a>,
-}
-
-/// A `break` expression to exit a loop - optionally with a value, skipping any `else` clause if
-/// present
-///
-/// `break` expressions may also include a value to break with when the loop is used to evaluate to
-/// a given value. The BNF definition for this is:
-/// ```text
-/// BreakExpr = "break" [ Expr ] .
-/// ```
-#[derive(Debug)]
-pub struct BreakExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    value: Option<Box<Expr<'a>>>,
-}
-
-/// A `return` expression to exit a function - optionally with a value
-///
-/// Returning from a function is treated as an expression, and may leave out the right-hand-side
-/// expression to return an empty tuple. The BNF definition for this is:
-/// ```text
-/// ReturnExpr = "return" [ Expr ] .
-/// ```
-#[derive(Debug)]
-pub struct ReturnExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    value: Option<Box<Expr<'a>>>,
 }
 
 binding_power! {
@@ -727,9 +677,12 @@ binding_power! {
 
         // Logical OR and AND are given particularly low binding power so that `let` can bind more
         // tightly than them. AND binds more tightly than OR (per precedent set by other
-        // languages), and so we finish up the list with the following:
+        // languages), and so we give them unique levels:
         LogicalAnd;
         LogicalOr;
+
+        // We finish up the list with `break` and `return` as prefix operators
+        Break, Return;
     }
 }
 
@@ -935,19 +888,23 @@ impl<'a> Expr<'a> {
 
                 // With those aside, we have prefix operators as our penultimate group. As per
                 // 'bnf.md', the following tokens are allowed as prefix operators:
-                //   PreifxOp = "!" | "-" | "&" [ "mut" ] | "*"
+                //   PreifxOp = "!" | "-" | "&" [ "mut" ] | "*" | LetPrefix | "break" | "return"
+                //    --> LetPrefix = "let" Pattern [ ":" Type ] "="
                 // We'll use dedicated function provided by `PrefixOpExpr` for this.
                 TokenKind::Punctuation(Punc::Not)
                 | TokenKind::Punctuation(Punc::Minus)
                 | TokenKind::Punctuation(Punc::And)
-                | TokenKind::Punctuation(Punc::Star) => PrefixOpExpr::consume_no_delim(
+                | TokenKind::Punctuation(Punc::Star)
+                | TokenKind::Keyword(Kwd::Let)
+                | TokenKind::Keyword(Kwd::Break)
+                | TokenKind::Keyword(Kwd::Return) => PrefixOpExpr::consume_no_delim(
                     tokens,
                     allow_structs,
                     ends_early,
                     containing_token,
                     errors,
                 )
-                .map(Expr::PrefixOp),
+                .map(|pre| Expr::PrefixOp(Box::new(pre))),
 
                 // And finally, we have all of the various keywords that may start an expression:
                 TokenKind::Keyword(Kwd::For) => consume!(ForExpr, box For),
@@ -957,16 +914,6 @@ impl<'a> Expr<'a> {
                 TokenKind::Keyword(Kwd::If) => consume!(IfExpr, If),
                 TokenKind::Keyword(Kwd::Match) => consume!(MatchExpr, Match),
                 TokenKind::Keyword(Kwd::Continue) => consume!(ContinueExpr, Continue),
-                TokenKind::Keyword(Kwd::Break) => consume!(BreakExpr, Break),
-                TokenKind::Keyword(Kwd::Return) => consume!(ReturnExpr, Return),
-                TokenKind::Keyword(Kwd::Let) => LetExpr::consume_no_delim(
-                    tokens,
-                    allow_structs,
-                    ends_early,
-                    containing_token,
-                    errors,
-                )
-                .map(|ex| Expr::Let(Box::new(ex))),
 
                 // Otherwise, if we couldn't find any of these, we had an error
                 _ => {
@@ -1209,7 +1156,7 @@ impl<'a> Expr<'a> {
             // Otherwise, this is *most likely* a block expression (if not, it's invalid).
             // We'll give EOF as the source because it's only used in cases where the token source
             // is None, which we can clearly see is not the case here.
-            _ => BlockExpr::parse(outer_src.first(), Source::EOF, errors).map(Expr::Block),
+            _ => BlockExpr::parse(outer_src.first(), false, Source::EOF, errors).map(Expr::Block),
         }
     }
 
@@ -1304,6 +1251,22 @@ impl<'a> Expr<'a> {
 
         Ok((exprs, poisoned))
     }
+
+    /// Returns whether the expression is "big"
+    ///
+    /// This is essentially defined by the following BNF:
+    /// ```text
+    /// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
+    /// ```
+    fn is_big_expr(&self) -> bool {
+        use Expr::*;
+
+        match self {
+            If(_) | Match(_) | For(_) | While(_) | Loop(_) | Block(_) | AmbiguousBlock(_) => true,
+            Literal(_) | Named(_) | PrefixOp(_) | BinOp(_) | PostfixOp(_) | Struct(_)
+            | Array(_) | Tuple(_) | DoWhile(_) | Continue(_) => false,
+        }
+    }
 }
 
 impl ExprDelim {
@@ -1324,7 +1287,7 @@ impl<'a> PrefixOpExpr<'a> {
     ///
     /// This function expects the first token to be a prefix operator, and will panic if it is not.
     ///
-    /// This makes a recursive call to [`Expr::consume_no_delim`] in order
+    /// This makes a recursive call to [`Expr::consume_no_delim`] in order to
     fn consume_no_delim(
         tokens: TokenSlice<'a>,
         allow_structs: Option<NoCurlyContext>,
@@ -1346,10 +1309,12 @@ impl<'a> PrefixOpExpr<'a> {
                 }
 
                 match &t.kind {
-                    // The first three are simple, and given directly by 'bnf.md'
+                    // The first bunch are simple, and given directly by 'bnf.md'
                     TokenKind::Punctuation(Punc::Not) => op_with_bp!(Not),
                     TokenKind::Punctuation(Punc::Minus) => op_with_bp!(Minus),
                     TokenKind::Punctuation(Punc::Star) => op_with_bp!(Deref),
+                    TokenKind::Keyword(Kwd::Break) => op_with_bp!(Break),
+                    TokenKind::Keyword(Kwd::Return) => op_with_bp!(Return),
                     // The final one is from the reference operator. It's allowed to be followed by
                     // "mut" to take a mutable reference, so we'll
                     TokenKind::Punctuation(Punc::And) => {
@@ -1362,6 +1327,14 @@ impl<'a> PrefixOpExpr<'a> {
                         };
 
                         (PrefixOp::Ref { is_mut }, &tokens[..len], BindingPower::Ref)
+                    }
+                    TokenKind::Keyword(Kwd::Let) => {
+                        let res =
+                            PrefixOpExpr::consume_let(tokens, ends_early, containing_token, errors);
+                        match res {
+                            Err(_) => return Err(None),
+                            Ok((op, src)) => (op, src, BindingPower::Let),
+                        }
                     }
                     _ => panic!("Expected prefix operator, found {:?}", t),
                 }
@@ -1390,6 +1363,91 @@ impl<'a> PrefixOpExpr<'a> {
                 })
             }
         }
+    }
+
+    /// Consumes a `let` expression as a prefix operator
+    ///
+    /// This function assumes that the first token is the keyword `let`, and will panic if it is
+    /// not.
+    fn consume_let(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<(PrefixOp<'a>, TokenSlice<'a>), Option<usize>> {
+        // Let prefixes aren't *too* bad to parse - the BNF is simply:
+        //   "let" Pattern [ ":" Type ] "="
+        //
+        // We're given that the first token is the keyword `let`, so we'll panic if we find that's
+        // not the case.
+        let let_kwd = match tokens.first() {
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Let) => t,
+                k => panic!("Expected keyword 'let', found token kind {:?}", k),
+            },
+            _ => panic!("Expected keyword 'let', found {:?}", tokens.first()),
+        };
+
+        let mut consumed = 1;
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+
+        let pat_ctx = PatternContext::Let(let_kwd);
+        let pat = Pattern::consume(
+            &tokens[consumed..],
+            pat_ctx,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
+
+        consumed += pat.consumed();
+        let pat_src = &tokens[1..consumed];
+
+        // If we have a ":" token following the pattern, we'll expect a type
+        let ty = expect!((
+            // If we find a "=", that's fine because it's what we'll expect next anyways.
+            TokenKind::Punctuation(Punc::Eq) => None,
+            TokenKind::Punctuation(Punc::Colon) => {
+                consumed += 1;
+                let ty_res = Type::consume(
+                    &tokens[consumed..],
+                    TypeContext::LetHint(LetContext {
+                        let_kwd,
+                        pat: pat_src,
+                    }),
+                    ends_early,
+                    containing_token,
+                    errors,
+                );
+
+                match ty_res {
+                    Err(Some(c)) => return Err(Some(c + consumed)),
+                    Err(None) => return Err(None),
+                    Ok(ty) => {
+                        consumed += ty.consumed();
+                        Some(ty)
+                    }
+                }
+            },
+            @else ExpectedKind::LetColonOrEq(LetContext {
+                let_kwd,
+                pat: &tokens[1..consumed],
+            })
+        ));
+
+        // Now, we'll expect an equals for assigning the value as the last token in this prefix
+        // operator
+        expect!((
+            TokenKind::Punctuation(Punc::Eq) => consumed += 1,
+            @else ExpectedKind::LetEq(LetContext {
+                let_kwd,
+                pat: pat_src,
+            })
+        ));
+
+        // And with that all done, we'll return the prefix operator
+        Ok((PrefixOp::Let(pat, ty), &tokens[..consumed]))
     }
 }
 
@@ -1738,120 +1796,11 @@ impl<'a> BlockExpr<'a> {
     /// typically corresponds to the source used for running out of tokens within a token tree.
     pub fn parse(
         token: Option<&'a TokenResult<'a>>,
+        ends_early: bool,
         none_source: Source<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<BlockExpr<'a>, ()> {
         todo!()
-    }
-}
-
-impl<'a> LetExpr<'a> {
-    /// Consumes a "let" expression, under the assumptions given by [`Expr::consume_no_delim`]
-    ///
-    /// This function assumes that the starting token is the keyword "let", and will panic if this
-    /// condition is not met.
-    ///
-    /// [`Expr::consume_no_delim`]: struct.Expr.html#consume_no_delim
-    fn consume_no_delim(
-        tokens: TokenSlice<'a>,
-        allow_structs: Option<NoCurlyContext>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<LetExpr<'a>, Option<usize>> {
-        // "let" expression parsing is not too complex - the bnf is simply:
-        //   LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
-        // This function is mainly filled with boilerplate for handling errors and such - a future
-        // improvement might be to reduce these, but there's an unfortunate amount of differences
-        // between them.
-
-        // To start with, we'll assert that the first token is the keyword "let"
-        let let_kwd = match tokens.first() {
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Let) => t,
-                k => panic!("Expected keyword 'let', found token kind {:?}", k),
-            },
-            _ => panic!("Expected keyword 'let', found {:?}", tokens.first()),
-        };
-
-        let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
-
-        // Next, we have the pattern to bind to
-        let pat_ctx = PatternContext::Let(let_kwd);
-        let pat = Pattern::consume(
-            &tokens[consumed..],
-            pat_ctx,
-            ends_early,
-            containing_token,
-            errors,
-        )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
-        consumed += pat.consumed();
-
-        // If we have a ":" token following the pattern, we'll expect a type
-        let ty = expect!((
-            TokenKind::Punctuation(Punc::Eq) => None,
-            TokenKind::Punctuation(Punc::Colon) => {
-                consumed += 1;
-                let ty_res = Type::consume(
-                    &tokens[consumed..],
-                    TypeContext::LetHint(LetContext {
-                        let_kwd,
-                        pat: &tokens[1..consumed - 1],
-                    }),
-                    ends_early,
-                    containing_token,
-                    errors,
-                );
-
-                match ty_res {
-                    Err(Some(c)) => return Err(Some(c + consumed)),
-                    Err(None) => return Err(None),
-                    Ok(ty) => {
-                        consumed += ty.consumed();
-                        Some(ty)
-                    }
-                }
-            },
-            @else ExpectedKind::LetColonOrEq(LetContext {
-                let_kwd,
-                pat: &tokens[1..consumed],
-            })
-        ));
-
-        // Now, we'll expect an equals for assigning the value
-        expect!((
-            TokenKind::Punctuation(Punc::Eq) => consumed += 1,
-            @else ExpectedKind::LetEq(LetContext {
-                let_kwd,
-                pat: &tokens[1..consumed],
-            })
-        ));
-
-        let expr_res = Expr::consume_no_delim(
-            &tokens[consumed..],
-            Some(BindingPower::Let),
-            allow_structs,
-            ends_early,
-            containing_token,
-            errors,
-        );
-
-        match expr_res {
-            Err(None) => Err(None),
-            Err(Some(c)) => Err(Some(c + consumed)),
-            Ok(expr) => {
-                consumed += expr.consumed();
-
-                Ok(LetExpr {
-                    src: &tokens[..consumed],
-                    pat,
-                    ty,
-                    expr,
-                })
-            }
-        }
     }
 }
 
@@ -1910,7 +1859,7 @@ impl<'a> ForExpr<'a> {
         // And then we expect an expression. This expression can't include curly braces (in certain
         // places) because they would be ambiguous with the following block.
         let iter = Expr::consume_no_delim(
-            &tokens[..consumed],
+            &tokens[consumed..],
             None,
             Some(NoCurlyContext::ForIter),
             ends_early,
@@ -1921,8 +1870,13 @@ impl<'a> ForExpr<'a> {
         consumed += iter.consumed();
 
         // And this is followed by a block expression
-        let body = BlockExpr::parse(tokens.get(consumed), end_source!(containing_token), errors)
-            .map_err(|()| Some(consumed))?;
+        let body = BlockExpr::parse(
+            tokens.get(consumed),
+            ends_early,
+            end_source!(containing_token),
+            errors,
+        )
+        .map_err(|()| Some(consumed))?;
         consumed += 1;
 
         // For loops may be optionally followed by an 'else' branch
@@ -1981,8 +1935,13 @@ impl<'a> WhileExpr<'a> {
         .map_err(|cs| cs.map(|c| c + consumed))?;
         consumed += condition.consumed();
 
-        let body = BlockExpr::parse(tokens.get(consumed), end_source!(containing_token), errors)
-            .map_err(|()| Some(consumed))?;
+        let body = BlockExpr::parse(
+            tokens.get(consumed),
+            ends_early,
+            end_source!(containing_token),
+            errors,
+        )
+        .map_err(|()| Some(consumed))?;
         consumed += 1;
 
         // While loops may be optionally followed by an 'else' branch:
@@ -2044,66 +2003,296 @@ impl<'a> LoopExpr<'a> {
             return Err(None);
         }
 
-        BlockExpr::parse(tokens.get(1), end_source!(containing_token), errors)
-            .map(|body| LoopExpr {
-                src: &tokens[..2],
-                body,
-            })
-            .map_err(|()| None)
+        BlockExpr::parse(
+            tokens.get(1),
+            ends_early,
+            end_source!(containing_token),
+            errors,
+        )
+        .map(|body| LoopExpr {
+            src: &tokens[..2],
+            body,
+        })
+        .map_err(|()| None)
     }
 }
 
 impl<'a> IfExpr<'a> {
+    /// Consumes an "if" conditional expression
+    ///
+    /// This function assumes that the starting token is the keyword `if`, and will panic if this
+    /// condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<IfExpr<'a>, Option<usize>> {
-        todo!()
+        // If conditions are fairly simple - they are defined with the following BNF:
+        //   "if" Expr* BlockExpr [ "else" BigExpr ]
+        // * excluding structs
+
+        match tokens.first() {
+            None | Some(Err(_)) => panic!("expected keyword `if`, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::If) => (),
+                _ => panic!("expected keyword `if`, found token kind {:?}", t.kind),
+            },
+        }
+
+        let mut consumed = 1;
+        let condition = Expr::consume_no_delim(
+            &tokens[consumed..],
+            None,
+            Some(NoCurlyContext::IfCondition),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
+        consumed += condition.consumed();
+
+        let body = BlockExpr::parse(
+            tokens.get(consumed),
+            ends_early,
+            end_source!(containing_token),
+            errors,
+        )
+        .map_err(|()| Some(consumed))?;
+        consumed += 1;
+
+        let else_branch =
+            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+                .map_err(|cs| cs.map(|c| c + consumed))?
+                .map(Box::new);
+        consumed += else_branch.consumed();
+
+        Ok(IfExpr {
+            src: &tokens[consumed..],
+            condition: Box::new(condition),
+            body,
+            else_branch,
+        })
     }
 }
 
 impl<'a> MatchExpr<'a> {
+    /// Consumes a "match" expression as a prefix of the given tokens
+    ///
+    /// This function assumes that the starting token is the keyword `match`, and will panic if
+    /// this condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<MatchExpr<'a>, Option<usize>> {
+        // Match expressions are defined by the following BNF:
+        //   "match" Expr* "{" { MatchArm } "}"
+        // * excluding structs
+
+        let match_kwd = match tokens.first() {
+            None | Some(Err(_)) => panic!("expected keyword `match`, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Match) => t,
+                _ => panic!("expected keyword `match`, found token kind {:?}", t.kind),
+            },
+        };
+
+        let mut consumed = 1;
+        let expr = Expr::consume_no_delim(
+            &tokens[consumed..],
+            None,
+            Some(NoCurlyContext::MatchExpr),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|cs| cs.map(|c| c + consumed))?;
+
+        let (arms, poisoned) = match tokens.get(consumed) {
+            None if ends_early => return Err(None),
+            None => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::MatchBody(match_kwd),
+                    found: end_source!(containing_token),
+                });
+
+                return Err(None);
+            }
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => return Err(None),
+            Some(Err(e)) => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::MatchBody(match_kwd),
+                    found: Source::TokenResult(Err(*e)),
+                });
+
+                return Err(Some(consumed));
+            }
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Tree {
+                    delim: Delim::Curlies,
+                    inner,
+                    ..
+                } => {
+                    consumed += 1;
+                    MatchArm::parse_all(match_kwd, t, inner, errors)
+                }
+                _ => {
+                    errors.push(Error::Expected {
+                        kind: ExpectedKind::MatchBody(match_kwd),
+                        found: Source::TokenResult(Ok(t)),
+                    });
+
+                    return Err(Some(consumed));
+                }
+            },
+        };
+
+        Ok(MatchExpr {
+            src: &tokens[..consumed],
+            expr: Box::new(expr),
+            arms,
+            poisoned,
+        })
+    }
+}
+
+impl<'a> MatchArm<'a> {
+    /// A helper function for [`MatchExpr::consume`](struct.MatchExpr.html#method.consume)
+    ///
+    /// This function parses the entire contents of a curly-brace enclosed block as the body of a
+    /// match expression, returning the match arms and whether that list is poisoned.
+    fn parse_all(
+        match_kwd: &'a Token<'a>,
+        curly_src: &'a Token<'a>,
+        inner: TokenSlice<'a>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> (Vec<MatchArm<'a>>, bool) {
+        let mut consumed = 0;
+        let mut poisoned = false;
+        let mut arms = Vec::new();
+        let ends_early = false;
+
+        let pat_ctx = PatternContext::Match(match_kwd);
+        while consumed < inner.len() {
+            let arm_res = MatchArm::consume(
+                &inner[consumed..],
+                pat_ctx,
+                ends_early,
+                Some(curly_src),
+                errors,
+            );
+            let arm_src;
+
+            match arm_res {
+                Err(None) => {
+                    poisoned = true;
+                    break;
+                }
+                Err(Some(c)) => {
+                    arm_src = &inner[consumed..consumed + c];
+                    consumed += c;
+                    poisoned = true;
+                }
+                Ok(arm) => {
+                    arm_src = &inner[consumed..consumed + arm.consumed()];
+                    consumed += arm.consumed();
+                    let requires_delim = arm.requires_delim();
+                    arms.push(arm);
+                    if !requires_delim {
+                        continue;
+                    }
+                }
+            }
+
+            // After each match arm that requires it, we'll expect a comma to delimit the arms
+            match inner.get(consumed) {
+                // Running out of tokens is fine- we don't have any more arms to parse, so we'll do
+                // a normal exit
+                None => {
+                    if ends_early {
+                        poisoned = true;
+                    }
+                    break;
+                }
+                // If the arms have already been poisoned and we find a tokenizer error, we'll just
+                // exit because we don't have enough information
+                Some(Err(_)) if poisoned => break,
+                // Otherwise, we were expecting a comma - we'll produce an error because we didn't
+                // find one.
+                Some(Err(e)) => {
+                    errors.push(Error::Expected {
+                        kind: ExpectedKind::MatchArmDelim(arm_src),
+                        found: Source::TokenResult(Err(*e)),
+                    });
+
+                    poisoned = true;
+                    break;
+                }
+                Some(Ok(t)) => match &t.kind {
+                    TokenKind::Punctuation(Punc::Comma) => consumed += 1,
+                    _ => {
+                        errors.push(Error::Expected {
+                            kind: ExpectedKind::MatchArmDelim(arm_src),
+                            found: Source::TokenResult(Ok(t)),
+                        });
+
+                        poisoned = true;
+                        break;
+                    }
+                },
+            }
+        }
+
+        (arms, poisoned)
+    }
+
+    /// Consumes a single match arm as a prefix of the given tokens
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
+    fn consume(
+        tokens: TokenSlice<'a>,
+        pat_ctx: PatternContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<MatchArm<'a>, Option<usize>> {
         todo!()
+    }
+
+    /// A helper function to determine whether a match arm requires a trailing comma. Only
+    /// `BigExpr` expressions are allowed to omit the trailing comma.
+    fn requires_delim(&self) -> bool {
+        self.eval.is_big_expr()
     }
 }
 
 impl<'a> ContinueExpr<'a> {
+    /// Consumes a `continue` expression as a prefix of the given tokens
+    ///
+    /// This function assumes that the starting token is the keyword `continue`, and will panic if
+    /// this condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<ContinueExpr<'a>, Option<usize>> {
-        todo!()
-    }
-}
-
-impl<'a> BreakExpr<'a> {
-    fn consume(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<BreakExpr<'a>, Option<usize>> {
-        todo!()
-    }
-}
-
-impl<'a> ReturnExpr<'a> {
-    fn consume(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ReturnExpr<'a>, Option<usize>> {
         todo!()
     }
 }
@@ -2181,7 +2370,7 @@ pub struct FnArg<'a> {
 /// The relevant BNF definitions for these are:
 /// ```text
 /// ElseBranch = "else" BigExpr .
-/// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
+/// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
 /// ```
 #[derive(Debug)]
 pub struct ElseBranch<'a> {

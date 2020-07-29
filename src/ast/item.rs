@@ -909,8 +909,12 @@ impl<'a> FnDecl<'a> {
                 delim: Delim::Curlies,
                 ..
             } => {
-                match BlockExpr::parse(tokens.get(consumed), end_source!(containing_token), errors)
-                {
+                match BlockExpr::parse(
+                    tokens.get(consumed),
+                    ends_early,
+                    end_source!(containing_token),
+                    errors,
+                ) {
                     Ok(expr) => Some(expr),
                     Err(()) if consumed < tokens.len() => return Err(Some(consumed)),
                     Err(()) => return Err(None),

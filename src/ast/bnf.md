@@ -151,9 +151,7 @@ Expr = Literal
      | LoopExpr                                 # "Loop" loops
      | IfExpr                                   # Ifs
      | MatchExpr                                # Matches
-     | "continue"
-     | "break" [ Expr ]
-     | "return" [ Expr ] .
+     | "continue" .
 
 NamedExpr = PathComponent .
 
@@ -162,7 +160,7 @@ StructFieldExpr = Ident [ ":" Expr ] .
 
 LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
 
-BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | DoWhileExpr | LoopExpr | BlockExpr .
+BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
 
 IfExpr      = "if" Expr BlockExpr [ "else" BigExpr ] .
 ForExpr     = "for" Pattern "in" Expr BlockExpr [ "else" BigExpr ] .
@@ -173,7 +171,8 @@ BlockExpr   = "{" { Stmt } [ Expr ] "}" .
 MatchExpr = "match" Expr "{" { MatchArm } "}" .
 MatchArm = Pattern [ "if" Expr ] "=>" ( BigExpr "\n" | Expr "," ) .
 
-PrefixOp = "!" | "-" | "&" [ "mut" ] | "*" .
+PrefixOp = "!" | "-" | "&" [ "mut" ] | "*" | "break" | "return" | LetPrefix .
+LetPrefix = "let" Pattern [ ":" Type ] "=" .
 BinOp = "+" | "-" | "*" | "/" | "%"
       | "&" | "|" | "^" | "<<" | ">>" | "&&" | "||"
       | "<" | ">" | "<=" | ">=" | "==" | "!=" .
@@ -190,7 +189,7 @@ PostfixOp = "[" Expr "]"                # Indexing
 PostfixOp = "[" Expr "]" | "?" .
 
 AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
-         | "&=" | "|=" | "<<=" | ">>="
+         | "&=" | "|=" | "<<=" | ">>=" | "||=" | "&&="
          | "=" .
 
 FnArgs = "(" [ FnArg { "," FnArg } [ "," ] ] ")" .
