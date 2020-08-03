@@ -144,7 +144,6 @@ Expr = Literal
      | "[" [ Expr { "," Expr } [ "," ] ] "]"    # Array literals
      | "(" [ Expr { "," Expr } [ "," ] ] ")"    # Tuples
      | BlockExpr                                # Blocks
-     | LetExpr                                  # "let" expressions
      | ForExpr                                  # For loops
      | WhileExpr                                # While loops
      | DoWhileExpr                              # Do-while loops
@@ -178,7 +177,7 @@ BinOp = "+" | "-" | "*" | "/" | "%"
       | "<" | ">" | "<=" | ">=" | "==" | "!=" .
 
 PostfixOp = "[" Expr "]"                # Indexing
-          | "." Ident [ GenericArgs ]   # Field access / method calls
+          | "." Ident [ GenericArgs ]   # Field / method access
           | "." IntLiteral              # Tuple indexing
           | FnArgs                      # Function calls
           | StructExpr                  # Named structs

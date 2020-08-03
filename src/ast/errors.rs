@@ -84,6 +84,9 @@ pub enum Error<'a> {
         /// The curly brace that was found
         source: Source<'a>,
     },
+
+    /// Comparison expressions are disallowed within generics arguments
+    ComparisonExprDisallowed { source: TokenSlice<'a> },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -92,6 +95,12 @@ pub enum Source<'a> {
     EndDelim(&'a Token<'a>),
     TokenResult(Result<&'a Token<'a>, token_tree::Error<'a>>),
     EOF,
+}
+
+impl<'a> From<&'a Result<Token<'a>, token_tree::Error<'a>>> for Source<'a> {
+    fn from(res: &'a Result<Token<'a>, token_tree::Error<'a>>) -> Source<'a> {
+        Source::TokenResult(res.as_ref().map_err(|e| *e))
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -115,9 +124,10 @@ pub enum ExpectedKind<'a> {
     ArrayElement,
     ArrayDelim(&'a Token<'a>), // The containing token
     TupleElement,
-    TupleDelim(&'a Token<'a>),     // The containing token
-    MatchBody(&'a Token<'a>),      // The `match` token
-    MatchArmDelim(TokenSlice<'a>), // The arm after which we're expecting a delimiter
+    TupleDelim(&'a Token<'a>),          // The containing token
+    MatchBody(&'a Token<'a>),           // The `match` token
+    MatchArmDelim(TokenSlice<'a>),      // The arm after which we're expecting a delimiter
+    ColonAfterNamedExpr(&'a Token<'a>), // The name
     Pattern(PatternContext<'a>),
     StructPatternField(PatternContext<'a>),
     StructPatternEnd(PatternContext<'a>),
@@ -184,6 +194,7 @@ pub enum IdentContext<'a> {
     /// Path components expect an identifier
     PathComponent(PathComponentContext<'a>),
     PatternPath(PatternContext<'a>, TokenSlice<'a>),
+    NamedExpr(super::ExprDelim),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -248,6 +259,7 @@ pub enum PatternContext<'a> {
     Let(&'a Token<'a>),
     Match(&'a Token<'a>),
     For(&'a Token<'a>),
+    Is(&'a Token<'a>),
 }
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {

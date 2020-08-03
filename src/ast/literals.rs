@@ -11,7 +11,7 @@ pub struct Ident<'a> {
     pub name: &'a str,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal<'a> {
     Char(CharLiteral<'a>),
     String(StringLiteral<'a>),
@@ -20,20 +20,20 @@ pub enum Literal<'a> {
 }
 
 /// Character literals
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CharLiteral<'a> {
     pub(super) src: &'a Token<'a>,
     pub content: &'a str,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StringLiteral<'a> {
     pub(super) src: &'a Token<'a>,
     pub content: &'a str,
 }
 
 /// Integer literals
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IntLiteral<'a> {
     pub(super) src: TokenSlice<'a>,
     /// The content of the literal
@@ -43,7 +43,7 @@ pub struct IntLiteral<'a> {
 }
 
 /// Floating-point literals, represented by two integer literals glued to a dot (`.`) between them
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FloatLiteral<'a> {
     pub(super) src: TokenSlice<'a>,
     /// The value before the decimal point
@@ -110,12 +110,7 @@ impl<'a> Literal<'a> {
     ///
     /// This function expects the first token to be a literal (note: distinct from the syntax
     /// element), and will panic if this is not the case.
-    pub fn consume(
-        tokens: TokenSlice<'a>,
-        _ends_early: bool,
-        _containing_token: Option<&'a Token<'a>>,
-        _errors: &mut Vec<Error<'a>>,
-    ) -> Result<Literal<'a>, Option<usize>> {
+    pub fn consume(tokens: TokenSlice<'a>) -> Result<Literal<'a>, Option<usize>> {
         // There's a few different literals that we can have here. They all start with a "literal"
         // token, and some continue on to use further tokens afterwards.
         //

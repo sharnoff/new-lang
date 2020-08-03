@@ -14,7 +14,7 @@ use super::*;
 // Statements                                                                                     //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt<'a> {
     BigExpr(Expr<'a>),
     LittleExpr(LittleExprStmt<'a>),
@@ -22,13 +22,13 @@ pub enum Stmt<'a> {
     Item(Item<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LittleExprStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     expr: Expr<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssignStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     assignee: Assignee<'a>,
@@ -43,13 +43,13 @@ pub struct AssignStmt<'a> {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // AKA lvalue - "Assignee" is more intuitive to people who aren't in the know
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Assignee<'a> {
     Deref(Box<PrefixOpExpr<'a>>),
     Path(Path<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum AssignOp {
     /// `+=`
     Add,

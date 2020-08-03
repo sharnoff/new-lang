@@ -35,7 +35,7 @@ use super::*;
 /// One of the last key things to note is that while `[ "!" ] "mut"` is *syntactically* allowed
 /// before any type (hence `mut mut int` is valid), repetitions of this prefix are not
 /// *semantically* allowed. This validation is left until later.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type<'a> {
     Named(NamedType<'a>),
     Ref(RefType<'a>),
@@ -64,46 +64,46 @@ pub enum Type<'a> {
 /// this type cannot be used in cases where there might be ambiguity around the generic arguments.
 ///
 /// [`Path`]: ../expr/struct.Path.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NamedType<'a> {
     pub(super) src: TokenSlice<'a>,
     path: Path<'a>,
     refinements: Option<Refinements<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefType<'a> {
     pub(super) src: TokenSlice<'a>,
     ty: Box<Type<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MutType<'a> {
     pub(super) src: TokenSlice<'a>,
     has_not: Option<&'a Token<'a>>,
     ty: Box<Type<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArrayType<'a> {
     pub(super) src: &'a Token<'a>,
     ty: Box<Type<'a>>,
     length: Option<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructType<'a> {
     pub(super) src: &'a Token<'a>,
     fields: Vec<StructTypeField<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TupleType<'a> {
     pub(super) src: &'a Token<'a>,
     elems: Vec<Type<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EnumType<'a> {
     pub(super) src: TokenSlice<'a>,
     variants: Vec<(Ident<'a>, Type<'a>)>,
@@ -259,7 +259,7 @@ impl<'a> EnumType<'a> {
 //     * TypeOrExpr                                                                               //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructTypeField<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
@@ -268,33 +268,33 @@ pub struct StructTypeField<'a> {
     default: Option<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Refinements<'a> {
     pub(super) src: TokenSlice<'a>,
     refs: Vec<Refinement<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Refinement<'a> {
     Ref(RefRefinement<'a>),
     Init(InitRefinement<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefRefinement<'a> {
     pub(super) src: TokenSlice<'a>,
     is_mut: Option<&'a Token<'a>>,
     expr: Expr<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InitRefinement<'a> {
     pub(super) src: TokenSlice<'a>,
     not: Option<&'a Token<'a>>,
     maybe: Option<&'a Token<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeBound<'a> {
     pub(super) src: TokenSlice<'a>,
     refinements: Option<Refinements<'a>>,
@@ -321,7 +321,7 @@ pub struct TypeBound<'a> {
 ///
 /// [`GenericArg`]: enum.GenericArg.html
 /// [`try_consume`]: #method.try_consume
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericArgs<'a> {
     pub(super) src: TokenSlice<'a>,
     args: Vec<GenericArg<'a>>,
@@ -349,7 +349,7 @@ pub struct GenericArgs<'a> {
 ///
 /// [`GenericArgs`]: struct.GenericArgs.html
 /// [`consume`]: #method.consume
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GenericArg<'a> {
     Type(TypeGenericArg<'a>),
     Const(ConstGenericArg<'a>),
@@ -357,27 +357,27 @@ pub enum GenericArg<'a> {
     Ambiguous(AmbiguousGenericArg<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeGenericArg<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Option<Ident<'a>>,
     type_arg: Type<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstGenericArg<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Option<Ident<'a>>,
     value: Expr<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefGenericArg<'a> {
     pub(super) src: TokenSlice<'a>,
     expr: Expr<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AmbiguousGenericArg<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Option<Ident<'a>>,
@@ -663,8 +663,8 @@ impl<'a> RefGenericArg<'a> {
 
         let expr = Expr::consume_no_delim(
             &tokens[1..],
-            Some(BindingPower::Deref),
             None,
+            false,
             ends_early,
             containing_token,
             errors,

@@ -7,7 +7,7 @@ use super::*;
 /// A pattern, used for destructuring and pattern matching
 ///
 /// Individual details are given in the documentation for the variant types.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Pattern<'a> {
     Named(NamedPattern<'a>),
     Struct(StructPattern<'a>),
@@ -37,7 +37,7 @@ pub enum Pattern<'a> {
 /// [`PatternPath`]: enum.PatternPath.html
 /// [`Path`]: ../expr/struct.Path.html
 /// [`NamedPatternKind`]: enum.NamedPatternKind.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NamedPattern<'a> {
     pub(super) src: TokenSlice<'a>,
     pub path: PatternPath<'a>,
@@ -61,21 +61,21 @@ pub struct NamedPattern<'a> {
 /// identifier (using the second variant above), it may instead be used to bind a local variable.
 ///
 /// [`NamedPattern`]: struct.NamedPattern.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PatternPath<'a> {
     Relative(RelativePatternPath<'a>),
     Absolute(AbsolutePatternPath<'a>),
 }
 
 /// "Relative" pattern paths - a helper type for [`PatternPath`](#enum.PatternPath.html)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RelativePatternPath<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
 }
 
 /// "Absolute" pattern paths - a helper type for [`PatternPath`](#enum.PatternPath.html)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AbsolutePatternPath<'a> {
     pub(super) src: TokenSlice<'a>,
     components: Vec<Ident<'a>>,
@@ -84,7 +84,7 @@ pub struct AbsolutePatternPath<'a> {
 /// A helper type to express the right-hand-side of [`NamedPattern`]s
 ///
 /// [`NamedPattern`]: struct.NamedPattern.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NamedPatternKind<'a> {
     Struct(StructPattern<'a>),
     Tuple(TuplePattern<'a>),
@@ -104,7 +104,7 @@ pub enum NamedPatternKind<'a> {
 /// syntactically invalid without a preceeding comma if there are fields named here.
 ///
 /// [`FieldPattern`]: struct.FieldPattern.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StructPattern<'a> {
     pub(super) src: &'a Token<'a>,
     pub fields: Vec<FieldPattern<'a>>,
@@ -127,7 +127,7 @@ pub struct StructPattern<'a> {
 /// abbreviation available in struct instantiation.
 ///
 /// [`StructPattern`]: struct.StructPattern.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldPattern<'a> {
     pub(super) src: TokenSlice<'a>,
     pub name: Ident<'a>,
@@ -142,7 +142,7 @@ pub struct FieldPattern<'a> {
 /// ```
 /// Tuple patterns consist of a list of elements, which are required to have the same arity as the
 /// tuple they are matching against.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TuplePattern<'a> {
     pub(super) src: &'a Token<'a>,
     pub elements: Vec<Pattern<'a>>,
@@ -161,7 +161,7 @@ pub struct TuplePattern<'a> {
 /// While the definition indicates that dots (`..`) may be given anywhere in the list, it is
 /// important to note that only a small class of options here are semantically valid, primarily for
 /// practical reasons (e.g. not constant-time to match).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArrayPattern<'a> {
     pub(super) src: &'a Token<'a>,
     pub elements: Vec<ElementPattern<'a>>,
@@ -172,7 +172,7 @@ pub struct ArrayPattern<'a> {
 }
 
 /// A helper type for [`ArrayPattern`](#struct.ArrayPattern.html)s
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ElementPattern<'a> {
     Dots(&'a Token<'a>),
     Pattern(Pattern<'a>),
@@ -189,7 +189,7 @@ pub enum ElementPattern<'a> {
 /// ```
 /// An additional quirk is that `x = foo` is equivalent to `let assign x = foo` for any lvalue `x`
 /// and expression `foo`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssignPattern<'a> {
     pub(super) src: TokenSlice<'a>,
     pub assignee: Assignee<'a>,
@@ -204,7 +204,7 @@ pub struct AssignPattern<'a> {
 /// ```text
 /// RefPattern = "&" Pattern .
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RefPattern<'a> {
     pub(super) src: TokenSlice<'a>,
     pub pat: Box<Pattern<'a>>,
@@ -270,7 +270,7 @@ impl<'a> Pattern<'a> {
                     }
                 }
             },
-            TokenKind::Literal(_,_) => Literal::consume(tokens, ends_early, containing_token, errors)
+            TokenKind::Literal(_,_) => Literal::consume(tokens)
                 .map(Pattern::Literal),
             @else ExpectedKind::Pattern(ctx),
         ))

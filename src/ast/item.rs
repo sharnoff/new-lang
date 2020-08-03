@@ -8,7 +8,7 @@ use super::*;
 // `Item` variants                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Item<'a> {
     Fn(FnDecl<'a>),
     Macro(MacroDef<'a>),
@@ -24,7 +24,7 @@ pub enum Item<'a> {
 /// Visibility qualifiers for [`Item`]s
 ///
 /// Currently there is a single variant ("pub") - this may be subject to change in the future.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Vis<'a> {
     Pub { src: &'a Token<'a> },
 }
@@ -57,7 +57,7 @@ pub enum Vis<'a> {
 /// visibility of the parent trait.
 ///
 /// [`FnParams`]: struct.FnParams.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FnDecl<'a> {
     pub(super) src: TokenSlice<'a>,
     proof_stmts: Option<ProofStmts<'a>>,
@@ -74,7 +74,7 @@ pub struct FnDecl<'a> {
 /// A macro definition
 ///
 /// This feature is a work-in-progress, and so this type has not yet been defined.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MacroDef<'a> {
     pub(super) src: TokenSlice<'a>,
     placeholder: (),
@@ -104,7 +104,7 @@ pub struct MacroDef<'a> {
 ///
 /// Note that visibility qualifiers are not allowed within trait definitions; each item takes the
 /// visibility of the parent trait.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeDecl<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
@@ -137,7 +137,7 @@ pub struct TypeDecl<'a> {
 /// of an empty curly-brace block.
 ///
 /// [`TypeBound`]: struct.TypeBound.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TraitDef<'a> {
     pub(super) src: TokenSlice<'a>,
     proof_stmts: Option<ProofStmts<'a>>,
@@ -171,7 +171,7 @@ pub struct TraitDef<'a> {
 /// [`Vis`]: enum.Vis.html
 /// [`ProofStmtsDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.ProofStmtsDisallowedBeforeItem
 /// [`VisDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.VisDisallowedBeforeItem
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImplBlock<'a> {
     pub(super) src: TokenSlice<'a>,
     trait_impl: Option<Path<'a>>,
@@ -212,7 +212,7 @@ pub struct ImplBlock<'a> {
 /// implementations) as the scoping is given instead by the visibility of the trait.
 ///
 /// [`TypeBound`]: struct.TypeBound.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     vis: Option<Vis<'a>>,
@@ -231,7 +231,7 @@ pub struct ConstStmt<'a> {
 /// For further information, refer to the documentation for [const statements].
 ///
 /// [const statements]: struct.ConstStmt.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StaticStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     proof_stmts: Option<ProofStmts<'a>>,
@@ -265,7 +265,7 @@ pub struct StaticStmt<'a> {
 /// converted to an identifier), the user *must* supply an identifier to rename as.
 ///
 /// [`UseStmt`s]: struct.UseStmt.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImportStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     source: StringLiteral<'a>,
@@ -293,7 +293,7 @@ pub struct ImportStmt<'a> {
 /// the first variant of [`UsePath`]). Items may also be renamed as they are brought into scope.
 ///
 /// [`UsePath`]: enum.UsePath.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UseStmt<'a> {
     pub(super) src: TokenSlice<'a>,
     vis: Option<Vis<'a>>,
@@ -1080,7 +1080,7 @@ impl<'a> UseStmt<'a> {
 /// For more information on the structure of proof statements, see [`ProofStmt`].
 ///
 /// [`ProofStmt`]: struct.ProofStmt.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProofStmts<'a> {
     pub stmts: Vec<ProofStmt<'a>>,
     pub poisoned: bool,
@@ -1126,7 +1126,7 @@ pub struct ProofStmts<'a> {
 /// `exists z where:`, inside `forall y in 0..x`.
 ///
 /// [`ProofStmtKind`]: enum.ProofStmtKind.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProofStmt<'a> {
     pub kind: ProofStmtKind<'a>,
     pub(super) src: TokenSlice<'a>,
@@ -1137,7 +1137,7 @@ pub struct ProofStmt<'a> {
 /// For information on proof statments, refer to the documentation for [`ProofStmt`].
 ///
 /// [`ProofStmt`]: struct.ProofStmt.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProofStmtKind<'a> {
     /// Single implication: `Expr "=>" Expr`
     Implies(Expr<'a>, Expr<'a>),
@@ -1161,26 +1161,26 @@ pub enum ProofStmtKind<'a> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImplBody<'a> {
     pub(super) src: &'a Token<'a>,
     items: Vec<Item<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UsePath<'a> {
     Multi(MultiUse<'a>),
     Single(SingleUse<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MultiUse<'a> {
     pub(super) src: TokenSlice<'a>,
     root: Path<'a>,
     children: Vec<UsePath<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SingleUse<'a> {
     pub(super) src: TokenSlice<'a>,
     kind: UseKind,
@@ -1204,14 +1204,14 @@ pub enum UseKind {
     Static,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FnParams<'a> {
     pub(super) src: &'a Token<'a>,
     self_prefix: Option<FnParamsReceiver<'a>>,
     args: Vec<StructTypeField<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FnParamsReceiver<'a> {
     pub(super) src: TokenSlice<'a>,
     is_ref: Option<&'a Token<'a>>,
@@ -1233,7 +1233,7 @@ pub struct FnParamsReceiver<'a> {
 ///
 /// [`Vec<GenericParam>`]: struct.GenericParam.html
 /// [`GenericParam`]: struct.GenericParam.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericParams<'a> {
     pub(super) src: TokenSlice<'a>,
     params: Vec<GenericParam<'a>>,
@@ -1258,7 +1258,7 @@ pub struct GenericParams<'a> {
 /// [`GenericTypeParam`]: struct.GenericTypeParam.html
 /// [`GenericConstParam`]: struct.GenericConstParam.html
 /// [`GenericRefParam`]: struct.GenericRefParam.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum GenericParam<'a> {
     Type(GenericTypeParam<'a>),
     Const(GenericConstParam<'a>),
@@ -1281,7 +1281,7 @@ pub enum GenericParam<'a> {
 /// [`GenericParam`]: struct.GenericParam.html
 /// [type bound]: ../types/struct.TypeBound.html
 /// [`"=" Type`]: ../types/enum.Type.html
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericTypeParam<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
@@ -1289,7 +1289,7 @@ pub struct GenericTypeParam<'a> {
     default_type: Option<Type<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericConstParam<'a> {
     pub(super) src: TokenSlice<'a>,
     name: Ident<'a>,
@@ -1297,7 +1297,7 @@ pub struct GenericConstParam<'a> {
     default: Option<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericRefParam<'a> {
     pub(super) src: TokenSlice<'a>,
     ref_name: Ident<'a>,
