@@ -17,7 +17,7 @@ fn main() {
     files.reserve("test_input.tc");
 
     let test_input_file = files.file("test_input.tc");
-    let ast = test_input_file.get_ast(|err| panic!("Faild to open file: {:?}", err));
+    let ast = test_input_file.get_ast(|err| panic!("Failed to open file: {:?}", err));
 
     println!("{:?}", std::ops::Deref::deref(&ast));
 

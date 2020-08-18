@@ -98,6 +98,7 @@ impl_all! {
         Literal, Named, PrefixOp, BinOp, PostfixOp, Struct, Array, Tuple, Block,
         AmbiguousBlock, For, While, DoWhile, Loop, If, Match, Continue,
     },
+    Delimited,
     PrefixOpExpr,
     BinOpExpr,
     PostfixOpExpr,
@@ -115,18 +116,13 @@ impl_all! {
     MatchArm,
     @Single: ContinueExpr,
     // Expression helper bits
+    Stmt { BigExpr, Little, Item, UnnecessarySemi },
+    LittleExpr,
     Path,
     PathComponent,
     FnArg,
     StructFieldExpr,
     ElseBranch,
-
-    // Statements
-    Stmt { BigExpr, LittleExpr, Assign, Item },
-    LittleExprStmt,
-    AssignStmt,
-    // Statement helper bits
-    Assignee { Deref, Path },
 
     // Patterns
     Pattern { Named, Struct, Tuple, Array, Assign, Ref, Literal },

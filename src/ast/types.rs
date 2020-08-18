@@ -306,7 +306,8 @@ pub struct TypeBound<'a> {
 /// Individual generic arguments are represented by the [`GenericArg`] type, which exists solely as
 /// a helper for this type. The BNF definition for the combination of these two types is:
 /// ```text
-/// GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
+/// GenericArgs = "<" "(" GenericArg { "," GenericArg } [ "," ] ")" ">"
+///             | "<" GenericArg ">" .
 /// GenericArg = [ Ident ":" ] Type
 ///            | [ Ident ":" ] BlockExpr
 ///            | "ref" Expr .
@@ -439,6 +440,10 @@ impl<'a> GenericArgs<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<GenericArgs<'a>>, Option<usize>> {
+        // Marked TODO because the generics parsing here hasn't yet been modified to disallow
+        // multiple arguments without parentheses.
+        todo!()
+        /*
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         match tokens.first() {
             Some(Ok(t)) => match &t.kind {
@@ -494,6 +499,7 @@ impl<'a> GenericArgs<'a> {
             args,
             poisoned,
         }))
+        */
     }
 }
 
@@ -661,10 +667,14 @@ impl<'a> RefGenericArg<'a> {
             res => panic!("Expected keyword `ref`, found {:?}", res),
         }
 
-        let expr = Expr::consume_no_delim(
+        let expr = Expr::consume(
             &tokens[1..],
-            None,
+            // We use `FnArgs` as the delimiter here because it (roughly) has the same properties
+            // as function arguments, and that's all that we really need for the context of
+            // possible errors generated here.
+            ExprDelim::FnArgs,
             false,
+            None,
             ends_early,
             containing_token,
             errors,

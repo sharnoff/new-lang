@@ -11,13 +11,13 @@ use errors::*;
 
 // We blanket import everything from the parser submodules so that everything can be under a single
 // namespace.
-mod expr;
-mod item;
-mod literals;
-mod pattern;
-mod stmt;
-mod types;
-pub use self::{expr::*, item::*, literals::*, pattern::*, stmt::*, types::*};
+pub mod expr;
+pub mod item;
+pub mod literals;
+pub mod pattern;
+pub mod types;
+
+use self::{expr::*, item::*, literals::*, pattern::*, types::*};
 
 use crate::token_tree::{self, Delim, Kwd, Punc, Token, TokenKind};
 use consumed::Consumed;

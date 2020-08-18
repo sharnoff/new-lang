@@ -104,10 +104,11 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
              | "const" Ident ":" Type [ "=" Expr ] .
              | "ref" Ident" .
 
-GenericArgs = "<" GenericArg { "," GenericArg } [ "," ] ">"
+GenericArgs = "<" "(" GenericArg { "," GenericArg } [ "," ] ")" ">"
+            | "<" GenericArg ">"
 GenericArg = [ Ident ":" ] Type
-           | [ Ident ":" ] Expr    # Limited to BindingPower::Add/Sub or greater
-           | "ref" Expr .          # Limited to BindingPower::Deref or greater
+           | [ Ident ":" ] Expr
+           | "ref" Expr .
 
 Trait = Path .
 
@@ -128,12 +129,7 @@ TypeBound = [ Refinements ] Trait { "+" Trait } .
 
 Stmt = BigExpr "\n"
      | Expr ";"
-     | Assignee AssignOp ( Expr ";" | BigExpr "\n" )
-     | "continue" ";"
-     | "return" Expr ";"
      | Item .
-Assignee = "*" Expr
-         | Path .
 
 Expr = Literal
      | NamedExpr
@@ -159,7 +155,7 @@ StructFieldExpr = Ident [ ":" Expr ] .
 
 LetExpr = "let" Pattern [ ":" Type ] "=" Expr .
 
-BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
+BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr | StructExpr .
 
 IfExpr      = "if" Expr BlockExpr [ "else" BigExpr ] .
 ForExpr     = "for" Pattern "in" Expr BlockExpr [ "else" BigExpr ] .
@@ -174,7 +170,9 @@ PrefixOp = "!" | "-" | "&" [ "mut" ] | "*" | "break" | "return" | LetPrefix .
 LetPrefix = "let" Pattern [ ":" Type ] "=" .
 BinOp = "+" | "-" | "*" | "/" | "%"
       | "&" | "|" | "^" | "<<" | ">>" | "&&" | "||"
-      | "<" | ">" | "<=" | ">=" | "==" | "!=" .
+      | "<" | ">" | "<=" | ">=" | "==" | "!="
+      | "+=" | "-=" | "*=" | "/=" | "%="
+      | "&=" | "|=" | "<<=" | ">>=" | "=" .
 
 PostfixOp = "[" Expr "]"                # Indexing
           | "." Ident [ GenericArgs ]   # Field / method access
@@ -186,10 +184,6 @@ PostfixOp = "[" Expr "]"                # Indexing
           | "?"                         # "try" operator
 
 PostfixOp = "[" Expr "]" | "?" .
-
-AssignOp = "+=" | "-=" | "*=" | "/=" | "%="
-         | "&=" | "|=" | "<<=" | ">>=" | "||=" | "&&="
-         | "=" .
 
 FnArgs = "(" [ FnArg { "," FnArg } [ "," ] ] ")" .
 FnArg = [ Ident ":" ] Expr .
@@ -211,7 +205,7 @@ TuplePattern = "(" [ Pattern { "," Pattern } [ "," ] ] ")" .
 ArrayPattern = "[" [ ElementPattern { "," ElementPattern } [ "," ] ]  "]" .
 ElementPattern = ".." | Pattern .
 
-AssignPattern    = "assign" Assignee .
+AssignPattern    = "assign" Expr .
 RefPattern       = "&" Pattern .
 
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .

@@ -190,6 +190,7 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<SimpleToken<'a>, Invalid<'a
             '^' => single!(Caret),
             '~' => single!(Tilde),
             '?' => single!(Question),
+            '#' => single!(Hash),
 
             // Final case - if we couldn't match any of the characters we wanted, we'll mark this
             // as an invalid character
@@ -259,6 +260,7 @@ pub enum TokenKind {
     Caret,       // "^"
     Tilde,       // "~"
     Question,    // "?"
+    Hash,        // "#"
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

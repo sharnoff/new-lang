@@ -1,6 +1,6 @@
 //! Error types and messages for parsing into the AST
 
-use super::TokenSlice;
+use super::{ExprDelim, TokenSlice};
 use crate::error::{Builder as ErrorBuilder, ToError};
 use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
@@ -85,8 +85,14 @@ pub enum Error<'a> {
         source: Source<'a>,
     },
 
-    /// Comparison expressions are disallowed within generics arguments
+    /// Comparison expressions are disallowed within a single generics argument
     ComparisonExprDisallowed { source: TokenSlice<'a> },
+
+    /// Some delimited expressions don't allow
+    UnexpectedExprColon {
+        delim: ExprDelim,
+        src: TokenSlice<'a>,
+    },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -119,15 +125,24 @@ pub enum ExpectedKind<'a> {
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
     ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
-    StructFieldExpr,
+    FnArgDelim(&'a Token<'a>),    // The containing token
+    StructFieldExprName,
+    StructFieldExprColonOrComma {
+        name: &'a Token<'a>,
+        containing_token: &'a Token<'a>,
+    },
     StructFieldExprDelim(&'a Token<'a>), // The containing token
-    ArrayElement,
-    ArrayDelim(&'a Token<'a>), // The containing token
-    TupleElement,
-    TupleDelim(&'a Token<'a>),          // The containing token
-    MatchBody(&'a Token<'a>),           // The `match` token
-    MatchArmDelim(TokenSlice<'a>),      // The arm after which we're expecting a delimiter
-    ColonAfterNamedExpr(&'a Token<'a>), // The name
+    ArrayDelim(&'a Token<'a>),           // The containing token
+    TupleDelim(&'a Token<'a>),           // The containing token
+    MatchBody(&'a Token<'a>),            // The `match` token
+    MatchArmDelim(TokenSlice<'a>),       // The arm after which we're expecting a delimiter
+    DotAccess(&'a Token<'a>),            // The dot token
+    BlockExpr,
+    Stmt,
+    TrailingSemi {
+        expr_src: TokenSlice<'a>,
+    },
+    EndOfIndexPostfix,
     Pattern(PatternContext<'a>),
     StructPatternField(PatternContext<'a>),
     StructPatternEnd(PatternContext<'a>),
@@ -222,6 +237,9 @@ pub enum TypeContext<'a> {
         name: Option<&'a Token<'a>>,
     },
     LetHint(LetContext<'a>),
+    TypeBinding {
+        tilde: &'a Token<'a>,
+    },
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -246,6 +264,7 @@ pub enum NoCurlyContext {
     ForIter,
     WhileCondition,
     MatchExpr,
+    BigExpr,
 }
 
 #[derive(Debug, Copy, Clone)]

@@ -179,6 +179,7 @@ pub enum Punc {
     Caret,       // "^"
     Tilde,       // "~"
     Question,    // "?"
+    Hash,        // "#"
 }
 
 impl Delim {
@@ -290,6 +291,7 @@ impl<'a> Token<'a> {
             [Caret, ..] => punc!(Caret),
             [Tilde, ..] => punc!(Tilde),
             [Question, ..] => punc!(Question),
+            [Hash, ..] => punc!(Hash),
         };
 
         // We'll additionally consume any trailing whitespace.

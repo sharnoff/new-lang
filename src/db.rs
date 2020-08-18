@@ -108,7 +108,7 @@ pub struct SimpleTokenOutput<'a> {
 type TokenTreeOutput<'a> = token_tree::FileTokenTree<'a>;
 
 /// The output type from producing
-type AstOutput<'a> = Vec<ast::Item<'a>>;
+type AstOutput<'a> = Vec<ast::item::Item<'a>>;
 
 impl Files {
     /// Creates a new, empty set of files
@@ -454,7 +454,7 @@ impl<'a> FileState {
                             );
                         }
 
-                        let items: Vec<crate::ast::Item<'static>> =
+                        let items: Vec<crate::ast::item::Item<'static>> =
                             unsafe { std::mem::transmute(items) };
                         *write_guard = Some(Some(items));
                     }

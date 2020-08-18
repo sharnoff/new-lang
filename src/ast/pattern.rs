@@ -178,21 +178,21 @@ pub enum ElementPattern<'a> {
     Pattern(Pattern<'a>),
 }
 
-/// Assignment to an lvalue on a successful match or destructuring
+/// Assignment to an expression on a successful match or destructuring
 ///
 /// These are allowed so that value may be bound within the outer scope of a match. This is only
 /// done on success.
 ///
 /// The BNF for assignment patterns gives the following definition:
 /// ```text
-/// AssignPattern = "assign" Assignee .
+/// AssignPattern = "assign" Expr .
 /// ```
 /// An additional quirk is that `x = foo` is equivalent to `let assign x = foo` for any lvalue `x`
 /// and expression `foo`.
 #[derive(Debug, Clone)]
 pub struct AssignPattern<'a> {
     pub(super) src: TokenSlice<'a>,
-    pub assignee: Assignee<'a>,
+    pub assignee: Box<Expr<'a>>,
 }
 
 /// Reference patterns that allow moving out behind references within matches
@@ -248,12 +248,13 @@ impl<'a> Pattern<'a> {
                 res.map_err(|()| Some(1))
             },
             TokenKind::Keyword(Kwd::Assign) => {
-                match Assignee::consume(&tokens[1..], ends_early, containing_token, errors) {
+                let res = Expr::consume(&tokens[1..], ExprDelim::Comma, true, None, ends_early, containing_token, errors);
+                match res {
                     Err(None) => Err(None),
                     Err(Some(c)) => Err(Some(c + 1)),
-                    Ok(assignee) => {
-                        let src = &tokens[..1+assignee.consumed()];
-                        Ok(Pattern::Assign(AssignPattern { src, assignee }))
+                    Ok(expr) => {
+                        let src = &tokens[..1+expr.consumed()];
+                        Ok(Pattern::Assign(AssignPattern { src, assignee: Box::new(expr) }))
                     }
                 }
             },
@@ -286,7 +287,7 @@ impl<'a> Pattern<'a> {
     ///
     /// [`TuplePattern::parse`]: struct.TuplePattern.html#method.parse
     /// [`ArrayPattern::parse`]: struct.ArrayPattern.html#method.parse
-    fn consume_delimeted<T: Consumed>(
+    fn consume_delimited<T: Consumed>(
         src: &'a Token<'a>,
         inner: TokenSlice<'a>,
         ctx: PatternContext<'a>,
@@ -313,7 +314,7 @@ impl<'a> Pattern<'a> {
                 }
 
                 // Some tokenizer errors are additionally parsing errors. However, because any token
-                // tree can represent a pattern, any error due to an unclosed delimeter is not
+                // tree can represent a pattern, any error due to an unclosed delimiter is not
                 // necessarily a double-error.
                 Some(Err(token_tree::Error::UnclosedDelim(_, _))) => {
                     poisoned = true;
@@ -788,7 +789,7 @@ impl<'a> TuplePattern<'a> {
         ctx: PatternContext<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<TuplePattern<'a>, ()> {
-        let (elements, poisoned) = Pattern::consume_delimeted(
+        let (elements, poisoned) = Pattern::consume_delimited(
             src,
             inner,
             ctx,
@@ -813,7 +814,7 @@ impl<'a> ArrayPattern<'a> {
         ctx: PatternContext<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<ArrayPattern<'a>, ()> {
-        let (elements, poisoned) = Pattern::consume_delimeted(
+        let (elements, poisoned) = Pattern::consume_delimited(
             src,
             inner,
             ctx,
@@ -851,7 +852,7 @@ impl<'a> ElementPattern<'a> {
 
                 Err(None)
             }
-            // Because any delimeter can be a valid pattern, we won't emit a second error here
+            // Because any delimiter can be a valid pattern, we won't emit a second error here
             Some(Err(token_tree::Error::UnclosedDelim(_, _))) => return Err(None),
             // Otherwise, this is *still* an error, so we'll generate another one
             Some(Err(e)) => {
