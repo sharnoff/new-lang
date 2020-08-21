@@ -80,7 +80,7 @@ UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
         | UseKind Path [ "as" Ident ] .
 UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
 Path = PathComponent { "." PathComponent } .
-PathComponent = Ident [ GenericArgs ] .
+PathComponent = Ident [ GenericsArgs ] .
 
 Vis = [ "pub" ] .
 
@@ -104,9 +104,9 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
              | "const" Ident ":" Type [ "=" Expr ] .
              | "ref" Ident" .
 
-GenericArgs = "<" "(" GenericArg { "," GenericArg } [ "," ] ")" ">"
-            | "<" GenericArg ">"
-GenericArg = [ Ident ":" ] Type
+GenericsArgs = "<" "(" GenericsArg { "," GenericsArg } [ "," ] ")" ">"
+            | "<" GenericsArg ">"
+GenericsArg = [ Ident ":" ] Type
            | [ Ident ":" ] Expr
            | "ref" Expr .
 
@@ -127,7 +127,7 @@ StructField = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] .
 EnumVariant = Ident Type .
 TypeBound = [ Refinements ] Trait { "+" Trait } .
 
-Stmt = BigExpr "\n"
+Stmt = BigExpr
      | Expr ";"
      | Item .
 
@@ -164,7 +164,7 @@ WhileExpr   = "while" Expr BlockExpr [ "else" BigExpr ] .
 BlockExpr   = "{" { Stmt } [ Expr ] "}" .
 
 MatchExpr = "match" Expr "{" { MatchArm } "}" .
-MatchArm = Pattern [ "if" Expr ] "=>" ( BigExpr "\n" | Expr "," ) .
+MatchArm = Pattern [ "if" Expr ] "=>" ( BigExpr | Expr "," ) .
 
 PrefixOp = "!" | "-" | "&" [ "mut" ] | "*" | "break" | "return" | LetPrefix .
 LetPrefix = "let" Pattern [ ":" Type ] "=" .
@@ -175,7 +175,7 @@ BinOp = "+" | "-" | "*" | "/" | "%"
       | "&=" | "|=" | "<<=" | ">>=" | "=" .
 
 PostfixOp = "[" Expr "]"                # Indexing
-          | "." Ident [ GenericArgs ]   # Field / method access
+          | "." Ident [ GenericsArgs ]   # Field / method access
           | "." IntLiteral              # Tuple indexing
           | FnArgs                      # Function calls
           | StructExpr                  # Named structs

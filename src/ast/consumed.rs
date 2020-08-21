@@ -152,12 +152,12 @@ impl_all! {
     RefRefinement,
     InitRefinement,
     TypeBound,
-    GenericArgs,
-    GenericArg { Type, Const, Ref, Ambiguous },
-    TypeGenericArg,
-    ConstGenericArg,
-    RefGenericArg,
-    AmbiguousGenericArg,
+    GenericsArgs,
+    GenericsArg { Type, Const, Ref, Ambiguous },
+    TypeGenericsArg,
+    ConstGenericsArg,
+    RefGenericsArg,
+    AmbiguousGenericsArg,
 
     // Literals
     @Single: Ident,

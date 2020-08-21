@@ -1,6 +1,6 @@
 //! Error types and messages for parsing into the AST
 
-use super::{ExprDelim, TokenSlice};
+use super::{ExprDelim, GenericsArg, TokenSlice};
 use crate::error::{Builder as ErrorBuilder, ToError};
 use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
@@ -88,11 +88,41 @@ pub enum Error<'a> {
     /// Comparison expressions are disallowed within a single generics argument
     ComparisonExprDisallowed { source: TokenSlice<'a> },
 
-    /// Some delimited expressions don't allow
+    /// Some delimited expressions don't allow colons
     UnexpectedExprColon {
         delim: ExprDelim,
         src: TokenSlice<'a>,
     },
+
+    /// There's a unique sort of error that we might run across when parsing an expression. For
+    /// more information about this, refer to `Expr::consume_path_component`.
+    ///
+    /// This error is mostly defined by the place that generates it.
+    AmbiguousCloseGenerics {
+        path: TokenSlice<'a>,
+        op_src: TokenSlice<'a>,
+    },
+
+    /// A comma was found after generics argumetns
+    UnexpectedGenericArgsComma {
+        ident: &'a Token<'a>,
+        args: Vec<GenericsArg<'a>>,
+    },
+
+    /// An anonymous struct instantiation was being used as a "big" expression; this is not
+    /// allowed, but block expressions *are*.
+    StructAsBigExpr {
+        outer: &'a Token<'a>,
+        ctx: BigExprContext<'a>,
+    },
+
+    /// There are expression contexts (namely: do..while conditions) where expressions with
+    /// optional else branches aren't allowed.
+    PotentialElseDisallowed { src: &'a Token<'a>, kwd: Kwd },
+
+    /// Do..while expressions aren't allowed as part of more complex expressions; if we find one
+    /// there, we'll produce an error.
+    DoWhileDisallowed { do_token: &'a Token<'a> },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -121,7 +151,7 @@ pub enum ItemKind {
 pub enum ExpectedKind<'a> {
     Ident(IdentContext<'a>),
     ExprLhs,
-    GenericArgOrExpr,
+    GenericsArgOrExpr,
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
     ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
@@ -135,14 +165,17 @@ pub enum ExpectedKind<'a> {
     ArrayDelim(&'a Token<'a>),           // The containing token
     TupleDelim(&'a Token<'a>),           // The containing token
     MatchBody(&'a Token<'a>),            // The `match` token
-    MatchArmDelim(TokenSlice<'a>),       // The arm after which we're expecting a delimiter
-    DotAccess(&'a Token<'a>),            // The dot token
+    MatchArmArrow,
+    MatchArmDelim(TokenSlice<'a>), // The arm after which we're expecting a delimiter
+    DotAccess(&'a Token<'a>),      // The dot token
     BlockExpr,
     Stmt,
     TrailingSemi {
         expr_src: TokenSlice<'a>,
     },
     EndOfIndexPostfix,
+    BigExpr(BigExprContext<'a>),
+    DoWhileWhileToken,
     Pattern(PatternContext<'a>),
     StructPatternField(PatternContext<'a>),
     StructPatternEnd(PatternContext<'a>),
@@ -166,18 +199,18 @@ pub enum ExpectedKind<'a> {
         ctx: GenericParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
-    GenericArg {
+    GenericsArg {
         prev_tokens: TokenSlice<'a>,
     },
-    GenericArgDelim {
+    GenericsArgDelim {
         prev_tokens: TokenSlice<'a>,
     },
     // Any of the tokens that may follow a leading identifier in a generics argument
-    GenericArgFollowIdent {
+    GenericsArgFollowIdent {
         prev_tokens: TokenSlice<'a>,
         ident: &'a Token<'a>,
     },
-    GenericArgAfterIdent {
+    GenericsArgAfterIdent {
         prev_tokens: TokenSlice<'a>,
         name: Option<&'a Token<'a>>,
     },
@@ -232,7 +265,7 @@ pub enum TypeContext<'a> {
         param: TokenSlice<'a>,
         ctx: GenericParamsContext<'a>,
     },
-    GenericArg {
+    GenericsArg {
         prev_tokens: TokenSlice<'a>,
         name: Option<&'a Token<'a>>,
     },
@@ -264,7 +297,16 @@ pub enum NoCurlyContext {
     ForIter,
     WhileCondition,
     MatchExpr,
-    BigExpr,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum NoElseBranchContext {
+    DoWhile,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum BigExprContext<'a> {
+    Else(&'a Token<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]

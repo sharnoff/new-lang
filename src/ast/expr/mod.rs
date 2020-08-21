@@ -236,7 +236,7 @@ pub enum BinOp {
 /// ```text
 /// PostfixOpExpr = Expr PostfixOp .
 /// PostfixOp = "[" Expr "]"                # Indexing
-///           | "." Ident [ GenericArgs ]   # Field access / method calls
+///           | "." Ident [ GenericsArgs ]   # Field access / method calls
 ///           | "." IntLiteral              # Tuple indexing
 ///           | FnArgs                      # Function calls
 ///           | "{" StructFieldsExpr "}"    # Named structs
@@ -272,7 +272,7 @@ pub enum PostfixOp<'a> {
     ///
     /// The boolean indicates whether the expression may have been poisoned
     Index(Box<Expr<'a>>, bool),
-    /// `"." Ident [ GenericArgs ]`
+    /// `"." Ident [ GenericsArgs ]`
     Access(PathComponent<'a>),
     /// `"." IntLiteral`
     TupleIndex(IntLiteral<'a>),
@@ -399,7 +399,7 @@ pub struct BlockExpr<'a> {
 ///
 /// This is defined by the following BNF:
 /// ```text
-/// Stmt = BigExpr "\n"
+/// Stmt = BigExpr
 ///      | Expr ";"
 ///      | Item
 /// ```
@@ -536,7 +536,7 @@ pub struct IfExpr<'a> {
 /// following relevant BNFs:
 /// ```text
 /// MatchExpr = "match" Expr "{" { MatchArm } "}" .
-/// MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr "," | BigExpr "\n" ) .
+/// MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr "," | BigExpr ) .
 /// ```
 #[derive(Debug, Clone)]
 pub struct MatchExpr<'a> {
@@ -623,8 +623,8 @@ binding_power! {
         BitXor;
         BitOr;
         // ^ A note for future changes: A large chunk of the disambiguation used in
-        // `Expr::consume_path_segment` relies on `BitOr` having higher binding power than the
-        // comparison operaors.
+        // `Expr::consume_path_component` relies on `BitOr` having higher binding power than the
+        // comparison operators.
 
         // We then only have the comparison operators left. Some langauges (Python, Rust, Go, Swift,
         // etc.) place all of these on the same level. JavaScript, however, does something neat
@@ -668,6 +668,7 @@ impl<'a> Expr<'a> {
         delim: ExprDelim,
         allow_angle_bracket: bool,
         no_structs: Option<NoCurlyContext>,
+        no_else_branch: Option<NoElseBranchContext>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -678,6 +679,7 @@ impl<'a> Expr<'a> {
             delim,
             allow_angle_bracket,
             no_structs,
+            no_else_branch,
             ends_early,
             containing_token,
             errors,
@@ -693,10 +695,24 @@ impl<'a> Expr<'a> {
         delim: ExprDelim,
         allow_angle_bracket: bool,
         no_structs: Option<NoCurlyContext>,
+        no_else_branch: Option<NoElseBranchContext>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Expr<'a>, Option<usize>> {
+        let is_done = |stack: &Stack| {
+            if is_done(stack) {
+                return true;
+            } else if let Some((_, ex)) = stack.last_expr.as_ref() {
+                return match ex {
+                    Expr::DoWhile(_) => true,
+                    _ => false,
+                };
+            }
+
+            false
+        };
+
         let mut stack = Stack::new(tokens);
         let mut consumed = 0;
 
@@ -714,6 +730,7 @@ impl<'a> Expr<'a> {
                     consumed,
                     delim,
                     allow_angle_bracket,
+                    no_else_branch,
                     ends_early,
                     containing_token,
                     errors,
@@ -773,6 +790,7 @@ impl<'a> Expr<'a> {
         already_consumed: usize,
         delim: ExprDelim,
         allow_angle_bracket: bool,
+        no_else_branch: Option<NoElseBranchContext>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -796,7 +814,9 @@ impl<'a> Expr<'a> {
                 // defined as all of the expression types that don't involve operators.
                 let res = Expr::try_consume_atom(
                     tokens,
+                    DoWhileExpr::is_allowed(stack),
                     allow_angle_bracket,
+                    no_else_branch,
                     delim,
                     ends_early,
                     containing_token,
@@ -824,11 +844,11 @@ impl<'a> Expr<'a> {
     ///
     /// `already_consumed` indicates the place in the original consumed expression `tokens` starts,
     /// in order for us to pass it along to the stack values.
-    ///
-    /// This additionally fully handles the ambiguity that may be present with angle-brackets.
     fn try_consume_atom(
         tokens: TokenSlice<'a>,
+        allow_do_while: bool,
         allow_angle_bracket: bool,
+        no_else_branch: Option<NoElseBranchContext>,
         delim: ExprDelim,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
@@ -836,12 +856,14 @@ impl<'a> Expr<'a> {
     ) -> Result<Option<Expr<'a>>, Option<usize>> {
         // Atomic expressions are defined as any of:
         //   AtomicExpr = Literal | PathComponent | StructExpr | ArrayExpr | TupleExpr | BlockExpr
-        //              | ForExpr | WhileExpr | LoopExpr | IfExpr | MatchExpr | ContinueExpr .
+        //              | ForExpr | WhileExpr | LoopExpr | IfExpr | MatchExpr | DoWhileExpr
+        //              | ContinueExpr .
         // We'll examine the first token to determine what type of expression we're looking at. If
         // we can't find anything that matches, we'll return `Ok(None)`.
         //
-        // One notable exception here is that `do .. while` loops are not allowed; the trailing
-        // expression means we would need to introduce some kind of precedence for `do .. while`.
+        // There's a little bit of handling further down the expression list: `do..while`
+        // expressions are only allowed in certain contexts, and sometimes expressions with else
+        // branches (i.e. "if", "while", "for", and "do..while") aren't allowed.
 
         use Delim::{Curlies, Parens, Squares};
 
@@ -900,12 +922,38 @@ impl<'a> Expr<'a> {
                     .map(|e| Some(Expr::Tuple(e)))
                     .map_err(|()| Some(1)),
 
+                // If we find an expression that may have a trailing "else" branch where we aren't
+                // allowing it, we'll produce an error
+                TokenKind::Keyword(kwd @ Kwd::For)
+                | TokenKind::Keyword(kwd @ Kwd::While)
+                | TokenKind::Keyword(kwd @ Kwd::If)
+                | TokenKind::Keyword(kwd @ Kwd::Do)
+                    if no_else_branch.is_some() =>
+                {
+                    errors.push(Error::PotentialElseDisallowed {
+                        src: fst_token,
+                        kwd: *kwd,
+                    });
+
+                    Err(None)
+                }
+
                 TokenKind::Keyword(Kwd::For) => consume!(ForExpr, For),
                 TokenKind::Keyword(Kwd::While) => consume!(WhileExpr, While),
                 TokenKind::Keyword(Kwd::Loop) => consume!(LoopExpr, Loop),
                 TokenKind::Keyword(Kwd::If) => consume!(IfExpr, If),
                 TokenKind::Keyword(Kwd::Match) => consume!(MatchExpr, Match),
                 TokenKind::Keyword(Kwd::Continue) => consume!(ContinueExpr, Continue),
+
+                TokenKind::Keyword(Kwd::Do) if !allow_do_while => {
+                    errors.push(Error::DoWhileDisallowed {
+                        do_token: fst_token,
+                    });
+
+                    Err(None)
+                }
+
+                TokenKind::Keyword(Kwd::Do) => consume!(DoWhileExpr, DoWhile),
 
                 _ => Ok(None),
             },
@@ -960,6 +1008,9 @@ impl<'a> Expr<'a> {
 
     /// Consumes a single path component that may be part of an expression
     ///
+    /// This function expects that the first token provided is an identifier, and will panic if
+    /// this is not the case.
+    ///
     /// The delimited context here is provided so that better error messages can be given on
     /// failure.
     fn consume_path_component(
@@ -970,7 +1021,163 @@ impl<'a> Expr<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<PathComponent<'a>, Option<usize>> {
-        todo!()
+        let name = match tokens.first() {
+            None | Some(Err(_)) => panic!("expected identifier, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Ident(name) => Ident { src: t, name },
+                _ => panic!("expected identifier, found token kind {:?}", t.kind),
+            },
+        };
+
+        // We'll only attempt to consume generics arguments if we have an angle bracket after the
+        // initial name.
+        //
+        // To help us out here, we'll define a helper macro to return the path component that only
+        // includes the identifier.
+        macro_rules! return_name {
+            () => {{
+                return Ok(PathComponent {
+                    src: &tokens[..1],
+                    name,
+                    generics_args: None,
+                });
+            }};
+        }
+
+        // Now, we'll check that we have a "<" token following the name. Because we *also* require
+        // that the tokens after it be able to start an expression (or type), we need to ensure
+        // that they won't have been part of a binary operator *other than "<"*.
+        //
+        // Essentially: We'll only continue (and try to parse generics args) if we find the
+        // less-than binary operator. Other operators, like "<=" or "<<" cannot be used because the
+        // trailing "<" or "=" can't start an exprssion.
+        match BinOp::try_consume(&tokens[1..], true) {
+            Some((BinOp::Lt, _)) => (),
+            _ => return_name!(),
+        }
+
+        // `generics_start` includes the leading angle-bracket
+        let generics_start = 1;
+        let mut consumed = 2;
+        let mut local_errors = Vec::new();
+
+        // All expressions can constitute a valid prefix of generics arguments if necessary, so
+        // we'll just use the parsing function provided by 'ast/types' to handle this.
+        //
+        // If we eventually determine that the angle bracket we found earlier wasn't for generics,
+        // we don't want any errors generated by `GenericsArgs::consume_inner` to actually be given
+        // to the user; we aren't actually expecting generics arguments.
+        //
+        // To do this, we'll create `local_errors` so that we only add errors to the main list if
+        // we use the output of `GenericArgs::consume_inner`.
+        let generics_args_res = GenericsArgs::consume_inner(
+            &tokens[consumed..],
+            ends_early,
+            containing_token,
+            &mut local_errors,
+        );
+        let (args, poisoned) = match generics_args_res {
+            Ok((args, poisoned, c)) => {
+                consumed += c;
+                (args, poisoned)
+            }
+            Err(None) => {
+                errors.extend(local_errors);
+                return Err(None);
+            }
+            Err(Some(c)) => {
+                consumed += c;
+                (Vec::new(), true)
+            }
+        };
+
+        // If the token immediately following the generics argument is a closing angle-bracket, we
+        // know that we *were* parsing generics arguments.
+        //
+        // There are a couple things still to note here. If the original set of tokens we were
+        // given looks something like:
+        //   foo < x>>y
+        // if we're not careful, we might parse this as:
+        //   foo<x> > y
+        // So - like before - we'll check the sort of binary operator we can find here. If we find
+        // a binary operator that *starts* with a closing angle-bracket but isn't exactly ">", the
+        // syntax is ambiguous.
+
+        match BinOp::try_consume(&tokens[consumed..], true) {
+            // ">>"
+            Some((BinOp::Shr, op_src))
+            // ">="
+            | Some((BinOp::Ge, op_src))
+            // ">>="
+            | Some((BinOp::ShrAssign, op_src)) if !GenericsArgs::can_be_expr(&args) => {
+                // As mentioned above, these cases are generally ambiguous. We'll produce an error
+                // from them to indicate that the user must provide more information.
+                //
+                // Because this *is* ambiguous and this function is always called within the
+                // context of parsing a (possibly) larger expression, we'll mark the region from
+                // generics arguments as consumed when we return.
+                errors.extend(local_errors);
+                errors.push(Error::AmbiguousCloseGenerics {
+                    path: &tokens[..consumed],
+                    op_src,
+                });
+
+                // We add 1 so that we mark the first closing angle-bracket as consumed.
+                return Err(Some(consumed + 1));
+            }
+            // If we only find ">", then we did have generics arguments, so we'll exit.
+            Some((BinOp::Gt, _))
+            | Some((BinOp::Shr, _))
+            // ">="
+            | Some((BinOp::Ge, _))
+            // ">>="
+            | Some((BinOp::ShrAssign, _)) => {
+                consumed += 1;
+
+                return Ok(PathComponent {
+                    src: &tokens[..consumed],
+                    name,
+                    generics_args: Some(GenericsArgs {
+                        src: &tokens[generics_start..consumed],
+                        args,
+                        poisoned,
+                    }),
+                });
+            }
+            _ => (),
+        }
+
+        // If we didn't have a closing angle bracket, there's a few cases we still want to handle
+        // so that we can produce better error messages.
+        //
+        // We *could* just return the name, with the logic that "oH tHeRe WaSn'T a cLoSiNg aNgLe
+        // BrAcKeT", but that might give bad error messages later on.
+        //
+        // One possible mistake a user might make could be attempting to use the following as an
+        // expression:
+        //   x + foo<T,S>(y)
+        // Obviously, our syntax forbids this; it should instead be written as:
+        //   x + foo<(T,S)>(y)
+        // but a user coming from other languages (e.g. C++) might forget this - it's a common
+        // mistake. To accomodate for this, we'll produce an error if we see a comma in a context
+        // that we aren't expecting it.
+        //
+        // Of course, this only occurs if we find a comma as the next token. If we don't, we'll
+        // just return the name by itself.
+        let next_kind = tokens
+            .get(consumed)
+            .and_then(|res| Some(&res.as_ref().ok()?.kind));
+        if let Some(TokenKind::Punctuation(Punc::Comma)) = next_kind {
+            errors.extend(local_errors);
+            errors.push(Error::UnexpectedGenericArgsComma {
+                ident: name.src,
+                args,
+            });
+
+            Err(None)
+        } else {
+            return_name!()
+        }
     }
 
     /// Attempts to consume a binary or postifx operator, returning `None` if the first token does
@@ -1038,6 +1245,97 @@ impl<'a> Expr<'a> {
             If(_) | Match(_) | For(_) | While(_) | Loop(_) | Block(_) | AmbiguousBlock(_) => true,
             Literal(_) | Named(_) | PrefixOp(_) | BinOp(_) | PostfixOp(_) | Struct(_)
             | Array(_) | Tuple(_) | DoWhile(_) | Continue(_) => false,
+        }
+    }
+
+    /// Consumes a "big" expression
+    ///
+    /// Essentially, this only consumes an expression satisfying [`Expr::is_big`]
+    ///
+    /// [`Expr::is_big`]: #method.is_big
+    fn consume_big(
+        tokens: TokenSlice<'a>,
+        ctx: BigExprContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Expr<'a>, Option<usize>> {
+        // We'll define a helper macro here for passing along the information needed for consuming
+        // the actual expression we find.
+        macro_rules! pass {
+            ($ty:ident, $variant:ident) => {
+                $ty::consume(tokens, ends_early, containing_token, errors).map(Expr::$variant)
+            };
+        }
+
+        match tokens.first() {
+            // We *are* expecting a big expression; if we don't find one, that's usually an error
+            None if ends_early => Err(None),
+            None => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::BigExpr(ctx),
+                    found: end_source!(containing_token),
+                });
+
+                Err(None)
+            }
+
+            // We do the standard error-handling here, producing a secondary error only somtimes.
+            // Because some "big" expressions are given by curly braces,
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => Err(None),
+            Some(Err(e)) => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::BigExpr(ctx),
+                    found: Source::TokenResult(Err(*e)),
+                });
+
+                Err(None)
+            }
+
+            // Otherwise, we'll hope the first token is one of the ones that indicates the start of
+            // a "big" expression
+            //
+            // These are given by the following BNF:
+            //   BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::If) => pass!(IfExpr, If),
+                TokenKind::Keyword(Kwd::Match) => pass!(MatchExpr, Match),
+                TokenKind::Keyword(Kwd::For) => pass!(ForExpr, For),
+                TokenKind::Keyword(Kwd::While) => pass!(WhileExpr, While),
+                TokenKind::Keyword(Kwd::Loop) => pass!(LoopExpr, Loop),
+                TokenKind::Tree {
+                    delim: Delim::Curlies,
+                    inner,
+                    ..
+                } => {
+                    // We're expecting a block expression here - *not* a struct expression. If we
+                    // find that the user mistakenly gave a struct expression, we'll produce a
+                    // separate error for that.
+                    if is_definitely_struct(inner) {
+                        errors.push(Error::StructAsBigExpr { outer: t, ctx });
+                        return Err(Some(1));
+                    }
+
+                    let ends_early = false;
+                    BlockExpr::parse(
+                        tokens.first(),
+                        ends_early,
+                        end_source!(containing_token),
+                        errors,
+                    )
+                    .map_err(|()| Some(1))
+                    .map(Expr::Block)
+                }
+
+                _ => {
+                    errors.push(Error::Expected {
+                        kind: ExpectedKind::BigExpr(ctx),
+                        found: Source::TokenResult(Ok(t)),
+                    });
+
+                    Err(None)
+                } // StructAsBigExpr { ctx },
+            },
         }
     }
 
@@ -1274,6 +1572,7 @@ impl<'a> Expr<'a> {
             delim,
             true,
             None,
+            None,
             ends_early,
             Some(containing_token),
             errors,
@@ -1462,7 +1761,7 @@ impl<'a> PrefixOp<'a> {
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
 
         consumed += pat.consumed();
         let pat_src = &tokens[1..consumed];
@@ -1670,7 +1969,7 @@ impl<'a> PostfixOp<'a> {
 
             // The postfix operators are given by the following BNF definition:
             //   PostfixOp = "[" Expr "]"                # Indexing
-            //             | "." Ident [ GenericArgs ]   # Field / method access
+            //             | "." Ident [ GenericsArgs ]   # Field / method access
             //             | "." IntLiteral              # Tuple indexing
             //             | FnArgs                      # Function calls
             //             | StructExpr                  # Named structs
@@ -1796,6 +2095,7 @@ impl<'a> PostfixOp<'a> {
             inner,
             ExprDelim::Nothing,
             true,
+            None,
             None,
             false,
             Some(src),
@@ -2099,6 +2399,7 @@ impl<'a> BlockExpr<'a> {
                 ExprDelim::Nothing,
                 true,
                 None,
+                None,
                 ends_early,
                 Some(src),
                 errors,
@@ -2239,7 +2540,8 @@ impl<'a> BlockExpr<'a> {
         }
     }
 
-    /// Returns whether an expression stack can be treated as a expression
+    /// Returns whether an expression stack can be treated - in its current state - as a "big"
+    /// expression
     fn expr_stack_done(stack: &Stack) -> bool {
         let expr = match stack.last_expr.as_ref() {
             None => return false,
@@ -2303,7 +2605,7 @@ impl<'a> ForExpr<'a> {
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
         consumed += pat.consumed();
 
         // After the pattern, we expect the keyword "in"
@@ -2319,11 +2621,12 @@ impl<'a> ForExpr<'a> {
             ExprDelim::Nothing,
             true,
             Some(NoCurlyContext::ForIter),
+            None,
             ends_early,
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
         consumed += iter.consumed();
 
         // And this is followed by a block expression
@@ -2386,11 +2689,12 @@ impl<'a> WhileExpr<'a> {
             ExprDelim::Nothing,
             true,
             Some(NoCurlyContext::WhileCondition),
+            None,
             ends_early,
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
         consumed += condition.consumed();
 
         let body = BlockExpr::parse(
@@ -2405,7 +2709,7 @@ impl<'a> WhileExpr<'a> {
         // While loops may be optionally followed by an 'else' branch:
         let else_branch =
             ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
-                .map_err(|cs| cs.map(|c| c + consumed))?
+                .map_err(p!(Some(c) => Some(consumed + c)))?
                 .map(Box::new);
         consumed += else_branch.consumed();
 
@@ -2419,13 +2723,105 @@ impl<'a> WhileExpr<'a> {
 }
 
 impl<'a> DoWhileExpr<'a> {
+    /// Consumes a `do..while` expression as a prefix of the given tokens
+    ///
+    /// This function assumes that the starting token is the keyword "do', and will panic if this
+    /// condition is not met.
+    ///
+    /// Like other parsing functions, if an error occurs, this function may return `Err(Some)` to
+    /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
+    /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<DoWhileExpr<'a>, Option<usize>> {
-        todo!()
+        // Do..while expressions are moderately complex; the BNF is defined as:
+        //   "do" BlockExpr "while" Expr [ "else" BigExpr ] .
+        // With the addition that we cannot allow expressions that might have else branches inside
+        // of the condition - i.e. the following is illegal:
+        //     do {
+        //         foo()
+        //     while if x { y };
+        // This is not allowed because a trailing `else` branch from the `if` expression would be
+        // ambiguous with a trailing `else` branch from the do-while loop itself.
+        //
+        // We're given that the first token in the set we're given is "do", so we'll just
+        // double-check that.
+        match tokens.first() {
+            None | Some(Err(_)) => panic!("Expected keyword `do`, found {:?}", tokens.first()),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Do) => (),
+                _ => panic!("Expected keyword `do`, found token kind {:?}", t.kind),
+            },
+        }
+
+        // After the initial "do", we're expecting a block expression
+        let body = BlockExpr::parse(
+            tokens.get(1),
+            ends_early,
+            end_source!(containing_token),
+            errors,
+        )
+        .map_err(|()| Some(1))?;
+
+        let mut consumed = 2;
+
+        // And then "while"
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        expect!((
+            TokenKind::Keyword(Kwd::While) => (),
+            @else ExpectedKind::DoWhileWhileToken,
+        ));
+
+        consumed += 1;
+
+        let pred = Expr::consume(
+            &tokens[consumed..],
+            ExprDelim::Nothing,
+            true,
+            None,
+            Some(NoElseBranchContext::DoWhile),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
+
+        consumed += pred.consumed();
+
+        let else_branch =
+            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+                .map_err(p!(Some(c) => Some(consumed + c)))?
+                .map(Box::new);
+
+        consumed += else_branch.consumed();
+
+        Ok(DoWhileExpr {
+            src: &tokens[..consumed],
+            body,
+            pred: Box::new(pred),
+            else_branch,
+        })
+    }
+
+    /// Returns whether the expression stack can be allowed to parse a block expression next
+    ///
+    /// This function expects to be called only when the stack's `last_expr` field is `None` - i.e.
+    /// not when the stack is expecting a binary or postfix operator.
+    fn is_allowed(stack: &Stack) -> bool {
+        use self::PrefixOp::Let;
+        use stack::Element::{BinOp, PrefixOp};
+
+        assert!(stack.last_expr.is_none());
+
+        match &stack.elems[..] {
+            [] => true,
+            [PrefixOp { op: Let(_, _), .. }] => true,
+            [BinOp { op, .. }] if op.is_assign_op() => true,
+            _ => false,
+        }
     }
 }
 
@@ -2508,11 +2904,12 @@ impl<'a> IfExpr<'a> {
             ExprDelim::Nothing,
             true,
             Some(NoCurlyContext::IfCondition),
+            None,
             ends_early,
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
         consumed += condition.consumed();
 
         let body = BlockExpr::parse(
@@ -2526,7 +2923,7 @@ impl<'a> IfExpr<'a> {
 
         let else_branch =
             ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
-                .map_err(|cs| cs.map(|c| c + consumed))?
+                .map_err(p!(Some(c) => Some(consumed + c)))?
                 .map(Box::new);
         consumed += else_branch.consumed();
 
@@ -2572,11 +2969,12 @@ impl<'a> MatchExpr<'a> {
             ExprDelim::Nothing,
             true,
             Some(NoCurlyContext::MatchExpr),
+            None,
             ends_early,
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + consumed))?;
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
 
         let (arms, poisoned) = match tokens.get(consumed) {
             None if ends_early => return Err(None),
@@ -2728,7 +3126,68 @@ impl<'a> MatchArm<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<MatchArm<'a>, Option<usize>> {
-        todo!()
+        // Match arms are essentially defined by the following BNF:
+        //   Pattern [ "if" Expr ] "=>" Expr
+
+        let pat = Pattern::consume(tokens, pat_ctx, ends_early, containing_token, errors)?;
+        let mut consumed = pat.consumed();
+
+        let mut cond: Option<Expr> = None;
+
+        // After the pattern, we optionally allow `"if" Expr`:
+        let kind = tokens
+            .get(consumed)
+            .and_then(|res| Some(&res.as_ref().ok()?.kind));
+        if let Some(TokenKind::Keyword(Kwd::If)) = kind {
+            consumed += 1;
+
+            // If we found "if", we'll expect an expression
+            cond = Expr::consume(
+                &tokens[consumed..],
+                ExprDelim::Nothing,
+                true,
+                None,
+                None,
+                ends_early,
+                containing_token,
+                errors,
+            )
+            .map(Some)
+            .map_err(p!(Some(c) => Some(consumed + c)))?;
+
+            consumed += cond.consumed();
+        }
+
+        // And then we'll expect the `"=>" Expr`:
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        expect!((
+            TokenKind::Punctuation(Punc::ThickArrow) => consumed += 1,
+            @else ExpectedKind::MatchArmArrow,
+        ));
+
+        let eval = Expr::consume(
+            &tokens[consumed..],
+            // Strictly speaking, we aren't consuming a bunch of expressions delimited by commas.
+            // But this expression *is* followed by a comma, so there are certain types of errors
+            // that wouldn't be appropriate to generate here.
+            ExprDelim::Comma,
+            true,
+            None,
+            None,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(consumed + c)))?;
+
+        consumed += eval.consumed();
+
+        Ok(MatchArm {
+            src: &tokens[..consumed],
+            pat,
+            cond,
+            eval,
+        })
     }
 
     /// A helper function to determine whether a match arm requires a trailing comma. Only
@@ -2749,11 +3208,27 @@ impl<'a> ContinueExpr<'a> {
     /// inside the current token tree.
     fn consume(
         tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
+        _ends_early: bool,
+        _containing_token: Option<&'a Token<'a>>,
+        _errors: &mut Vec<Error<'a>>,
     ) -> Result<ContinueExpr<'a>, Option<usize>> {
-        todo!()
+        // Currently, this function is simple; we don't have labels, so continue expressions are
+        // only the keyword.
+        //
+        // Because we're allowed to assume that the starting token is the keyword `continue`, we
+        // essentially don't need to do any parsing. Even though we could just return the first
+        // token, we'll double-check that it *is* `continue`.
+        let src = match tokens.first() {
+            None | Some(Err(_)) => {
+                panic!("expected keyword `continue`, found {:?}", tokens.first())
+            }
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Continue) => t,
+                _ => panic!("expected keyword `continue`, found token kind {:?}", t.kind),
+            },
+        };
+
+        Ok(ContinueExpr { src })
     }
 }
 
@@ -2775,13 +3250,13 @@ impl<'a> ContinueExpr<'a> {
 ///
 /// For reference, the BNF is defined as:
 /// ```text
-/// Path = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } .
+/// Path = Ident [ GenericsArgs ] { "." Ident [ GenericsArgs ] } .
 /// ```
 ///
 /// The helper type [`PathComponent`] is defined as well to manage the token sources for individual
 /// elements, where its BNF is:
 /// ```text
-/// PathComponent = Ident [ GenericArgs ] .
+/// PathComponent = Ident [ GenericsArgs ] .
 /// ```
 ///
 /// [`PathComponent`]: struct.PathComponent.html
@@ -2798,7 +3273,7 @@ pub struct Path<'a> {
 pub struct PathComponent<'a> {
     pub(super) src: TokenSlice<'a>,
     pub name: Ident<'a>,
-    pub generics_args: Option<GenericArgs<'a>>,
+    pub generics_args: Option<GenericsArgs<'a>>,
 }
 
 /// An `else` branch, for use after `if` conditions and various loops
@@ -2900,7 +3375,7 @@ impl<'a> PathComponent<'a> {
         let mut consumed = name.consumed();
 
         let generics_args =
-            GenericArgs::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            GenericsArgs::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(|_| None)?;
 
         consumed += generics_args.consumed();
@@ -2914,12 +3389,31 @@ impl<'a> PathComponent<'a> {
 }
 
 impl<'a> ElseBranch<'a> {
+    /// Attempts to consume an "else branch" as a prefix of the given tokens, returning `Ok(None)`
+    /// only if they do not start with the keyword `else`
     fn try_consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<ElseBranch<'a>>, Option<usize>> {
-        todo!()
+        let else_token = match tokens.first() {
+            Some(Err(_)) | None => return Ok(None),
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Keyword(Kwd::Else) => t,
+                _ => return Ok(None),
+            },
+        };
+
+        let ctx = BigExprContext::Else(else_token);
+        Expr::consume_big(&tokens[1..], ctx, ends_early, containing_token, errors)
+            .map_err(p!(Some(c) => Some(c + 1)))
+            .map(|expr| {
+                let consumed = expr.consumed() + 1;
+                Some(ElseBranch {
+                    src: &tokens[consumed..],
+                    expr,
+                })
+            })
     }
 }

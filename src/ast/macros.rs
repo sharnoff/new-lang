@@ -3,6 +3,22 @@
 //! Most of the macros here are actually for producing *secondary* macros that are customized to a
 //! local scope.
 
+// A macro to produce closures that only partially map values
+//
+// Typical usage will look something like:
+//   res.map_err(p!(Some(c) => Some(c + 1)))
+// which would have been written without this as:
+//   res.map_err(|cs| cs.map(|c| c + 1))
+// While the second is shorter, I consider this less readable.
+macro_rules! p {
+    ($p:pat => $v:expr) => {{
+        |x| match x {
+            $p => $v,
+            _ => x,
+        }
+    }};
+}
+
 macro_rules! make_getter {
     (macro_rules! $get_name:ident, $tokens:expr, $ends_early:expr, $errors:expr) => {
         // A helper macro for local use within parsing functions

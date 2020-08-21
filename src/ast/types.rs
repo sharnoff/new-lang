@@ -56,7 +56,7 @@ pub enum Type<'a> {
 /// ```
 /// Note that [`Path`] is defined such that we can expand this definition to:
 /// ```text
-/// NamedType = Ident [ GenericArgs ] { "." Ident [ GenericArgs ] } [ Refinements ] .
+/// NamedType = Ident [ GenericsArgs ] { "." Ident [ GenericsArgs ] } [ Refinements ] .
 /// ```
 /// which then shows where generics arguments are allowed.
 ///
@@ -67,46 +67,46 @@ pub enum Type<'a> {
 #[derive(Debug, Clone)]
 pub struct NamedType<'a> {
     pub(super) src: TokenSlice<'a>,
-    path: Path<'a>,
-    refinements: Option<Refinements<'a>>,
+    pub path: Path<'a>,
+    pub refinements: Option<Refinements<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RefType<'a> {
     pub(super) src: TokenSlice<'a>,
-    ty: Box<Type<'a>>,
+    pub ty: Box<Type<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct MutType<'a> {
     pub(super) src: TokenSlice<'a>,
-    has_not: Option<&'a Token<'a>>,
-    ty: Box<Type<'a>>,
+    pub has_not: Option<&'a Token<'a>>,
+    pub ty: Box<Type<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ArrayType<'a> {
     pub(super) src: &'a Token<'a>,
-    ty: Box<Type<'a>>,
-    length: Option<Expr<'a>>,
+    pub ty: Box<Type<'a>>,
+    pub length: Option<Expr<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructType<'a> {
     pub(super) src: &'a Token<'a>,
-    fields: Vec<StructTypeField<'a>>,
+    pub fields: Vec<StructTypeField<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TupleType<'a> {
     pub(super) src: &'a Token<'a>,
-    elems: Vec<Type<'a>>,
+    pub elems: Vec<Type<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumType<'a> {
     pub(super) src: TokenSlice<'a>,
-    variants: Vec<(Ident<'a>, Type<'a>)>,
+    pub variants: Vec<(Ident<'a>, Type<'a>)>,
 }
 
 impl<'a> Type<'a> {
@@ -174,7 +174,7 @@ impl<'a> NamedType<'a> {
         errors: &mut Vec<Error<'a>>,
     ) -> Result<NamedType<'a>, Option<usize>> {
         // The BNF is duplicated here for a brief explanation:
-        //   Path [ GenericArgs ] [ Refinements ]
+        //   Path [ GenericsArgs ] [ Refinements ]
         // The rest of the function is pretty short, so this should suffice.
 
         let path = Path::consume(tokens, ends_early, containing_token, errors).map_err(|_| None)?;
@@ -250,28 +250,28 @@ impl<'a> EnumType<'a> {
 // * Refinements                                                                                  //
 //   * Refinement                                                                                 //
 // * TypeBound                                                                                    //
-// * GenericArgs                                                                                  //
-//   * GenericArg                                                                                 //
-//     * TypeGenericArg                                                                           //
-//     * ConstGenericArg                                                                          //
-//     * RefGenericArg                                                                            //
-//     * AmbiguousGenericArg                                                                      //
+// * GenericsArgs                                                                                  //
+//   * GenericsArg                                                                                 //
+//     * TypeGenericsArg                                                                           //
+//     * ConstGenericsArg                                                                          //
+//     * RefGenericsArg                                                                            //
+//     * AmbiguousGenericsArg                                                                      //
 //     * TypeOrExpr                                                                               //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone)]
 pub struct StructTypeField<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Ident<'a>,
-    ty: Option<Type<'a>>,
-    bound: Option<TypeBound<'a>>,
-    default: Option<Expr<'a>>,
+    pub name: Ident<'a>,
+    pub ty: Option<Type<'a>>,
+    pub bound: Option<TypeBound<'a>>,
+    pub default: Option<Expr<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Refinements<'a> {
     pub(super) src: TokenSlice<'a>,
-    refs: Vec<Refinement<'a>>,
+    pub refs: Vec<Refinement<'a>>,
 }
 
 #[derive(Debug, Clone)]
@@ -283,32 +283,32 @@ pub enum Refinement<'a> {
 #[derive(Debug, Clone)]
 pub struct RefRefinement<'a> {
     pub(super) src: TokenSlice<'a>,
-    is_mut: Option<&'a Token<'a>>,
-    expr: Expr<'a>,
+    pub is_mut: Option<&'a Token<'a>>,
+    pub expr: Expr<'a>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InitRefinement<'a> {
     pub(super) src: TokenSlice<'a>,
-    not: Option<&'a Token<'a>>,
-    maybe: Option<&'a Token<'a>>,
+    pub not: Option<&'a Token<'a>>,
+    pub maybe: Option<&'a Token<'a>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeBound<'a> {
     pub(super) src: TokenSlice<'a>,
-    refinements: Option<Refinements<'a>>,
-    traits: Vec<Path<'a>>,
+    pub refinements: Option<Refinements<'a>>,
+    pub traits: Vec<Path<'a>>,
 }
 
 /// A collection of generics arguments
 ///
-/// Individual generic arguments are represented by the [`GenericArg`] type, which exists solely as
+/// Individual generic arguments are represented by the [`GenericsArg`] type, which exists solely as
 /// a helper for this type. The BNF definition for the combination of these two types is:
 /// ```text
-/// GenericArgs = "<" "(" GenericArg { "," GenericArg } [ "," ] ")" ">"
-///             | "<" GenericArg ">" .
-/// GenericArg = [ Ident ":" ] Type
+/// GenericsArgs = "<" "(" GenericsArg { "," GenericsArg } [ "," ] ")" ">"
+///             | "<" GenericsArg ">" .
+/// GenericsArg = [ Ident ":" ] Type
 ///            | [ Ident ":" ] BlockExpr
 ///            | "ref" Expr .
 /// ```
@@ -318,25 +318,25 @@ pub struct TypeBound<'a> {
 /// must be dealt with externally.
 ///
 /// There is additionally ambiguity present *within* singular generics arguments themselves. This
-/// is explained further in the documentation for [`GenericArg`].
+/// is explained further in the documentation for [`GenericsArg`].
 ///
-/// [`GenericArg`]: enum.GenericArg.html
+/// [`GenericsArg`]: enum.GenericsArg.html
 /// [`try_consume`]: #method.try_consume
 #[derive(Debug, Clone)]
-pub struct GenericArgs<'a> {
+pub struct GenericsArgs<'a> {
     pub(super) src: TokenSlice<'a>,
-    args: Vec<GenericArg<'a>>,
-    poisoned: bool,
+    pub args: Vec<GenericsArg<'a>>,
+    pub poisoned: bool,
 }
 
 /// A single generics argument
 ///
 /// Before reading the documentation for this type, please first refer to the larger-picture
-/// explanation given in the documentation for [`GenericArgs`].
+/// explanation given in the documentation for [`GenericsArgs`].
 ///
 /// This type is the singular generics argument, defined with the following BNF:
 /// ```text
-/// GenericArg = [ Ident ":" ] Type
+/// GenericsArg = [ Ident ":" ] Type
 ///            | [ Ident ":" ] BlockExpr
 ///            | "ref" Expr .
 /// ```
@@ -348,42 +348,42 @@ pub struct GenericArgs<'a> {
 /// Each of the variants shown above directly correspond the variants of this enum, in the same
 /// order.
 ///
-/// [`GenericArgs`]: struct.GenericArgs.html
+/// [`GenericsArgs`]: struct.GenericsArgs.html
 /// [`consume`]: #method.consume
 #[derive(Debug, Clone)]
-pub enum GenericArg<'a> {
-    Type(TypeGenericArg<'a>),
-    Const(ConstGenericArg<'a>),
-    Ref(RefGenericArg<'a>),
-    Ambiguous(AmbiguousGenericArg<'a>),
+pub enum GenericsArg<'a> {
+    Type(TypeGenericsArg<'a>),
+    Const(ConstGenericsArg<'a>),
+    Ref(RefGenericsArg<'a>),
+    Ambiguous(AmbiguousGenericsArg<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub struct TypeGenericArg<'a> {
+pub struct TypeGenericsArg<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Option<Ident<'a>>,
-    type_arg: Type<'a>,
+    pub name: Option<Ident<'a>>,
+    pub type_arg: Type<'a>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ConstGenericArg<'a> {
+pub struct ConstGenericsArg<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Option<Ident<'a>>,
-    value: Expr<'a>,
+    pub name: Option<Ident<'a>>,
+    pub value: Expr<'a>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RefGenericArg<'a> {
+pub struct RefGenericsArg<'a> {
     pub(super) src: TokenSlice<'a>,
-    expr: Expr<'a>,
+    pub expr: Expr<'a>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AmbiguousGenericArg<'a> {
+pub struct AmbiguousGenericsArg<'a> {
     pub(super) src: TokenSlice<'a>,
-    name: Option<Ident<'a>>,
-    refs: Vec<&'a Token<'a>>,
-    path: PathComponent<'a>,
+    pub name: Option<Ident<'a>>,
+    pub refs: Vec<&'a Token<'a>>,
+    pub path: PathComponent<'a>,
 }
 
 #[derive(Debug)]
@@ -420,7 +420,7 @@ impl<'a> TypeBound<'a> {
     }
 }
 
-impl<'a> GenericArgs<'a> {
+impl<'a> GenericsArgs<'a> {
     /// Attempts to consume generics arguments as a prefix of the given tokens, failing with
     /// `Ok(None)` if the tokens clearly do not start with generics arguments.
     ///
@@ -439,7 +439,7 @@ impl<'a> GenericArgs<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<GenericArgs<'a>>, Option<usize>> {
+    ) -> Result<Option<GenericsArgs<'a>>, Option<usize>> {
         // Marked TODO because the generics parsing here hasn't yet been modified to disallow
         // multiple arguments without parentheses.
         todo!()
@@ -460,7 +460,7 @@ impl<'a> GenericArgs<'a> {
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         loop {
-            let arg_res = GenericArg::consume(
+            let arg_res = GenericsArg::consume(
                 &tokens[consumed..],
                 &tokens[..consumed],
                 ends_early,
@@ -490,41 +490,55 @@ impl<'a> GenericArgs<'a> {
                     consumed += 1;
                     continue;
                 },
-                @else ExpectedKind::GenericArgDelim { prev_tokens: &tokens[consumed..] },
+                @else ExpectedKind::GenericsArgDelim { prev_tokens: &tokens[consumed..] },
             ));
         }
 
-        Ok(Some(GenericArgs {
+        Ok(Some(GenericsArgs {
             src: &tokens[..consumed],
             args,
             poisoned,
         }))
         */
     }
+
+    // Note: returns generics args, poisoned, consumed
+    pub fn consume_inner(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<(Vec<GenericsArg<'a>>, bool, usize), Option<usize>> {
+        todo!()
+    }
+
+    pub fn can_be_expr(args: &[GenericsArg]) -> bool {
+        todo!()
+    }
 }
 
-impl<'a> GenericArg<'a> {
+impl<'a> GenericsArg<'a> {
     /// Consumes a single generics argument as a prefix of the tokens given
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     ///
-    /// This is primarily a helper function for [`GenericArgs::consume`]. For more information,
+    /// This is primarily a helper function for [`GenericsArgs::consume`]. For more information,
     /// refer to the documentation on either of these types.
     ///
-    /// [`GenericArgs::consume`]: struct.GenericArgs.html#consume
+    /// [`GenericsArgs::consume`]: struct.GenericsArgs.html#consume
     fn consume(
         tokens: TokenSlice<'a>,
         prev_tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericArg<'a>, Option<usize>> {
+    ) -> Result<GenericsArg<'a>, Option<usize>> {
         // Parsing a generics argument is somewhat complicated - this is due to the fact that two
         // of the variants share their first two tokens, but only optionally. Reference arguments
         // can be determined immediately becuase they start with "ref", so parsing for those is
-        // delegated to `RefGenericArg::consume`
+        // delegated to `RefGenericsArg::consume`
 
         let mut consumed = 0;
         make_getter!(macro_rules! get, tokens, ends_early, errors);
@@ -533,20 +547,20 @@ impl<'a> GenericArg<'a> {
         let fst = get!(
             0,
             Err(e) => Error::Expected {
-                kind: ExpectedKind::GenericArg { prev_tokens },
+                kind: ExpectedKind::GenericsArg { prev_tokens },
                 found: Source::TokenResult(Err(*e)),
             },
             None => Error::Expected {
-                kind: ExpectedKind::GenericArg { prev_tokens },
+                kind: ExpectedKind::GenericsArg { prev_tokens },
                 found: end_source!(containing_token),
             },
         );
 
         let mut name = match &fst.kind {
             TokenKind::Keyword(Kwd::Ref) => {
-                return RefGenericArg::consume(tokens, ends_early, containing_token, errors)
+                return RefGenericsArg::consume(tokens, ends_early, containing_token, errors)
                     .map_err(|_| None)
-                    .map(GenericArg::Ref);
+                    .map(GenericsArg::Ref);
             }
             TokenKind::Ident(name) => Some(Ident { src: fst, name }),
             _ => None,
@@ -577,7 +591,7 @@ impl<'a> GenericArg<'a> {
                 // the new starting point
                 TokenKind::Punctuation(Punc::Colon) => consumed = 2,
                 // Anything else wouldn't have been vaid either way, so we'll
-                @else ExpectedKind::GenericArgFollowIdent {
+                @else ExpectedKind::GenericsArgFollowIdent {
                     prev_tokens,
                     ident: fst,
                 },
@@ -599,7 +613,7 @@ impl<'a> GenericArg<'a> {
             Err(Some(c)) => Err(Some(consumed + c)),
             Ok(TypeOrExpr::Type(type_arg)) => {
                 consumed += type_arg.consumed();
-                Ok(GenericArg::Type(TypeGenericArg {
+                Ok(GenericsArg::Type(TypeGenericsArg {
                     src: &tokens[..consumed],
                     name,
                     type_arg,
@@ -607,7 +621,7 @@ impl<'a> GenericArg<'a> {
             }
             Ok(TypeOrExpr::Expr(value)) => {
                 consumed += value.consumed();
-                Ok(GenericArg::Const(ConstGenericArg {
+                Ok(GenericsArg::Const(ConstGenericsArg {
                     src: &tokens[..consumed],
                     name,
                     value,
@@ -619,7 +633,7 @@ impl<'a> GenericArg<'a> {
                 path,
             }) => {
                 consumed += c;
-                Ok(GenericArg::Ambiguous(AmbiguousGenericArg {
+                Ok(GenericsArg::Ambiguous(AmbiguousGenericsArg {
                     src: &tokens[..consumed],
                     name,
                     refs,
@@ -642,10 +656,10 @@ impl<'a> TypeOrExpr<'a> {
     }
 }
 
-impl<'a> RefGenericArg<'a> {
+impl<'a> RefGenericsArg<'a> {
     /// Consumes a single `ref` generics argument as a prefix of the input
     ///
-    /// Because this function is only ever called as a helper to [`GenericArg::consume`], this
+    /// Because this function is only ever called as a helper to [`GenericsArg::consume`], this
     /// assumes that the first token will be the keyword `ref`, and will panic if this is not the
     /// case.
     ///
@@ -657,7 +671,7 @@ impl<'a> RefGenericArg<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<RefGenericArg<'a>, Option<usize>> {
+    ) -> Result<RefGenericsArg<'a>, Option<usize>> {
         // We'll just assert that it *was* the `ref` keyword here.
         match tokens.first() {
             Some(Ok(t)) => match &t.kind {
@@ -675,6 +689,7 @@ impl<'a> RefGenericArg<'a> {
             ExprDelim::FnArgs,
             false,
             None,
+            None,
             ends_early,
             containing_token,
             errors,
@@ -682,7 +697,7 @@ impl<'a> RefGenericArg<'a> {
         .map_err(|cs| cs.map(|c| c + 1))?;
         let consumed = expr.consumed() + 1;
 
-        Ok(RefGenericArg {
+        Ok(RefGenericsArg {
             src: &tokens[..consumed],
             expr,
         })
