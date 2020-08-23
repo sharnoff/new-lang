@@ -62,27 +62,27 @@ Item = FnDecl
      | ImportStmt
      | UseStmt .
 
-FnDecl = ProofStmts Vis [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
+FnDecl = ProofStmts [ Vis ] [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
          FnParams [ "->" Type ] ( ";" | BlockExpr ) .
 
-MacroDef   = ProofStmts Vis "macro" Ident MacroParams MacroBody .
-TypeDecl   = ProofStmts Vis "type" Ident [ GenericParams ]
+MacroDef   = ProofStmts [ Vis ] "macro" Ident MacroParams MacroBody .
+TypeDecl   = ProofStmts [ Vis ] "type" Ident [ GenericParams ]
              [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
-TraitDef   = ProofStmts Vis "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
-ImplBlock  =                "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
-ConstStmt  =            Vis "const"  StructField ";" .
-StaticStmt = ProofStmts Vis "static" StructField ";" .
+TraitDef   = ProofStmts [ Vis ] "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
+ImplBlock  =                    "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
+ConstStmt  =            [ Vis ] "const"  Field ";" .
+StaticStmt = ProofStmts [ Vis ] "static" Field ";" .
 
 ImportStmt = "import" StringLiteral [ "~" StringLiteral ] [ "as" Ident ] .
 
-UseStmt = Vis "use" UsePath ";" .
+UseStmt = [ Vis ] "use" UsePath ";" .
 UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
         | UseKind Path [ "as" Ident ] .
 UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
 Path = PathComponent { "." PathComponent } .
 PathComponent = Ident [ GenericsArgs ] .
 
-Vis = [ "pub" ] .
+Vis = "pub" .
 
 ProofStmts = { "#" ProofStmt "\n" } .
 ProofStmt = Expr ( "=>" | "<=>" ) Expr
@@ -94,7 +94,7 @@ ProofStmt = Expr ( "=>" | "<=>" ) Expr
 > MacroParams = TODO
 > MacroBody = TODO
 
-FnParams = "(" [ FnParamsReceiver [ "," ] ] [ StructField { "," StructField } [ "," ] ] ")" .
+FnParams = "(" [ FnParamsReceiver [ "," ] ] [ Field { "," Field } [ "," ] ] ")" .
 FnParamsReceiver = [ "&" [ Refinements ] ] [ "mut" ] "self" [ Refinements ] .
 
 ImplBody = "{" { Item } "}" .
@@ -105,27 +105,39 @@ GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
              | "ref" Ident" .
 
 GenericsArgs = "<" "(" GenericsArg { "," GenericsArg } [ "," ] ")" ">"
-            | "<" GenericsArg ">"
+             | "<" GenericsArg ">"
 GenericsArg = [ Ident ":" ] Type
-           | [ Ident ":" ] Expr
-           | "ref" Expr .
+            | [ Ident ":" ] Expr
+            | "ref" Expr .
 
 Trait = Path .
 
-Type = Path [ Refinements ]
-     | "&" [ Refinements ] Type 
-     | [ "!" ] "mut" Type
-     | "[" Type [ ";" Expr ] "]" Refinements
-     | "{" [ StructField { "," StructField } [ "," ] ] "}"
-     | "(" [ Type        { "," Type        } [ "," ] ] ")"
-     | "enum" "{" { Ident Type "," } "}" .
+Type = NamedType
+     | RefType
+     | MutType
+     | ArrayType
+     | StructType
+     | TupleType
+     | EnumType .
+
+NamedType = Path [ Refinements ] .
+RefType = "&" [ Refinements ] Type [ Refinements ] .
+MutType = [ "!" | "?" ] "mut" Type .
+ArrayType = "[" Type [ ";" Expr ] "]" .
+StructType = "{" [ StructTypeField { "," StructTypeField } [ "," ] ] "}" .
+TupleType = "(" [ TupleTypeElement { "," TupleTypeElement } [ "," ] ] ")" .
+EnumType = "enum" "{" { Ident [ Type ] "," } "}" .
 
 Refinements = "|" Refinement { "," Refinement } [ "," ] "|" .
 Refinement = "ref" [ "mut" ] Expr
-           | [ "!" | "?" ] "init" .
-StructField = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] .
-EnumVariant = Ident Type .
+           | [ "!" | "?" ] "init"
+           | Expr .
+StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
+TupleTypeELement = [ Vis ] Type .
+EnumVariant = [ Vis ] Ident [ Type ] .
 TypeBound = [ Refinements ] Trait { "+" Trait } .
+
+Field = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] .
 
 Stmt = BigExpr
      | Expr ";"

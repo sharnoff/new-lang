@@ -9,32 +9,6 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A single concrete type
-///
-/// The BNF definition for types is:
-/// ```text
-/// Type = Path [ Refinements ]
-///      | "&" [ Refinements ] Type
-///      | [ "!" ] "mut" Type
-///      | "[" Type [ ";" Expr ] "]" [ Refinemnts ]
-///      | "{" [ StructField { "," StructField } [ "," ] ] "}"
-///      | "(" [ Type        { "," Type        } [ "," ] ] ")"
-///      | "enum" "{" { Ident Type "," } "}" .
-/// ```
-/// There *are* many different variants here. These definitions could be equally written with the
-/// types that represent them, with:
-/// ```text
-/// Type = NamedType
-///      | RefType
-///      | MutType
-///      | ArrayType
-///      | StructType
-///      | TupleType
-///      | EnumType .
-/// ```
-///
-/// One of the last key things to note is that while `[ "!" ] "mut"` is *syntactically* allowed
-/// before any type (hence `mut mut int` is valid), repetitions of this prefix are not
-/// *semantically* allowed. This validation is left until later.
 #[derive(Debug, Clone)]
 pub enum Type<'a> {
     Named(NamedType<'a>),
@@ -71,12 +45,40 @@ pub struct NamedType<'a> {
     pub refinements: Option<Refinements<'a>>,
 }
 
+/// A reference type
+///
+/// Reference types are denoted by a leading ampersand (`&`), any refinements on the reference
+/// itself, and finally the type being referenced. This is described formally with the following
+/// BNF definition:
+/// ```text
+/// RefType = "&" [ Refinements ] Type .
+/// ```
 #[derive(Debug, Clone)]
 pub struct RefType<'a> {
     pub(super) src: TokenSlice<'a>,
+    pub refinements: Option<Refinements<'a>>,
     pub ty: Box<Type<'a>>,
 }
 
+/// An indication that a type is strictly allowed or disallowed being mutable
+///
+/// This is mostly a syntactic helper construct to things like references, though it does have usage
+/// on its own. A couple different use-cases might look like:
+/// ```text
+/// type Foo {
+///     x: &mut Bar,
+///     // ^^^^ reference with mutable access to value of type `Bar`
+///     y: !mut Baz,
+///     // ^^^^ indicates that `y` cannot be modified after construction
+/// }
+/// ```
+///
+/// Note that the types `&T` and `&!mut T` are equivalent; references only provide immutable access
+/// by default.
+///
+/// And finally, it should be noted that while this sort of mutability prefix is *syntactically*
+/// allowed before any type, it's semantically invalid before itself - i.e. `mut mut T` and other
+/// forms like it are disallowed. Validating this is left until later.
 #[derive(Debug, Clone)]
 pub struct MutType<'a> {
     pub(super) src: TokenSlice<'a>,
@@ -84,29 +86,130 @@ pub struct MutType<'a> {
     pub ty: Box<Type<'a>>,
 }
 
+/// An array type, given by an element type and optionally the length
+///
+/// These are represented by the following BNF definition:
+/// ```text
+/// ArrayType = "[" Type [ ";" Expr ] "]" [ Refinements ] .
+/// ```
+///
+/// Arrays are one of the few compound types that can be given refinements. This is essentially
+/// it's crucial in certain cases to be able to specify the length of slices without directly
+/// naming the type, e.g:
+/// ```text
+/// fn get<(ref r, T)>(vals: &|ref r| [T] |this.len() < idx|, idx: usize) -> &|ref r| T { ... }
+/// ```
+///
+/// Obviously this is overly complicated - the user probably should have put the bounds on `vals`
+/// in a proof statement instead - but this sort of specification about anonymous array types *is*
+/// necessary, so it's here.
 #[derive(Debug, Clone)]
 pub struct ArrayType<'a> {
-    pub(super) src: &'a Token<'a>,
+    pub(super) src: TokenSlice<'a>,
     pub ty: Box<Type<'a>>,
     pub length: Option<Expr<'a>>,
+    pub refinements: Option<Refinements<'a>>,
+
+    /// Whether there were some kind of unexpected tokens inside the initial token tree containing
+    /// this type
+    pub poisoned: bool,
 }
 
+/// An anonymous struct type, given by each of the named fields
+///
+/// While the type represented here is, strictly speaking, anonymous, the binding in type
+/// declarations can have the effect of making a named (i.e. non anonymous) type. That's a lot of
+/// words to say that this type is only anonymous if it isn't the primary type in a type
+/// declaration.
+///
+/// Anyways, `struct` types are represented by this combination of BNF definitions:
+/// ```text
+/// StructType = "{" [ StructField { "," StructField } [ "," ] ] "}" .
+/// StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
+/// ```
 #[derive(Debug, Clone)]
 pub struct StructType<'a> {
     pub(super) src: &'a Token<'a>,
     pub fields: Vec<StructTypeField<'a>>,
+    pub poisoned: bool,
 }
 
+/// A helper type for [`StructType`](struct.StructType.html)
+///
+/// This syntax element has the following BNF definition:
+/// ```text
+/// StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
+/// ```
+#[derive(Debug, Clone)]
+pub struct StructTypeField<'a> {
+    pub(super) src: TokenSlice<'a>,
+    pub vis: Option<Vis<'a>>,
+    pub name: Ident<'a>,
+    pub ty: Type<'a>,
+    pub value: Option<Expr<'a>>,
+}
+
+/// An anonymous tuple type
+///
+/// Tuple types consist of an ordered list of types, each of which *may* have visibility
+/// qualifiers, even though they are only valid in certain contexts.
+///
+/// The BNF definition here is split into two parts to reflect the structure of the code:
+/// ```text
+/// TupleType = "(" [ TupleTypeElement { "," TupleTypeElement } [ "," ] ] ")" .
+/// TupleTypeElement = [ Vis ] Type .
+/// ```
 #[derive(Debug, Clone)]
 pub struct TupleType<'a> {
     pub(super) src: &'a Token<'a>,
-    pub elems: Vec<Type<'a>>,
+    pub elems: Vec<TupleTypeElement<'a>>,
 }
 
+/// A single tuple type element; a helper for [`TupleType`](struct.TupleType.html)
+///
+/// These satisfy the following BNF definition:
+/// ```text
+/// TupleTypeElement = [ Vis ] Type .
+/// ```
+#[derive(Debug, Clone)]
+pub struct TupleTypeElement<'a> {
+    pub(super) src: TokenSlice<'a>,
+    pub vis: Option<Vis<'a>>,
+    pub ty: Type<'a>,
+}
+
+/// An anonymous enum type
+///
+/// Enums are composed of a set of variants, each of which is given by (in rare circumstances) an
+/// optional leading visibility qualifier, the name of the variant, and (optionally) a type for the
+/// variant.
+///
+/// These are given by the following BNF definitions:
+/// ```text
+/// EnumType = "enum" "{" [ EnumVariant { "," EnumVariant } [ "," ] ] "}" .
+/// EnumVariant = [ Vis ] Ident [ Type ] .
+/// ```
+///
+/// Note that this description is not complete; the comma after a variant may be omitted when that
+/// variant is assigned a struct type.
 #[derive(Debug, Clone)]
 pub struct EnumType<'a> {
     pub(super) src: TokenSlice<'a>,
-    pub variants: Vec<(Ident<'a>, Type<'a>)>,
+    pub variants: Vec<EnumVariant<'a>>,
+}
+
+/// A single variant definition in an `enum` type; a helper for [`EnumType`](struct.EnumType.html)
+///
+/// These are given by the following BNF definition:
+/// ```text
+/// EnumVariant = [ Vis ] Ident [ Type ] .
+/// ```
+#[derive(Debug, Clone)]
+pub struct EnumVariant<'a> {
+    pub(super) src: TokenSlice<'a>,
+    pub vis: Option<Vis<'a>>,
+    pub name: Ident<'a>,
+    pub ty: Option<Type<'a>>,
 }
 
 impl<'a> Type<'a> {
@@ -249,24 +352,16 @@ impl<'a> EnumType<'a> {
 // * StructTypeField                                                                              //
 // * Refinements                                                                                  //
 //   * Refinement                                                                                 //
+//     * RefRefinement                                                                            //
+//     * InitRefinement                                                                           //
 // * TypeBound                                                                                    //
-// * GenericsArgs                                                                                  //
-//   * GenericsArg                                                                                 //
-//     * TypeGenericsArg                                                                           //
-//     * ConstGenericsArg                                                                          //
-//     * RefGenericsArg                                                                            //
-//     * AmbiguousGenericsArg                                                                      //
-//     * TypeOrExpr                                                                               //
+// * GenericsArgs                                                                                 //
+//   * GenericsArg                                                                                //
+//     * TypeGenericsArg                                                                          //
+//     * ConstGenericsArg                                                                         //
+//     * RefGenericsArg                                                                           //
+//     * AmbiguousGenericsArg                                                                     //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#[derive(Debug, Clone)]
-pub struct StructTypeField<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub ty: Option<Type<'a>>,
-    pub bound: Option<TypeBound<'a>>,
-    pub default: Option<Expr<'a>>,
-}
 
 #[derive(Debug, Clone)]
 pub struct Refinements<'a> {
@@ -278,6 +373,7 @@ pub struct Refinements<'a> {
 pub enum Refinement<'a> {
     Ref(RefRefinement<'a>),
     Init(InitRefinement<'a>),
+    Expr(Expr<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -307,10 +403,10 @@ pub struct TypeBound<'a> {
 /// a helper for this type. The BNF definition for the combination of these two types is:
 /// ```text
 /// GenericsArgs = "<" "(" GenericsArg { "," GenericsArg } [ "," ] ")" ">"
-///             | "<" GenericsArg ">" .
+///              | "<" GenericsArg ">" .
 /// GenericsArg = [ Ident ":" ] Type
-///            | [ Ident ":" ] BlockExpr
-///            | "ref" Expr .
+///             | [ Ident ":" ] BlockExpr
+///             | "ref" Expr .
 /// ```
 ///
 /// Generics arguments are a large part of the ambiguity present in the sytnax. To keep complexity
@@ -337,8 +433,8 @@ pub struct GenericsArgs<'a> {
 /// This type is the singular generics argument, defined with the following BNF:
 /// ```text
 /// GenericsArg = [ Ident ":" ] Type
-///            | [ Ident ":" ] BlockExpr
-///            | "ref" Expr .
+///             | [ Ident ":" ] BlockExpr
+///             | "ref" Expr .
 /// ```
 /// Even though it may appear as such at first glance, this definition does not have any ambiguity
 /// (so long as we permit a longer-than-usual lookahead). This definition *is* complex, however, so
@@ -382,19 +478,7 @@ pub struct RefGenericsArg<'a> {
 pub struct AmbiguousGenericsArg<'a> {
     pub(super) src: TokenSlice<'a>,
     pub name: Option<Ident<'a>>,
-    pub refs: Vec<&'a Token<'a>>,
-    pub path: PathComponent<'a>,
-}
-
-#[derive(Debug)]
-pub enum TypeOrExpr<'a> {
-    Type(Type<'a>),
-    Expr(Expr<'a>),
-    Ambiguous {
-        consumed: usize,
-        refs: Vec<&'a Token<'a>>,
-        path: PathComponent<'a>,
-    },
+    pub value: TypeOrExpr<'a>,
 }
 
 impl<'a> Refinements<'a> {
@@ -440,25 +524,89 @@ impl<'a> GenericsArgs<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<GenericsArgs<'a>>, Option<usize>> {
-        // Marked TODO because the generics parsing here hasn't yet been modified to disallow
-        // multiple arguments without parentheses.
-        todo!()
-        /*
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
-        match tokens.first() {
+        let leading_angle = match tokens.first() {
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Punctuation(Punc::Lt) => (),
+                TokenKind::Punctuation(Punc::Lt) => t,
                 _ => return Ok(None),
             },
             _ => return Ok(None),
+        };
+
+        // Otherwise, we'll expect the "inner" portion of generics arguments afterwards
+
+        let (args, poisoned, cs) =
+            GenericsArgs::consume_inner(&tokens[1..], ends_early, containing_token, errors)
+                .map_err(p!(Some(c) => Some(1 + c)))?;
+
+        let mut consumed = cs + 1;
+
+        match tokens.get(consumed) {
+            Some(Err(e)) => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::GenericsArgCloseAngleBracket {
+                        args_tokens: &tokens[1..consumed],
+                    },
+                    found: Source::TokenResult(Err(*e)),
+                });
+
+                return Err(None);
+            }
+            None if ends_early => return Err(None),
+            None => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::GenericsArgCloseAngleBracket {
+                        args_tokens: &tokens[1..consumed],
+                    },
+                    found: end_source!(containing_token),
+                });
+
+                return Err(None);
+            }
+            Some(Ok(t)) => match &t.kind {
+                TokenKind::Punctuation(Punc::Gt) => consumed += 1,
+                TokenKind::Punctuation(Punc::Comma)
+                    if GenericsArgs::can_be_single_arg(&args, consumed - 1)
+                        && !might_be_generics_arg(&tokens[consumed..]) =>
+                {
+                    errors.push(Error::GenericsArgsNotEnclosed {
+                        leading_angle,
+                        arg: &tokens[1..consumed],
+                        comma: t,
+                    });
+
+                    return Err(None);
+                }
+                _ => {
+                    errors.push(Error::Expected {
+                        kind: ExpectedKind::GenericsArgCloseAngleBracket {
+                            args_tokens: &tokens[1..consumed],
+                        },
+                        found: Source::TokenResult(Ok(t)),
+                    });
+
+                    return Err(None);
+                }
+            },
         }
 
-        let mut consumed = 1;
-        let mut poisoned = false;
-        let mut args = Vec::new();
+        Ok(Some(GenericsArgs {
+            src: &tokens[..consumed],
+            args,
+            poisoned,
+        }))
+    }
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+    // Note: returns generics args, poisoned, consumed
+    pub fn consume_inner(
+        tokens: TokenSlice<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<(Vec<GenericsArg<'a>>, bool, usize), Option<usize>> {
+        todo!()
 
+        /*
         loop {
             let arg_res = GenericsArg::consume(
                 &tokens[consumed..],
@@ -493,28 +641,31 @@ impl<'a> GenericsArgs<'a> {
                 @else ExpectedKind::GenericsArgDelim { prev_tokens: &tokens[consumed..] },
             ));
         }
-
-        Ok(Some(GenericsArgs {
-            src: &tokens[..consumed],
-            args,
-            poisoned,
-        }))
         */
-    }
-
-    // Note: returns generics args, poisoned, consumed
-    pub fn consume_inner(
-        tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<(Vec<GenericsArg<'a>>, bool, usize), Option<usize>> {
-        todo!()
     }
 
     pub fn can_be_expr(args: &[GenericsArg]) -> bool {
         todo!()
     }
+
+    /// Returns whether the list of generics arguments might instead constitute a single argument
+    ///
+    /// This function should be given the list of generics arguments supplied to it, alongside the
+    /// number of tokens that were reported as consumed in order to create it
+    pub fn can_be_single_arg(args: &[GenericsArg], consumed: usize) -> bool {
+        todo!()
+    }
+}
+
+/// Returns whether the given tokens might start with a generics argument
+///
+/// This is used for creating better error messages, and is not / should not be relied on for the
+/// correctness of the parser.
+///
+/// As such, the current implementation just returns `true` - this will be changed in the future.
+// TODO: See above note; this should be changed.
+fn might_be_generics_arg(_tokens: TokenSlice) -> bool {
+    true
 }
 
 impl<'a> GenericsArg<'a> {
@@ -535,124 +686,68 @@ impl<'a> GenericsArg<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<GenericsArg<'a>, Option<usize>> {
-        // Parsing a generics argument is somewhat complicated - this is due to the fact that two
-        // of the variants share their first two tokens, but only optionally. Reference arguments
-        // can be determined immediately becuase they start with "ref", so parsing for those is
-        // delegated to `RefGenericsArg::consume`
+        // A helper function to get the kind of the token at `idx`
+        let kind = |idx: usize| Some(&tokens.get(idx)?.as_ref().ok()?.kind);
 
         let mut consumed = 0;
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
+
+        // Some of generics args (i.e. consts and types) may be labeled with a name.
+        let name = match (kind(0), kind(1)) {
+            (Some(TokenKind::Ident(name)), Some(TokenKind::Punctuation(Punc::Colon))) => {
+                consumed += 2;
+
+                Some(Ident {
+                    src: &tokens[0].as_ref().unwrap(),
+                    name,
+                })
+            }
+            _ => None,
+        };
+
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let fst = get!(
-            0,
-            Err(e) => Error::Expected {
-                kind: ExpectedKind::GenericsArg { prev_tokens },
-                found: Source::TokenResult(Err(*e)),
-            },
-            None => Error::Expected {
-                kind: ExpectedKind::GenericsArg { prev_tokens },
-                found: end_source!(containing_token),
-            },
-        );
+        let res = expect!((
+            // Reference generics args can't be named
+            TokenKind::Keyword(Kwd::Ref) if name.is_some() => {
+                errors.push(Error::NamedReferenceGenericsArg {
+                    name: name.unwrap(),
+                    ref_kwd: &tokens[consumed].as_ref().unwrap(),
+                });
 
-        let mut name = match &fst.kind {
+                Err(None)
+            },
             TokenKind::Keyword(Kwd::Ref) => {
                 return RefGenericsArg::consume(tokens, ends_early, containing_token, errors)
                     .map_err(|_| None)
                     .map(GenericsArg::Ref);
-            }
-            TokenKind::Ident(name) => Some(Ident { src: fst, name }),
-            _ => None,
-        };
-
-        // We make this a loop so that we can break out of the block if it turns out that the name
-        // we originally saw wasn't for one of the generics arguments.
-        if name.is_some() {
-            // Because we just parsed an identifier, we'll see if the generics argument starts with
-            //   Ident ":"
-            // If it doesn't, it's entirely possible that the starting identifier was instead as
-            // part of a type parameter (not a block expression, though), but only if the token
-            // following the identifier is one of the following set:
-            //   { "|",  "," , ">" , "<" }
-            //     └┬┘   └┬┘   └┬┘   └┬┘
-            //      │     └──┬──┘    Ident is the name of a type, followed by generic arguments
-            //      │   Ident *is* the type, followed by next generic arg / end of generic args
-            //      │   list
-            //  Ident *is* the type, followed by refinements
-            expect!((
-                // Per the comment above, we'll discard the original identifier, as it must be part
-                // of the type.
-                TokenKind::Punctuation(Punc::Comma)
-                | TokenKind::Punctuation(Punc::Gt)
-                | TokenKind::Punctuation(Punc::Or)
-                | TokenKind::Punctuation(Punc::Lt) => name = None,
-                // Otherwise, if we find `Ident ":"`, we'll consume both and parse the type from
-                // the new starting point
-                TokenKind::Punctuation(Punc::Colon) => consumed = 2,
-                // Anything else wouldn't have been vaid either way, so we'll
-                @else ExpectedKind::GenericsArgFollowIdent {
-                    prev_tokens,
-                    ident: fst,
-                },
-            ));
-        }
-
-        // Past this point, we konw that whatwe hae left is either a type or an expression. We'll
-        // make use of `TypeOrExpr::consume` to handle this.
-        let res = TypeOrExpr::consume(
-            &tokens[consumed..],
-            prev_tokens,
-            ends_early,
-            containing_token,
-            errors,
-        );
+            },
+            _ => {
+                TypeOrExpr::consume(&tokens[consumed..], prev_tokens, ends_early, containing_token, errors)
+            },
+            @else ExpectedKind::GenericsArg { prev_tokens },
+        ));
 
         match res {
             Err(None) => Err(None),
             Err(Some(c)) => Err(Some(consumed + c)),
-            Ok(TypeOrExpr::Type(type_arg)) => {
-                consumed += type_arg.consumed();
-                Ok(GenericsArg::Type(TypeGenericsArg {
-                    src: &tokens[..consumed],
-                    name,
-                    type_arg,
-                }))
-            }
-            Ok(TypeOrExpr::Expr(value)) => {
-                consumed += value.consumed();
-                Ok(GenericsArg::Const(ConstGenericsArg {
-                    src: &tokens[..consumed],
-                    name,
-                    value,
-                }))
-            }
-            Ok(TypeOrExpr::Ambiguous {
-                consumed: c,
-                refs,
-                path,
-            }) => {
-                consumed += c;
-                Ok(GenericsArg::Ambiguous(AmbiguousGenericsArg {
-                    src: &tokens[..consumed],
-                    name,
-                    refs,
-                    path,
-                }))
+            Ok(type_or_expr) => {
+                consumed += type_or_expr.consumed();
+
+                Ok(match type_or_expr {
+                    TypeOrExpr::Type(ty) => GenericsArg::Type(TypeGenericsArg {
+                        src: &tokens[..consumed],
+                        name,
+                        type_arg: ty,
+                    }),
+                    TypeOrExpr::Expr(ex) => GenericsArg::Const(ConstGenericsArg {
+                        src: &tokens[..consumed],
+                        name,
+                        value: ex,
+                    }),
+                    TypeOrExpr::Ambiguous { .. } => todo!(),
+                })
             }
         }
-    }
-}
-
-impl<'a> TypeOrExpr<'a> {
-    pub fn consume(
-        tokens: TokenSlice<'a>,
-        prev_tokens: TokenSlice<'a>,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TypeOrExpr<'a>, Option<usize>> {
-        todo!()
     }
 }
 
@@ -694,7 +789,7 @@ impl<'a> RefGenericsArg<'a> {
             containing_token,
             errors,
         )
-        .map_err(|cs| cs.map(|c| c + 1))?;
+        .map_err(p!(Some(c) => Some(c + 1)))?;
         let consumed = expr.consumed() + 1;
 
         Ok(RefGenericsArg {

@@ -1,6 +1,6 @@
 //! Error types and messages for parsing into the AST
 
-use super::{ExprDelim, GenericsArg, TokenSlice};
+use super::{ExprDelim, GenericsArg, Ident, TokenSlice};
 use crate::error::{Builder as ErrorBuilder, ToError};
 use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
@@ -123,6 +123,26 @@ pub enum Error<'a> {
     /// Do..while expressions aren't allowed as part of more complex expressions; if we find one
     /// there, we'll produce an error.
     DoWhileDisallowed { do_token: &'a Token<'a> },
+
+    /// Sometimes, we might find a comma following a single generics argument, without being
+    /// enclosed by parentheses - e.g:
+    /// ```text
+    /// Foo<T, S>
+    ///      ^ this comma
+    /// ```
+    /// This should have instead been written as `Foo<(T, S)>`, and so this error message reflects
+    /// that, with the angle-bracket, argument, and trailing comma.
+    GenericsArgsNotEnclosed {
+        leading_angle: &'a Token<'a>,
+        arg: TokenSlice<'a>,
+        comma: &'a Token<'a>,
+    },
+
+    /// "Reference" generics args - i.e. `"ref" Expr` cannot be named
+    NamedReferenceGenericsArg {
+        name: Ident<'a>,
+        ref_kwd: &'a Token<'a>,
+    },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -202,17 +222,8 @@ pub enum ExpectedKind<'a> {
     GenericsArg {
         prev_tokens: TokenSlice<'a>,
     },
-    GenericsArgDelim {
-        prev_tokens: TokenSlice<'a>,
-    },
-    // Any of the tokens that may follow a leading identifier in a generics argument
-    GenericsArgFollowIdent {
-        prev_tokens: TokenSlice<'a>,
-        ident: &'a Token<'a>,
-    },
-    GenericsArgAfterIdent {
-        prev_tokens: TokenSlice<'a>,
-        name: Option<&'a Token<'a>>,
+    GenericsArgCloseAngleBracket {
+        args_tokens: TokenSlice<'a>,
     },
     TypeParamFollowOn {
         after_type_bound: bool,

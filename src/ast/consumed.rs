@@ -142,13 +142,13 @@ impl_all! {
     RefType,
     MutType,
     @Single: StructType,
-    @Single: ArrayType,
+    ArrayType,
     @Single: TupleType,
     EnumType,
     // Types helper bits
     StructTypeField,
     Refinements,
-    Refinement { Ref, Init },
+    Refinement { Ref, Init, Expr },
     RefRefinement,
     InitRefinement,
     TypeBound,
@@ -158,6 +158,13 @@ impl_all! {
     ConstGenericsArg,
     RefGenericsArg,
     AmbiguousGenericsArg,
+    // Ambiguous types
+    TypeOrExpr { Type, Expr, Ambiguous },
+    AmbiguousTypeOrExpr { Named, Ref, Tuple, Struct, Array },
+    RefTypeOrExpr,
+    @Single: TupleTypeOrExpr,
+    @Single: StructTypeOrExpr,
+    @Single: ArrayTypeOrExpr,
 
     // Literals
     @Single: Ident,

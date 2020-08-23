@@ -172,7 +172,7 @@ macro_rules! make_expect {
         $ends_early:expr,
         $containing_token:expr,
         $errors:expr,
-        ($($($token_kind:pat)|+ => $arm:expr,)+
+        ($($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
         @else $expected_kind:expr $(,)?)
     ) => {{
         match $tokens.get($consumed) {
@@ -199,7 +199,8 @@ macro_rules! make_expect {
             }
 
             Some(Ok(t)) => match &t.kind {
-                $($($token_kind)|+ => $arm,)+
+                $($($token_kind)|+ $(if $cond)? => $arm,)+
+                #[allow(unreachable_patterns)]
                 _ => {
                     $errors.push(Error::Expected {
                         kind: $expected_kind,

@@ -40,7 +40,7 @@ pub enum Vis<'a> {
 ///
 /// The BNF definition for function declarations is:
 /// ```text
-/// FnDecl = ProofStmts Vis [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
+/// FnDecl = ProofStmts [ Vis ] [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
 ///          FnParams [ "->" Type ] ( ";" | BlockExpr ) .
 /// ```
 /// The first few syntactic elements (`ProofStmts` through `GenericParams`) should be fairly
@@ -91,7 +91,7 @@ pub struct MacroDef<'a> {
 ///
 /// The BNF definition for type declarations is:
 /// ```text
-/// TypeDecl = ProofStmts Vis "type" Ident [ GenericParams ]
+/// TypeDecl = ProofStmts [ Vis ] "type" Ident [ GenericParams ]
 ///            [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
 /// ```
 /// In turn, type declarations may have proof statements, visibility qualifiers, and generic
@@ -122,7 +122,7 @@ pub struct TypeDecl<'a> {
 ///
 /// The BNF for trait definitions is:
 /// ```text
-/// TraitDef = ProofStmts Vis "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
+/// TraitDef = ProofStmts [ Vis ] "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
 /// ```
 /// Some of the syntax elements here warrant an explanation; we'll go through those in order.
 /// Firstly, while trait definitions may be preceeded by proof statements, there aren't currently
@@ -186,15 +186,15 @@ pub struct ImplBlock<'a> {
 ///
 /// The BNF can be defined by either of these equivalent definitions:
 /// ```text
-/// ConstStmt = Vis "const" Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] ";" .
-///           = Vis "const" StructField ";" .
+/// ConstStmt = [ Vis ] "const" Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] ";" .
+///           = [ Vis ] "const" StructField ";" .
 /// ```
 /// The first definition is more accurate to how a `ConstStmt` is represented, whereas the second
 /// gives a better idea as to how it is actually parsed.
 ///
 /// Typically, const statements will be of the (simpler) form:
 /// ```text
-/// Vis "const" Ident ":" Type "=" Expr ";"
+/// [ Vis ] "const" Ident ":" Type "=" Expr ";"
 /// ```
 /// This form is the only form that is semantically valid outside of trait definitions. All of the
 /// other variants possible correspond to the particular forms that are allowed within trait
