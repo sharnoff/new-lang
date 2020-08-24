@@ -122,13 +122,10 @@ impl<'a> Literal<'a> {
         // This function *does* expect a literal as the first token, so we'll panic if that isn't
         // the case.
 
-        let (fst_token, value, kind) = match tokens.first() {
-            Some(Err(_)) | None => panic!("Expected literal token, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Literal(value, kind) => (t, value, kind),
-                _ => panic!("Expected literal token kind, found {:?}", t.kind),
-            },
-        };
+        let (fst_token, value, kind) = assert_token!(
+            tokens.first() => "literal",
+            Ok(t) && TokenKind::Literal(value, kind) => (t, value, kind),
+        );
 
         // For character and string literals, we can simply return the values because they
         // aren't very complicated

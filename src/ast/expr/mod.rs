@@ -1021,13 +1021,10 @@ impl<'a> Expr<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<PathComponent<'a>, Option<usize>> {
-        let name = match tokens.first() {
-            None | Some(Err(_)) => panic!("expected identifier, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Ident(name) => Ident { src: t, name },
-                _ => panic!("expected identifier, found token kind {:?}", t.kind),
-            },
-        };
+        let name = assert_token!(
+            tokens.first() => "identifier",
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+        );
 
         // We'll only attempt to consume generics arguments if we have an angle bracket after the
         // initial name.
@@ -1742,13 +1739,10 @@ impl<'a> PrefixOp<'a> {
         //
         // We're given that the first token is the keyword `let`, so we'll panic if we find that's
         // not the case.
-        let let_kwd = match tokens.first() {
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Let) => t,
-                k => panic!("Expected keyword 'let', found token kind {:?}", k),
-            },
-            t => panic!("Expected keyword 'let', found {:?}", t),
-        };
+        let let_kwd = assert_token!(
+            tokens.first() => "keyword `let`",
+            Ok(t) && TokenKind::Keyword(Kwd::Let) => t,
+        );
 
         let mut consumed = 1;
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
@@ -1875,10 +1869,24 @@ impl BinOp {
             false => None,
         };
 
-        // Like we said before, we'll match on the first two tokens. More specifically, we can only
-        let first_two = [kind(0), no_trail(0).and_then(|()| kind(1))];
+        // We'll match on the first tokens that are all "glued" together - i.e. there's no
+        // whitespace between them
+        let ts = [kind(0), no_trail(0).and_then(|()| kind(1)), no_trail(1).and_then(|()| kind(2))];
 
-        match &first_two {
+        match &ts {
+            // All of the assignment operators are composed of multiple tokens, so we do those
+            // first
+            punc!(Plus, Eq) => op!(AddAssign, 2),
+            punc!(Minus, Eq) => op!(SubAssign, 2),
+            punc!(Star, Eq) => op!(MulAssign, 2),
+            punc!(Slash, Eq) => op!(DivAssign, 2),
+            punc!(Percent, Eq) => op!(ModAssign, 2),
+            punc!(And, Eq) => op!(BitAndAssign, 2),
+            punc!(Or, Eq) => op!(BitOrAssign, 2),
+            punc!(Lt, Lt, Eq) => op!(ShlAssign, 3),
+            punc!(Gt, Gt, Eq) => op!(ShrAssign, 3),
+            punc!(Eq) => op!(Assign),
+
             punc!(Plus) => op!(Add),
             punc!(Minus) => op!(Sub),
             punc!(Star) => op!(Mul),
@@ -2132,14 +2140,11 @@ impl<'a> PostfixOp<'a> {
     ) -> Result<(PostfixOp<'a>, TokenSlice<'a>), Option<usize>> {
         // We'll assert that the first token is a dot ('.'), just to verify that we've been given
         // what we were promised
-        let dot_token = match tokens.first() {
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Punctuation(Punc::Dot) => t,
-                k => panic!("Expected punctuation dot (`.`), found token kind {:?}", k),
-            },
-            t => panic!("Expected punctuation dot (`.`), found {:?}", t),
-        };
-
+        let dot_token = assert_token!(
+            tokens.first() => "dot (`.`)",
+            Ok(t) && TokenKind::Punctuation(Punc::Dot) => t,
+        );
+        
         make_expect!(tokens, 1, ends_early, containing_token, errors);
 
         expect!((
@@ -2585,14 +2590,10 @@ impl<'a> ForExpr<'a> {
         //
         // The first thing we're going to do is just to check that the input we were given *did*
         // start with the `for` keyword.
-
-        let for_kwd = match tokens.first() {
-            None | Some(Err(_)) => panic!("expected keyword `for`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::For) => t,
-                _ => panic!("expected keyword `for`, found token kind {:?}", t.kind),
-            },
-        };
+        let for_kwd = assert_token!(
+            tokens.first() => "keyword `for`",
+            Ok(t) && TokenKind::Keyword(Kwd::For) => t,
+        );
 
         let mut consumed = 1;
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
@@ -2674,14 +2675,10 @@ impl<'a> WhileExpr<'a> {
         // More simple than `for` loops, while loops have the following BNF:
         //   "while" Expr* BlockExpr [ "else" BigExpr ]
         // * excluding structs
-
-        match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected keyword `while`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::While) => (),
-                _ => panic!("Expected keyword `while`, found token kind {:?}", t.kind),
-            },
-        }
+        assert_token!(
+            tokens.first() => "keyword `while`",
+            Ok(t) && TokenKind::Keyword(Kwd::While) => (),
+        );
 
         let mut consumed = 1;
         let condition = Expr::consume(
@@ -2749,13 +2746,10 @@ impl<'a> DoWhileExpr<'a> {
         //
         // We're given that the first token in the set we're given is "do", so we'll just
         // double-check that.
-        match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected keyword `do`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Do) => (),
-                _ => panic!("Expected keyword `do`, found token kind {:?}", t.kind),
-            },
-        }
+        assert_token!(
+            tokens.first() => "keyword `do`",
+            Ok(t) && TokenKind::Keyword(Kwd::Do) => (),
+        );
 
         // After the initial "do", we're expecting a block expression
         let body = BlockExpr::parse(
@@ -2842,14 +2836,10 @@ impl<'a> LoopExpr<'a> {
     ) -> Result<LoopExpr<'a>, Option<usize>> {
         // Loop expressions are very simple; the BNF is just:
         //   "loop" BlockExpr
-
-        match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected keyword `loop`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Loop) => (),
-                _ => panic!("Expected keyword `loop`, found token kind {:?}", t.kind),
-            },
-        }
+        assert_token!(
+            tokens.first() => "keyword `loop`",
+            Ok(t) && TokenKind::Keyword(Kwd::Loop) => (),
+        );
 
         // If we won't be able to parse a block expression, due to the token list ending early,
         // we'll just return an error - we don't want to pass it down to `BlockExpr::parse`
@@ -2889,14 +2879,10 @@ impl<'a> IfExpr<'a> {
         // If conditions are fairly simple - they are defined with the following BNF:
         //   "if" Expr* BlockExpr [ "else" BigExpr ]
         // * excluding structs
-
-        match tokens.first() {
-            None | Some(Err(_)) => panic!("expected keyword `if`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::If) => (),
-                _ => panic!("expected keyword `if`, found token kind {:?}", t.kind),
-            },
-        }
+        assert_token!(
+            tokens.first() => "keyword `if`",
+            Ok(t) && TokenKind::Keyword(Kwd::If) => (),
+        );
 
         let mut consumed = 1;
         let condition = Expr::consume(
@@ -2954,14 +2940,10 @@ impl<'a> MatchExpr<'a> {
         // Match expressions are defined by the following BNF:
         //   "match" Expr* "{" { MatchArm } "}"
         // * excluding structs
-
-        let match_kwd = match tokens.first() {
-            None | Some(Err(_)) => panic!("expected keyword `match`, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Match) => t,
-                _ => panic!("expected keyword `match`, found token kind {:?}", t.kind),
-            },
-        };
+        let match_kwd = assert_token!(
+            tokens.first() => "keyword `match`",
+            Ok(t) && TokenKind::Keyword(Kwd::Match) => t,
+        );
 
         let mut consumed = 1;
         let expr = Expr::consume(
@@ -3218,15 +3200,10 @@ impl<'a> ContinueExpr<'a> {
         // Because we're allowed to assume that the starting token is the keyword `continue`, we
         // essentially don't need to do any parsing. Even though we could just return the first
         // token, we'll double-check that it *is* `continue`.
-        let src = match tokens.first() {
-            None | Some(Err(_)) => {
-                panic!("expected keyword `continue`, found {:?}", tokens.first())
-            }
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Continue) => t,
-                _ => panic!("expected keyword `continue`, found token kind {:?}", t.kind),
-            },
-        };
+        let src = assert_token!(
+            tokens.first() => "keyword `continue`",
+            Ok(t) && TokenKind::Keyword(Kwd::Continue) => t,
+        );
 
         Ok(ContinueExpr { src })
     }

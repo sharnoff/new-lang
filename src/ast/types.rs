@@ -772,13 +772,10 @@ impl<'a> RefGenericsArg<'a> {
         errors: &mut Vec<Error<'a>>,
     ) -> Result<RefGenericsArg<'a>, Option<usize>> {
         // We'll just assert that it *was* the `ref` keyword here.
-        match tokens.first() {
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Ref) => (),
-                _ => panic!("Expected keyword `ref`, found token kind {:?}", &t.kind),
-            },
-            res => panic!("Expected keyword `ref`, found {:?}", res),
-        }
+        assert_token!(
+            tokens.first() => "keyword `ref`",
+            Ok(t) && TokenKind::Keyword(Kwd::Ref) => (),
+        );
 
         let expr = Expr::consume(
             &tokens[1..],

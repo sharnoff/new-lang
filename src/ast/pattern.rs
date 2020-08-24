@@ -412,13 +412,10 @@ impl<'a> NamedPattern<'a> {
         // token is an identifier because of the guarantees of this function, so we can simplify
         // the inner loop a little bit.
 
-        let fst_ident = match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected identifier token, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Ident(name) => Ident { src: t, name },
-                _ => panic!("Expected identifier token kind, found {:?}", t.kind),
-            },
-        };
+        let fst_ident = assert_token!(
+            tokens.first() => "identifier",
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+        );
 
         let mut consumed = 1;
         let mut components = vec![fst_ident];
@@ -485,13 +482,11 @@ impl<'a> NamedPattern<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<NamedPattern<'a>, Option<usize>> {
-        match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected dot (`.`) token, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Punctuation(Punc::Dot) => (),
-                _ => panic!("Expected dot (`.`) token kind, found {:?}", t.kind),
-            },
-        }
+        assert_token!(
+            tokens.first() => "dot (`.`)",
+            Ok(t) && TokenKind::Punctuation(Punc::Dot) => (),
+        );
+
         let mut consumed = 1;
 
         let name = Ident::parse(
@@ -735,13 +730,10 @@ impl<'a> FieldPattern<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<FieldPattern<'a>, Option<usize>> {
-        let name = match tokens.first() {
-            None | Some(Err(_)) => panic!("Expected identifier token, found {:?}", tokens.first()),
-            Some(Ok(t)) => match &t.kind {
-                TokenKind::Ident(name) => Ident { src: t, name },
-                _ => panic!("Expected identifier token kind, found {:?}", t.kind),
-            },
-        };
+        let name = assert_token!(
+            tokens.first() => "identifier",
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+        );
 
         macro_rules! only_name {
             () => {{

@@ -213,3 +213,18 @@ macro_rules! make_expect {
         }
     }}
 }
+
+macro_rules! assert_token {
+    (
+        $token_result:expr => $name:expr,
+        Ok($token:ident) && $token_kind:pat => $arm:expr $(,)?
+    ) => {{
+        match $token_result {
+            Some(Ok($token)) => match &$token.kind {
+                $token_kind => $arm,
+                k => panic!("Expected {}, found token kind {:?}", $name, k),
+            }
+            t => panic!("Expected {}, found {:?}", $name, t),
+        }
+    }};
+}
