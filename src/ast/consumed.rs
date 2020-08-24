@@ -159,8 +159,8 @@ impl_all! {
     RefGenericsArg,
     AmbiguousGenericsArg,
     // Ambiguous types
-    TypeOrExpr { Type, Expr, Ambiguous },
-    AmbiguousTypeOrExpr { Named, Ref, Tuple, Struct, Array },
+    MaybeTypeOrExpr { Type, Expr, Ambiguous },
+    TypeOrExpr { Named, Ref, Tuple, Struct, Array },
     RefTypeOrExpr,
     @Single: TupleTypeOrExpr,
     @Single: StructTypeOrExpr,

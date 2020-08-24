@@ -734,17 +734,21 @@ impl<'a> GenericsArg<'a> {
                 consumed += type_or_expr.consumed();
 
                 Ok(match type_or_expr {
-                    TypeOrExpr::Type(ty) => GenericsArg::Type(TypeGenericsArg {
+                    MaybeTypeOrExpr::Type(ty) => GenericsArg::Type(TypeGenericsArg {
                         src: &tokens[..consumed],
                         name,
                         type_arg: ty,
                     }),
-                    TypeOrExpr::Expr(ex) => GenericsArg::Const(ConstGenericsArg {
+                    MaybeTypeOrExpr::Expr(ex) => GenericsArg::Const(ConstGenericsArg {
                         src: &tokens[..consumed],
                         name,
                         value: ex,
                     }),
-                    TypeOrExpr::Ambiguous { .. } => todo!(),
+                    MaybeTypeOrExpr::Ambiguous(value) => GenericsArg::Ambiguous(AmbiguousGenericsArg {
+                        src: &tokens[..consumed],
+                        name,
+                        value,
+                    }),
                 })
             }
         }

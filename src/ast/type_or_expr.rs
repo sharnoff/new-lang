@@ -3,14 +3,14 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-pub enum TypeOrExpr<'a> {
+pub enum MaybeTypeOrExpr<'a> {
     Type(Type<'a>),
     Expr(Expr<'a>),
-    Ambiguous(AmbiguousTypeOrExpr<'a>),
+    Ambiguous(TypeOrExpr<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub enum AmbiguousTypeOrExpr<'a> {
+pub enum TypeOrExpr<'a> {
     Named(Path<'a>),
     Ref(RefTypeOrExpr<'a>),
     Tuple(TupleTypeOrExpr<'a>),
@@ -58,7 +58,7 @@ impl<'a> TypeOrExpr<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<TypeOrExpr<'a>, Option<usize>> {
+    ) -> Result<MaybeTypeOrExpr<'a>, Option<usize>> {
         todo!()
     }
 }
