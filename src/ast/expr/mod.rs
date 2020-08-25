@@ -7,6 +7,8 @@ use crate::tokens::LiteralKind;
 
 mod stack;
 use stack::Stack;
+mod restrictions;
+pub use restrictions::Restrictions;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Expr` variants                                                                                //
@@ -666,9 +668,7 @@ impl<'a> Expr<'a> {
     pub fn consume(
         tokens: TokenSlice<'a>,
         delim: ExprDelim,
-        allow_angle_bracket: bool,
-        no_structs: Option<NoCurlyContext>,
-        no_else_branch: Option<NoElseBranchContext>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -677,9 +677,7 @@ impl<'a> Expr<'a> {
             tokens,
             |_| false,
             delim,
-            allow_angle_bracket,
-            no_structs,
-            no_else_branch,
+            restrictions,
             ends_early,
             containing_token,
             errors,
@@ -693,9 +691,7 @@ impl<'a> Expr<'a> {
         tokens: TokenSlice<'a>,
         is_done: impl Fn(&Stack) -> bool,
         delim: ExprDelim,
-        allow_angle_bracket: bool,
-        no_structs: Option<NoCurlyContext>,
-        no_else_branch: Option<NoElseBranchContext>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -729,8 +725,7 @@ impl<'a> Expr<'a> {
                     src,
                     consumed,
                     delim,
-                    allow_angle_bracket,
-                    no_else_branch,
+                    restrictions,
                     ends_early,
                     containing_token,
                     errors,
@@ -742,8 +737,7 @@ impl<'a> Expr<'a> {
                         src,
                         consumed,
                         delim,
-                        allow_angle_bracket,
-                        no_structs,
+                        restrictions,
                         ends_early,
                         containing_token,
                         errors,
@@ -789,8 +783,7 @@ impl<'a> Expr<'a> {
         tokens: TokenSlice<'a>,
         already_consumed: usize,
         delim: ExprDelim,
-        allow_angle_bracket: bool,
-        no_else_branch: Option<NoElseBranchContext>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -814,9 +807,7 @@ impl<'a> Expr<'a> {
                 // defined as all of the expression types that don't involve operators.
                 let res = Expr::try_consume_atom(
                     tokens,
-                    DoWhileExpr::is_allowed(stack),
-                    allow_angle_bracket,
-                    no_else_branch,
+                    restrictions.with_do_while(DoWhileExpr::is_allowed(stack)),
                     delim,
                     ends_early,
                     containing_token,
@@ -846,9 +837,7 @@ impl<'a> Expr<'a> {
     /// in order for us to pass it along to the stack values.
     fn try_consume_atom(
         tokens: TokenSlice<'a>,
-        allow_do_while: bool,
-        allow_angle_bracket: bool,
-        no_else_branch: Option<NoElseBranchContext>,
+        restrictions: Restrictions,
         delim: ExprDelim,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
@@ -887,7 +876,6 @@ impl<'a> Expr<'a> {
                 // Named
                 TokenKind::Ident(_) => Expr::consume_path_component(
                     tokens,
-                    allow_angle_bracket,
                     delim,
                     ends_early,
                     containing_token,
@@ -928,7 +916,7 @@ impl<'a> Expr<'a> {
                 | TokenKind::Keyword(kwd @ Kwd::While)
                 | TokenKind::Keyword(kwd @ Kwd::If)
                 | TokenKind::Keyword(kwd @ Kwd::Do)
-                    if no_else_branch.is_some() =>
+                    if !restrictions.allows_else_branch() =>
                 {
                     errors.push(Error::PotentialElseDisallowed {
                         src: fst_token,
@@ -945,7 +933,7 @@ impl<'a> Expr<'a> {
                 TokenKind::Keyword(Kwd::Match) => consume!(MatchExpr, Match),
                 TokenKind::Keyword(Kwd::Continue) => consume!(ContinueExpr, Continue),
 
-                TokenKind::Keyword(Kwd::Do) if !allow_do_while => {
+                TokenKind::Keyword(Kwd::Do) if !restrictions.allow_do_while => {
                     errors.push(Error::DoWhileDisallowed {
                         do_token: fst_token,
                     });
@@ -1015,7 +1003,6 @@ impl<'a> Expr<'a> {
     /// failure.
     fn consume_path_component(
         tokens: TokenSlice<'a>,
-        allow_angle_bracket: bool,
         delim: ExprDelim,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
@@ -1048,7 +1035,7 @@ impl<'a> Expr<'a> {
         // Essentially: We'll only continue (and try to parse generics args) if we find the
         // less-than binary operator. Other operators, like "<=" or "<<" cannot be used because the
         // trailing "<" or "=" can't start an exprssion.
-        match BinOp::try_consume(&tokens[1..], true) {
+        match BinOp::try_consume(&tokens[1..], Restrictions::default()) {
             Some((BinOp::Lt, _)) => (),
             _ => return_name!(),
         }
@@ -1100,7 +1087,7 @@ impl<'a> Expr<'a> {
         // a binary operator that *starts* with a closing angle-bracket but isn't exactly ">", the
         // syntax is ambiguous.
 
-        match BinOp::try_consume(&tokens[consumed..], true) {
+        match BinOp::try_consume(&tokens[consumed..], Restrictions::default()) {
             // ">>"
             Some((BinOp::Shr, op_src))
             // ">="
@@ -1193,8 +1180,7 @@ impl<'a> Expr<'a> {
         tokens: TokenSlice<'a>,
         already_consumed: usize,
         delim: ExprDelim,
-        allow_angle_bracket: bool,
-        no_structs: Option<NoCurlyContext>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -1203,7 +1189,7 @@ impl<'a> Expr<'a> {
         // postfix operators
         //
         // We just call them in sequence, starting with binary operators
-        if let Some((op, src)) = BinOp::try_consume(tokens, allow_angle_bracket) {
+        if let Some((op, src)) = BinOp::try_consume(tokens, restrictions) {
             stack.push_binop(already_consumed, op, src);
             return Ok(Some(src.len()));
         }
@@ -1212,9 +1198,8 @@ impl<'a> Expr<'a> {
         // instead
         let res = PostfixOp::try_consume(
             tokens,
-            allow_angle_bracket,
             delim,
-            no_structs,
+            restrictions,
             ends_early,
             containing_token,
             errors,
@@ -1567,9 +1552,7 @@ impl<'a> Expr<'a> {
         let value_res = Expr::consume(
             &tokens[consumed..],
             delim,
-            true,
-            None,
-            None,
+            Restrictions::default(),
             ends_early,
             Some(containing_token),
             errors,
@@ -1594,9 +1577,7 @@ fn is_definitely_struct(tokens: TokenSlice) -> bool {
     // starts with the tokens: `Ident ":"` or `Ident ","`. Anything else is either *definitely* a
     // block expression or is ambiguous (see: AmbiguousBlockExpr).
 
-    let kind = |idx: usize| Some(&tokens.get(idx)?.as_ref().ok()?.kind);
-
-    match (kind(0), kind(1)) {
+    match (kind!(tokens)(0), kind!(tokens)(1)) {
         (Some(TokenKind::Ident(_)), Some(TokenKind::Punctuation(Punc::Colon)))
         | (Some(TokenKind::Ident(_)), Some(TokenKind::Punctuation(Punc::Comma))) => true,
         _ => false,
@@ -1827,12 +1808,9 @@ impl BinOp {
     }
 
     /// Attempts to consume a binary operator as a prefix of the given tokens
-    ///
-    /// This will return `Err(())` only if we encounter a comparison operator when
-    /// `allow_comparison` is `false`.
     fn try_consume<'a>(
         tokens: TokenSlice<'a>,
-        allow_angle_bracket: bool,
+        restrictions: Restrictions,
     ) -> Option<(BinOp, TokenSlice<'a>)> {
         // Broadly, this function matches on the `kind` field of the first two tokens, assuming
         // they are both successful. We use the folowing pair of macros to make this easier.
@@ -1857,7 +1835,7 @@ impl BinOp {
             }};
         }
 
-        let kind = |idx: usize| Some(&tokens.get(idx)?.as_ref().ok()?.kind);
+        let kind = kind!(tokens);
         let no_trail = |idx: usize| match tokens
             .get(idx)?
             .as_ref()
@@ -1871,7 +1849,11 @@ impl BinOp {
 
         // We'll match on the first tokens that are all "glued" together - i.e. there's no
         // whitespace between them
-        let ts = [kind(0), no_trail(0).and_then(|()| kind(1)), no_trail(1).and_then(|()| kind(2))];
+        let ts = [
+            kind(0),
+            no_trail(0).and_then(|()| kind(1)),
+            no_trail(1).and_then(|()| kind(2)),
+        ];
 
         match &ts {
             // All of the assignment operators are composed of multiple tokens, so we do those
@@ -1898,13 +1880,13 @@ impl BinOp {
             // two Ands into a single binary operator.
             punc!(And, And) => op!(LogicalAnd, 2),
             punc!(And) => op!(BitAnd),
-            punc!(Or) => op!(BitOr),
+            punc!(Or) if restrictions.allows_pipe() => op!(BitOr),
             punc!(Caret) => op!(BitXor),
             // The same goes for bitshifts
-            punc!(Lt, Lt) if allow_angle_bracket => op!(Shl, 2),
-            punc!(Gt, Gt) if allow_angle_bracket => op!(Shr, 2),
-            punc!(Lt) if allow_angle_bracket => op!(Lt),
-            punc!(Gt) if allow_angle_bracket => op!(Gt),
+            punc!(Lt, Lt) if restrictions.allows_angle_bracket() => op!(Shl, 2),
+            punc!(Gt, Gt) if restrictions.allows_angle_bracket() => op!(Shr, 2),
+            punc!(Lt) if restrictions.allows_angle_bracket() => op!(Lt),
+            punc!(Gt) if restrictions.allows_angle_bracket() => op!(Gt),
             punc!(Le) => op!(Le),
             punc!(Ge) => op!(Ge),
             punc!(EqEq) => op!(Eq),
@@ -1953,9 +1935,8 @@ impl<'a> PostfixOp<'a> {
     /// ambiguity.
     fn try_consume(
         tokens: TokenSlice<'a>,
-        allow_angle_bracket: bool,
         delim: ExprDelim,
-        no_structs: Option<NoCurlyContext>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -1990,7 +1971,7 @@ impl<'a> PostfixOp<'a> {
                 TokenKind::Tree { delim, inner, .. } => {
                     let res = match delim {
                         Delim::Curlies => {
-                            if let Some(ctx) = no_structs {
+                            if let Some(ctx) = restrictions.no_struct_postfix {
                                 if is_definitely_struct(inner) {
                                     errors.push(Error::CurliesDisallowed {
                                         ctx,
@@ -2036,7 +2017,18 @@ impl<'a> PostfixOp<'a> {
                     }
                 }
 
+                TokenKind::Punctuation(Punc::Tilde) if !restrictions.allows_pipe() => {
+                    errors.push(Error::TypeHintDisallowed {
+                        tilde_token: fst_token,
+                    });
+                    return Err(None);
+                }
                 TokenKind::Punctuation(Punc::Tilde) => {
+                    // NOTE: This implementation does *not* disambiguate between refinements
+                    // following the type versus bitwise-or. This might be improved in the future,
+                    // but currently it's not a big priority at the moment.
+                    //
+                    // TODO?
                     let res = Type::consume(
                         &tokens[1..],
                         TypeContext::TypeBinding { tilde: fst_token },
@@ -2057,15 +2049,10 @@ impl<'a> PostfixOp<'a> {
 
                 // The only other postfix operators both start with a dot, so we'll use a separate
                 // function to handle those.
-                TokenKind::Punctuation(Punc::Dot) => PostfixOp::consume_dot(
-                    tokens,
-                    allow_angle_bracket,
-                    delim,
-                    ends_early,
-                    containing_token,
-                    errors,
-                )
-                .map(Some),
+                TokenKind::Punctuation(Punc::Dot) => {
+                    PostfixOp::consume_dot(tokens, delim, ends_early, containing_token, errors)
+                        .map(Some)
+                }
 
                 // If the set of tokens clearly doesn't start with a postfix operator, we'll
                 // indicate as such
@@ -2102,9 +2089,7 @@ impl<'a> PostfixOp<'a> {
         Expr::consume(
             inner,
             ExprDelim::Nothing,
-            true,
-            None,
-            None,
+            Restrictions::default(),
             false,
             Some(src),
             errors,
@@ -2132,7 +2117,6 @@ impl<'a> PostfixOp<'a> {
     /// and will panic if that is not the case.
     fn consume_dot(
         tokens: TokenSlice<'a>,
-        allow_angle_bracket: bool,
         delim: ExprDelim,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
@@ -2144,7 +2128,7 @@ impl<'a> PostfixOp<'a> {
             tokens.first() => "dot (`.`)",
             Ok(t) && TokenKind::Punctuation(Punc::Dot) => t,
         );
-        
+
         make_expect!(tokens, 1, ends_early, containing_token, errors);
 
         expect!((
@@ -2161,7 +2145,6 @@ impl<'a> PostfixOp<'a> {
             TokenKind::Ident(_) => {
                 let path_res = Expr::consume_path_component(
                     &tokens[1..],
-                    allow_angle_bracket,
                     delim,
                     ends_early,
                     containing_token,
@@ -2402,9 +2385,7 @@ impl<'a> BlockExpr<'a> {
                 &inner[consumed..],
                 BlockExpr::expr_stack_done,
                 ExprDelim::Nothing,
-                true,
-                None,
-                None,
+                Restrictions::default().with_do_while(true),
                 ends_early,
                 Some(src),
                 errors,
@@ -2620,9 +2601,7 @@ impl<'a> ForExpr<'a> {
         let iter = Expr::consume(
             &tokens[consumed..],
             ExprDelim::Nothing,
-            true,
-            Some(NoCurlyContext::ForIter),
-            None,
+            Restrictions::default().no_struct_postfix(NoCurlyContext::ForIter),
             ends_early,
             containing_token,
             errors,
@@ -2684,9 +2663,7 @@ impl<'a> WhileExpr<'a> {
         let condition = Expr::consume(
             &tokens[..consumed],
             ExprDelim::Nothing,
-            true,
-            Some(NoCurlyContext::WhileCondition),
-            None,
+            Restrictions::default().no_struct_postfix(NoCurlyContext::ForIter),
             ends_early,
             containing_token,
             errors,
@@ -2774,9 +2751,7 @@ impl<'a> DoWhileExpr<'a> {
         let pred = Expr::consume(
             &tokens[consumed..],
             ExprDelim::Nothing,
-            true,
-            None,
-            Some(NoElseBranchContext::DoWhile),
+            Restrictions::default().no_else_branch(),
             ends_early,
             containing_token,
             errors,
@@ -2888,9 +2863,7 @@ impl<'a> IfExpr<'a> {
         let condition = Expr::consume(
             &tokens[consumed..],
             ExprDelim::Nothing,
-            true,
-            Some(NoCurlyContext::IfCondition),
-            None,
+            Restrictions::default().no_struct_postfix(NoCurlyContext::IfCondition),
             ends_early,
             containing_token,
             errors,
@@ -2949,9 +2922,7 @@ impl<'a> MatchExpr<'a> {
         let expr = Expr::consume(
             &tokens[consumed..],
             ExprDelim::Nothing,
-            true,
-            Some(NoCurlyContext::MatchExpr),
-            None,
+            Restrictions::default().no_struct_postfix(NoCurlyContext::IfCondition),
             ends_early,
             containing_token,
             errors,
@@ -3127,9 +3098,7 @@ impl<'a> MatchArm<'a> {
             cond = Expr::consume(
                 &tokens[consumed..],
                 ExprDelim::Nothing,
-                true,
-                None,
-                None,
+                Restrictions::default(),
                 ends_early,
                 containing_token,
                 errors,
@@ -3153,9 +3122,7 @@ impl<'a> MatchArm<'a> {
             // But this expression *is* followed by a comma, so there are certain types of errors
             // that wouldn't be appropriate to generate here.
             ExprDelim::Comma,
-            true,
-            None,
-            None,
+            Restrictions::default(),
             ends_early,
             containing_token,
             errors,

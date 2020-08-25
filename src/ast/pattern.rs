@@ -248,7 +248,15 @@ impl<'a> Pattern<'a> {
                 res.map_err(|()| Some(1))
             },
             TokenKind::Keyword(Kwd::Assign) => {
-                let res = Expr::consume(&tokens[1..], ExprDelim::Comma, true, None, None, ends_early, containing_token, errors);
+                let res = Expr::consume(
+                    &tokens[1..],
+                    ExprDelim::Comma,
+                    Restrictions::default(),
+                    ends_early,
+                    containing_token,
+                    errors
+                );
+
                 match res {
                     Err(None) => Err(None),
                     Err(Some(c)) => Err(Some(c + 1)),

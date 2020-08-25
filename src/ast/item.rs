@@ -683,7 +683,7 @@ impl<'a> Vis<'a> {
     ///
     /// If the tokens were unable to be parsed as a visbility qualifier, this will simply return
     /// `None`.
-    fn try_consume(tokens: TokenSlice<'a>) -> Option<Vis<'a>> {
+    pub fn try_consume(tokens: TokenSlice<'a>) -> Option<Vis<'a>> {
         let token = match tokens.first() {
             Some(Ok(t)) => t,
             _ => return None,
@@ -1069,6 +1069,7 @@ impl<'a> UseStmt<'a> {
 //   * UseKind                                                                                    //
 // * FnParams                                                                                     //
 // * GenericParams                                                                                //
+// * TypeBound                                                                                    //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A collection of proof statements, given before an item
@@ -1301,6 +1302,13 @@ pub struct GenericConstParam<'a> {
 pub struct GenericRefParam<'a> {
     pub(super) src: TokenSlice<'a>,
     ref_name: Ident<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeBound<'a> {
+    pub(super) src: TokenSlice<'a>,
+    pub refinements: Option<Refinements<'a>>,
+    pub traits: Vec<Path<'a>>,
 }
 
 impl<'a> ProofStmts<'a> {
@@ -1814,6 +1822,18 @@ impl<'a> FnParams<'a> {
         none_source: Source<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<FnParams<'a>, ()> {
+        todo!()
+    }
+}
+
+impl<'a> TypeBound<'a> {
+    pub fn consume(
+        tokens: TokenSlice<'a>,
+        ctx: TypeBoundContext<'a>,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<TypeBound<'a>, Option<usize>> {
         todo!()
     }
 }

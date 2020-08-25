@@ -217,14 +217,27 @@ macro_rules! make_expect {
 macro_rules! assert_token {
     (
         $token_result:expr => $name:expr,
-        Ok($token:ident) && $token_kind:pat => $arm:expr $(,)?
+        Ok($token:ident) && $($token_kind:pat => $arm:expr),+ $(,)?
     ) => {{
         match $token_result {
             Some(Ok($token)) => match &$token.kind {
-                $token_kind => $arm,
+                $($token_kind => $arm,)+
                 k => panic!("Expected {}, found token kind {:?}", $name, k),
             }
             t => panic!("Expected {}, found {:?}", $name, t),
         }
+    }};
+}
+
+// A helper macro for constructing a closure that returns the `TokenKind` associated with a given
+// index in the provided list of tokens
+//
+// Typical usage is simply:
+//   let kind = kind!(tokens);
+// The closure returned by this will return Some(kind) if the token successfully exists, and None
+// otherwise.
+macro_rules! kind {
+    ($tokens:expr) => {{
+        |idx: usize| Some(&$tokens.get(idx)?.as_ref().ok()?.kind)
     }};
 }

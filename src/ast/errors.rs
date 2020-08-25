@@ -124,6 +124,10 @@ pub enum Error<'a> {
     /// there, we'll produce an error.
     DoWhileDisallowed { do_token: &'a Token<'a> },
 
+    /// In a similar fashion to the two above, type hints are disallowed within refinement
+    /// expressions because they might themselves have refinements
+    TypeHintDisallowed { tilde_token: &'a Token<'a> },
+
     /// Sometimes, we might find a comma following a single generics argument, without being
     /// enclosed by parentheses - e.g:
     /// ```text
@@ -206,6 +210,16 @@ pub enum ExpectedKind<'a> {
     ArrayPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
     GenericParams(GenericParamsContext<'a>),
     Type(TypeContext<'a>),
+    MutTypeKeyword(TypeContext<'a>),
+    ArrayTypeSemi(TypeContext<'a>),
+    ArrayTypeInnerEnd,
+    StructTypeFieldDelim,
+    StructTypeFieldColon,
+    TupleTypeElemDelim,
+    EnumTypeCurlies,
+    EnumTypeVariantDelim,
+    GenericsArgDelim,
+    RefinementDelim,
     TypeBound(TypeBoundContext<'a>),
     GenericParam {
         ctx: GenericParamsContext<'a>,
@@ -254,6 +268,8 @@ pub enum IdentContext<'a> {
     PathComponent(PathComponentContext<'a>),
     PatternPath(PatternContext<'a>, TokenSlice<'a>),
     NamedExpr(super::ExprDelim),
+    StructTypeField,
+    EnumVariant,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -308,11 +324,6 @@ pub enum NoCurlyContext {
     ForIter,
     WhileCondition,
     MatchExpr,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum NoElseBranchContext {
-    DoWhile,
 }
 
 #[derive(Debug, Copy, Clone)]

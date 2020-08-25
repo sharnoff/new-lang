@@ -8,7 +8,6 @@ that can occur in parsing (and how those are resolved / delayed).
 * Notation ~ TODO
 * [Givens](#givens)
 * [Definition](#definition)
-* [Notes on ambiguity](#notes-on-ambiguity)
 
 ### Givens
 
@@ -129,7 +128,7 @@ TupleType = "(" [ TupleTypeElement { "," TupleTypeElement } [ "," ] ] ")" .
 EnumType = "enum" "{" { Ident [ Type ] "," } "}" .
 
 Refinements = "|" Refinement { "," Refinement } [ "," ] "|" .
-Refinement = "ref" [ "mut" ] Expr
+Refinement = "ref" Expr
            | [ "!" | "?" ] "init"
            | Expr .
 StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
@@ -222,54 +221,4 @@ RefPattern       = "&" Pattern .
 
 Literal = CharLiteral | StringLiteral | IntLiteral | FloatLiteral .
 FloatLiteral = IntLiteral "." IntLiteral .
-```
-
-### Notes on ambiguity
-
-There are a few cases here that are ambiguous, all resulting in expression parsing. Two of these are
-variants of the ambiguity that results in the infamous "turbofish" in Rust. Here are two examples:
-
-#### "Classic" bastion of the turbofish
-
-```
-// integers oh, woe, is, me
-let _: (bool, bool) = (oh<woe, is>(me));
-
-// vs
-
-fn oh<T,S>(x: T) -> S { ... }
-let _: S = (oh<woe, is>(me))
-```
-
-#### "Struct" version
-
-```
-let x = (Foo<Bar, Baz> { y });
-```
-
-These two ambiguities aren't *too* bad to deal with - it actually happens to be the case that these
-two examples are the only existing forms of this ambiguitiy. For clarity, it's exactly expressions
-of the form:
-
-```
-Ident "<" Ident { "," Ident } "," Ident ">" "(" Ident ")"
-                     or
-Ident "<" Ident { "," Ident } "," Ident ">" "{" Ident "}"
-```
-
-We can therefore store exactly these cases where necessary and handle them later (once types are
-known). It is also worth noting that this can only happen in comma-delimeted lists as well.
-
-#### Single field structs
-
-This is the third and final ambiguous case. It occurs exactly when there's a block expression
-containing a single identifier, which can either be an anonymous struct with a single field being
-initialized by a local variable with the same name *OR* a block expression where the identifier is a
-trailing expression.
-
-This one is somewhat more complex to handle, but is also resolved through type-checking. These
-exactly take the form of:
-
-```
-"{" Ident "}"
 ```

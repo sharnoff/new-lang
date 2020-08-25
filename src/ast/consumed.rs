@@ -92,6 +92,7 @@ impl_all! {
     GenericTypeParam,
     GenericConstParam,
     GenericRefParam,
+    TypeBound,
 
     // Expressions
     Expr {
@@ -142,16 +143,17 @@ impl_all! {
     RefType,
     MutType,
     @Single: StructType,
+    StructTypeField,
     ArrayType,
     @Single: TupleType,
+    TupleTypeElement,
     EnumType,
+    EnumVariant,
     // Types helper bits
-    StructTypeField,
     Refinements,
     Refinement { Ref, Init, Expr },
     RefRefinement,
     InitRefinement,
-    TypeBound,
     GenericsArgs,
     GenericsArg { Type, Const, Ref, Ambiguous },
     TypeGenericsArg,
