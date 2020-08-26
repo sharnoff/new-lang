@@ -37,9 +37,18 @@ pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>], ends_early: bool) -> 
     let mut idx = n_leading_whitespace;
     let mut tokens = Vec::new();
     while idx < simple_tokens.len() {
-        let (t, i) = Token::consume(&simple_tokens[idx..], ends_early, None);
-        tokens.push(t);
-        idx += i;
+        let res = Token::consume(&simple_tokens[idx..], None, ends_early, None);
+        match res {
+            Ok((res, c)) => {
+                tokens.push(res);
+                idx += c;
+            }
+            Err((Some(e), c)) => {
+                tokens.push(Err(e));
+                idx += c;
+            }
+            Err((None, c)) => idx += c,
+        }
     }
 
     FileTokenTree {
@@ -70,6 +79,7 @@ pub enum TokenKind<'a> {
         leading_whitespace: &'a [SimpleToken<'a>],
         inner: Vec<Result<Token<'a>, Error<'a>>>,
     },
+    ProofLines(Vec<Result<Token<'a>, Error<'a>>>),
     Keyword(Kwd),
     Literal(&'a str, LiteralKind),
     Ident(&'a str),
@@ -83,8 +93,12 @@ pub enum Error<'a> {
         first: SimpleToken<'a>,
         end: SimpleToken<'a>,
     },
-    UnclosedDelim(Delim, &'a [SimpleToken<'a>]),
+    UnclosedDelim(Delim, &'a [SimpleToken<'a>], Option<ProofSrc<'a>>),
+    NestedProofLines(SimpleToken<'a>, SimpleToken<'a>),
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct ProofSrc<'a>(SimpleToken<'a>);
 
 macro_rules! kwds {
     (
@@ -182,6 +196,46 @@ pub enum Punc {
     Hash,        // "#"
 }
 
+/// A helper function to return whether a set of whitespace tokens constitutes a single newline
+///
+/// The exact semantics are a little weird here... the best idea of how this should be used is
+/// given by the places that use it.
+fn is_leading_newline(tokens: &[SimpleToken]) -> bool {
+    use tokens::TokenKind::{BlockComment, LineComment, Whitespace};
+
+    let mut found_newline = false;
+
+    let mut finish_next = false;
+    for t in tokens {
+        finish_next = false;
+
+        match t.kind {
+            BlockComment => {
+                for _ in t.src.chars().filter(|c| *c == '\n') {
+                    // If we find a newline inside of a block comment, then we can't have a leading
+                    // newline for our whitespace - this is because the block comment is guaranteed
+                    // to end with '*/', so that will be *after* the newline.
+                    return false;
+                }
+            }
+            LineComment => (),
+            Whitespace => {
+                for _ in t.src.chars().filter(|c| *c == '\n') {
+                    // we don't allow two newlines
+                    if found_newline {
+                        return false;
+                    }
+
+                    found_newline = true;
+                }
+            }
+            _ => panic!("expected whitespace or comment token, found {:?}", t),
+        }
+    }
+
+    found_newline && finish_next
+}
+
 impl Delim {
     fn open_char(&self) -> char {
         match self {
@@ -203,9 +257,10 @@ impl Delim {
 impl<'a> Token<'a> {
     fn consume(
         tokens: &'a [SimpleToken<'a>],
+        inside_proof: Option<ProofSrc<'a>>,
         ends_early: bool,
         enclosing_delim: Option<SimpleToken<'a>>,
-    ) -> (Result<Token<'a>, Error<'a>>, usize) {
+    ) -> Result<(Result<Token<'a>, Error<'a>>, usize), (Option<Error<'a>>, usize)> {
         use tokens::TokenKind::*;
         use Error::{MismatchedCloseDelim, UnexpectedCloseDelim};
 
@@ -233,7 +288,12 @@ impl<'a> Token<'a> {
 
             // Multi-token elements
             [OpenParen, ..] | [OpenCurly, ..] | [OpenSquare, ..] => {
-                let (kind, consumed) = Token::consume_delim(tokens, ends_early);
+                let (kind, consumed) = Token::consume_delim(tokens, inside_proof, ends_early)?;
+                (Ok(kind), consumed)
+            }
+            // -> Note: proof lines are multi-token as well
+            [Hash, ..] if inside_proof.is_none() => {
+                let (kind, consumed) = Token::consume_proof_lines(tokens, ends_early);
                 (Ok(kind), consumed)
             }
 
@@ -309,10 +369,14 @@ impl<'a> Token<'a> {
             kind,
         });
 
-        (token_res, consumed + trailing)
+        Ok((token_res, consumed + trailing))
     }
 
-    fn consume_delim(tokens: &'a [SimpleToken<'a>], ends_early: bool) -> (TokenKind<'a>, usize) {
+    fn consume_delim(
+        tokens: &'a [SimpleToken<'a>],
+        inside_proof: Option<ProofSrc<'a>>,
+        ends_early: bool,
+    ) -> Result<(TokenKind<'a>, usize), (Option<Error<'a>>, usize)> {
         use tokens::TokenKind::{
             BlockComment, CloseCurly, CloseParen, CloseSquare, LineComment, OpenCurly, OpenParen,
             OpenSquare, Whitespace,
@@ -329,26 +393,57 @@ impl<'a> Token<'a> {
             _ => panic!("unexpected initial delim token {:?}", tokens[0]),
         };
 
-        // We'll consume all leading whitespace to guarantee that `consume` is called where the
-        // first token isn't one
-        let n_leading = tokens[1..]
-            .iter()
-            .take_while(|t| match t.kind {
-                LineComment | BlockComment | Whitespace => true,
-                _ => false,
-            })
-            .count();
+        let mut consumed = 1;
+        let mut has_leading_newline = false;
 
-        // All of the whitespace, +1 for the delimeter
-        let mut consumed = n_leading + 1;
+        macro_rules! consume_whitespace {
+            () => {{
+                let n_whitespace = tokens[consumed..]
+                    .iter()
+                    .take_while(|t| match t.kind {
+                        BlockComment | LineComment | Whitespace => true,
+                        _ => false,
+                    })
+                    .count();
+
+                let range = consumed..consumed + n_whitespace;
+                consumed = range.end;
+                has_leading_newline = is_leading_newline(&tokens[range]);
+
+                n_whitespace
+            }};
+        }
+
+        // We'll consume all leading whitespace to guarantee that `consume` is called where the
+        // first token *isn't* whitespace
+        let n_leading = consume_whitespace!();
         let mut inner = Vec::new();
+
         loop {
             if consumed == tokens.len() {
                 // This is an error; we got to EOF and the delimeter wasn't closed.
-                if !ends_early {
-                    inner.push(Err(UnclosedDelim(delim, tokens)));
+                return match ends_early {
+                    true => Err((None, consumed)),
+                    false => Err((Some(UnclosedDelim(delim, tokens, None)), consumed)),
+                };
+            }
+
+            if inside_proof.is_some() && has_leading_newline {
+                // If we had a leading newline, we'll be expecting a '#' token. Otherwise, we have
+                // an unclosed delimiter
+                match tokens[consumed].kind {
+                    tokens::TokenKind::Hash => {
+                        consumed += 1;
+                        consume_whitespace!();
+                        continue;
+                    }
+                    _ => {
+                        return Err((
+                            Some(UnclosedDelim(delim, &tokens[..consumed], inside_proof)),
+                            consumed,
+                        ));
+                    }
                 }
-                break;
             }
 
             if tokens[consumed].kind == close {
@@ -357,19 +452,105 @@ impl<'a> Token<'a> {
                 break;
             }
 
-            let (t, c) = Token::consume(&tokens[consumed..], ends_early, Some(tokens[0]));
+            let (t, c) = Token::consume(
+                &tokens[consumed..],
+                inside_proof,
+                ends_early,
+                Some(tokens[0]),
+            )?;
+
+            match t.as_ref() {
+                Ok(t) => has_leading_newline = is_leading_newline(t.trailing_whitespace),
+                Err(_) => {
+                    has_leading_newline = is_leading_newline(&tokens[consumed + 1..consumed + c])
+                }
+            }
+
             inner.push(t);
             consumed += c;
         }
 
-        (
+        Ok((
             Tree {
                 delim,
                 leading_whitespace: &tokens[1..1 + n_leading],
                 inner,
             },
             consumed,
-        )
+        ))
+    }
+
+    fn consume_proof_lines(
+        tokens: &'a [SimpleToken<'a>],
+        ends_early: bool,
+    ) -> (TokenKind<'a>, usize) {
+        use tokens::TokenKind::{BlockComment, Hash, LineComment, Whitespace};
+
+        assert!(tokens.len() >= 1);
+        let inside_proof = Some(ProofSrc(tokens[0]));
+
+        let mut consumed = 1;
+        let mut has_leading_newline = false;
+
+        macro_rules! consume_whitespace {
+            () => {{
+                let n_whitespace = tokens[consumed..]
+                    .iter()
+                    .take_while(|t| match t.kind {
+                        BlockComment | LineComment | Whitespace => true,
+                        _ => false,
+                    })
+                    .count();
+
+                let range = consumed..consumed + n_whitespace;
+                consumed = range.end;
+                has_leading_newline = is_leading_newline(&tokens[range]);
+
+                n_whitespace
+            }};
+        }
+
+        consume_whitespace!();
+        let mut inner = Vec::new();
+
+        while consumed < tokens.len() {
+            // If we there was a leading newline, we're either expecting a hash ("#") or we're
+            // done with proof lines:
+            if has_leading_newline {
+                match tokens[consumed].kind {
+                    Hash => {
+                        consumed += 1;
+                        consume_whitespace!();
+                        continue;
+                    }
+                    _ => break,
+                }
+            }
+
+            // Otherwise, we'll consume whatever token we can get here:
+            let res = Token::consume(
+                &tokens[consumed..],
+                inside_proof,
+                ends_early,
+                Some(tokens[0]),
+            );
+
+            match res {
+                Err((e, c)) => {
+                    consumed += 1;
+                    consume_whitespace!();
+                    if let Some(e) = e {
+                        inner.push(Err(e));
+                    }
+                }
+                Ok((res, c)) => {
+                    consumed += c;
+                    inner.push(res);
+                }
+            }
+        }
+
+        (TokenKind::ProofLines(inner), consumed)
     }
 
     fn collect_errors(&self, errors: &mut Vec<Error<'a>>) {
@@ -420,17 +601,33 @@ impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
                 .highlight(file_name, vec![(aux.0)(first.src)], error::CTX_COLOR)
                 .highlight(file_name, vec![end_range], error::ERR_COLOR)
             }
-            UnclosedDelim(delim, src) => {
+            UnclosedDelim(delim, src, inside_proof) => {
                 let start = (aux.0)(src[0].src).start;
                 let end = (aux.0)(src.last().unwrap().src).end;
 
-                ErrorBuilder::new(format!(
-                    "unclosed delimeter '{}'; expected '{}', found EOF",
-                    delim.open_char(),
-                    delim.close_char(),
-                ))
-                .context(file_name, start)
-                .highlight(file_name, vec![start..end], error::ERR_COLOR)
+                match inside_proof {
+                    None => ErrorBuilder::new(format!(
+                        "unclosed delimeter '{}'; expected '{}', found EOF",
+                        delim.open_char(),
+                        delim.close_char(),
+                    ))
+                    .context(file_name, start)
+                    .highlight(file_name, vec![start..end], error::ERR_COLOR),
+                    Some(_) => ErrorBuilder::new(format!(
+                        "unclosed delimiter '{}' at end of proof lines",
+                        delim.open_char(),
+                    ))
+                    .context(file_name, end)
+                    .highlight(file_name, vec![start..end], error::ERR_COLOR),
+                }
+            }
+            NestedProofLines(fst, snd) => {
+                let fst_range = (aux.0)(fst.src);
+                let snd_range = (aux.0)(snd.src);
+
+                ErrorBuilder::new("cannot nest proof lines")
+                    .context(file_name, snd_range.start)
+                    .highlight(file_name, vec![fst_range, snd_range], error::ERR_COLOR)
             }
         }
     }

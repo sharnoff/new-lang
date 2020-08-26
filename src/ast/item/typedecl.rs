@@ -11,7 +11,7 @@ use super::*;
 ///
 /// The BNF definition for type declarations is:
 /// ```text
-/// TypeDecl = ProofStmts [ Vis ] "type" Ident [ GenericParams ]
+/// TypeDecl = ProofStmts [ Vis ] "type" Ident [ GenericsParams ]
 ///            [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
 /// ```
 /// In turn, type declarations may have proof statements, visibility qualifiers, and generic
@@ -30,7 +30,7 @@ use super::*;
 pub struct TypeDecl<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub name: Ident<'a>,
-    pub generic_params: Option<GenericParams<'a>>,
+    pub generic_params: Option<GenericsParams<'a>>,
     pub bound: Option<TypeBound<'a>>,
     pub is_alias: bool,
     pub def: Option<Type<'a>>,

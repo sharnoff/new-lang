@@ -1053,7 +1053,7 @@ impl<'a> Expr<'a> {
         // to the user; we aren't actually expecting generics arguments.
         //
         // To do this, we'll create `local_errors` so that we only add errors to the main list if
-        // we use the output of `GenericArgs::consume_inner`.
+        // we use the output of `GenericsArgs::consume_inner`.
         let generics_args_res = GenericsArgs::consume_inner(
             &tokens[consumed..],
             ends_early,
@@ -1153,7 +1153,7 @@ impl<'a> Expr<'a> {
             .and_then(|res| Some(&res.as_ref().ok()?.kind));
         if let Some(TokenKind::Punctuation(Punc::Comma)) = next_kind {
             errors.extend(local_errors);
-            errors.push(Error::UnexpectedGenericArgsComma {
+            errors.push(Error::UnexpectedGenericsArgsComma {
                 ident: name.src,
                 args,
             });
@@ -1264,7 +1264,7 @@ impl<'a> Expr<'a> {
 
             // We do the standard error-handling here, producing a secondary error only somtimes.
             // Because some "big" expressions are given by curly braces,
-            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => Err(None),
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _, _))) => Err(None),
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::BigExpr(ctx),
@@ -1743,6 +1743,7 @@ impl<'a> PrefixOp<'a> {
 
         // If we have a ":" token following the pattern, we'll expect a type
         let ty = expect!((
+            Ok(_),
             // If we find a "=", that's fine because it's what we'll expect next anyways.
             TokenKind::Punctuation(Punc::Eq) => None,
             TokenKind::Punctuation(Punc::Colon) => {
@@ -1767,7 +1768,7 @@ impl<'a> PrefixOp<'a> {
                     }
                 }
             },
-            @else ExpectedKind::LetColonOrEq(LetContext {
+            @else(return None) => ExpectedKind::LetColonOrEq(LetContext {
                 let_kwd,
                 pat: &tokens[1..consumed],
             })
@@ -1776,8 +1777,9 @@ impl<'a> PrefixOp<'a> {
         // Now, we'll expect an equals for assigning the value as the last token in this prefix
         // operator
         expect!((
+            Ok(_),
             TokenKind::Punctuation(Punc::Eq) => consumed += 1,
-            @else ExpectedKind::LetEq(LetContext {
+            @else(return Some) => ExpectedKind::LetEq(LetContext {
                 let_kwd,
                 pat: pat_src,
             })
@@ -1951,7 +1953,7 @@ impl<'a> PostfixOp<'a> {
             //
             // All delimiters can represent a postfix operator, so we explicitly account for
             // unclosed delimiters here.
-            Some(Err(token_tree::Error::UnclosedDelim(_, _))) => Err(None),
+            Some(Err(token_tree::Error::UnclosedDelim(_, _, _))) => Err(None),
 
             // For everything else, we just indicate that we couldn't find a postfix operator
             Some(Err(_)) | None => Ok(None),
@@ -2132,6 +2134,7 @@ impl<'a> PostfixOp<'a> {
         make_expect!(tokens, 1, ends_early, containing_token, errors);
 
         expect!((
+            Ok(_),
             TokenKind::Literal(value, LiteralKind::Int) => {
                 let op_src = &tokens[..2];
                 let op = PostfixOp::TupleIndex(IntLiteral {
@@ -2160,7 +2163,7 @@ impl<'a> PostfixOp<'a> {
                     Err(Some(c)) => Err(Some(c + 1)),
                 }
             },
-            @else ExpectedKind::DotAccess(dot_token)
+            @else(return None) => ExpectedKind::DotAccess(dot_token),
         ))
     }
 }
@@ -2289,7 +2292,7 @@ impl<'a> BlockExpr<'a> {
 
                 return Err(());
             }
-            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => return Err(()),
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _, _))) => return Err(()),
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::BlockExpr,
@@ -2343,7 +2346,7 @@ impl<'a> BlockExpr<'a> {
                 // All delimiters can represent valid expressions (and hence can start valid
                 // statements) - We won't double-log these errors, but they *are* errors so we'll
                 // stop parsing at this level
-                Some(Err(token_tree::Error::UnclosedDelim(_, _))) => {
+                Some(Err(token_tree::Error::UnclosedDelim(_, _, _))) => {
                     poisoned = true;
                     break None;
                 }
@@ -2473,7 +2476,7 @@ impl<'a> BlockExpr<'a> {
         // that are allowed, along with the optional "#" that might indicate the start of some set
         // of proof lines.
         match &token.kind {
-            TokenKind::Punctuation(Punc::Hash) => true,
+            TokenKind::ProofLines(_) => true,
             TokenKind::Keyword(k) => match k {
                 // FnDecl:
                 //   ProofStmts Vis [ "const" ] [ "pure" ] "fn" ...
@@ -2592,8 +2595,9 @@ impl<'a> ForExpr<'a> {
 
         // After the pattern, we expect the keyword "in"
         expect!((
+            Ok(_),
             TokenKind::Keyword(Kwd::In) => consumed += 1,
-            @else ExpectedKind::ForLoopInKwd(&tokens[..consumed])
+            @else(return None) => ExpectedKind::ForLoopInKwd(&tokens[..consumed])
         ));
 
         // And then we expect an expression. This expression can't include curly braces (in certain
@@ -2742,8 +2746,9 @@ impl<'a> DoWhileExpr<'a> {
         // And then "while"
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
         expect!((
+            Ok(_),
             TokenKind::Keyword(Kwd::While) => (),
-            @else ExpectedKind::DoWhileWhileToken,
+            @else(return Some) => ExpectedKind::DoWhileWhileToken,
         ));
 
         consumed += 1;
@@ -2939,7 +2944,7 @@ impl<'a> MatchExpr<'a> {
 
                 return Err(None);
             }
-            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => return Err(None),
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _, _))) => return Err(None),
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::MatchBody(match_kwd),
@@ -3112,8 +3117,9 @@ impl<'a> MatchArm<'a> {
         // And then we'll expect the `"=>" Expr`:
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
         expect!((
+            Ok(_),
             TokenKind::Punctuation(Punc::ThickArrow) => consumed += 1,
-            @else ExpectedKind::MatchArmArrow,
+            @else(return None) => ExpectedKind::MatchArmArrow,
         ));
 
         let eval = Expr::consume(

@@ -63,8 +63,6 @@ impl<'a> Item<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Item<'a>, Option<usize>> {
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
-
         // Per the BNF, most of the items present can have preceeding proof lines, so we'll consume
         // whatever proof lines might be at the beginning of the list of tokens beforehand. If we
         // do find proof lines, there's a limited set of items that we would be expecting.
@@ -128,35 +126,18 @@ impl<'a> Item<'a> {
         // error and return the number of tokens we've consumed.
 
         use Kwd::*;
-        use TokenKind::{Ident, Keyword};
 
         static ITEM_KWDS: &[Kwd] = &[
             Pure, Fn, Macro, Type, Trait, Impl, Const, Static, Import, Use,
         ];
 
-        let fst = get!(
-            consumed,
-            Err(e) => Error::ExpectedItemKwd {
-                kwds: ITEM_KWDS,
-                found: Source::TokenResult(Err(*e)),
-            },
-            None => Error::ExpectedItemKwd {
-                kwds: ITEM_KWDS,
-                found: end_source!(containing_token),
-            },
-        );
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let kwd = match &fst.kind {
-            Keyword(k) if ITEM_KWDS.contains(&k) => k,
-            _ => {
-                errors.push(Error::ExpectedItemKwd {
-                    kwds: ITEM_KWDS,
-                    found: Source::TokenResult(Ok(fst)),
-                });
-
-                return Err(Some(consumed));
-            }
-        };
+        let (fst, kwd) = expect!((
+            Ok(fst),
+            TokenKind::Keyword(k) if ITEM_KWDS.contains(&k) => (fst, k),
+            @else(return Some) => ExpectedKind::ItemKwd(ITEM_KWDS),
+        ));
 
         // From this point on, we know what we need to parse as - unless the keyword was "const",
         // which can either be part of a `ConstStmt` or an `FnDecl`.
@@ -257,21 +238,10 @@ impl<'a> Item<'a> {
                 consumed += 1;
                 let is_const = Some(fst);
 
-                let snd = get!(
-                    consumed,
-                    Err(e) => Error::ExpectedAfterItemConst {
-                        before: fst,
-                        found: Source::TokenResult(Err(*e)),
-                    },
-                    None => Error::ExpectedAfterItemConst {
-                        before: fst,
-                        found: end_source!(containing_token),
-                    },
-                );
-
-                match &snd.kind {
+                expect!((
+                    Ok(snd),
                     // As noted above, this is a constant statement.
-                    Ident(_) => {
+                    TokenKind::Ident(_) => {
                         let res = consume!(
                             ConstStmt,
                             Item::Const,
@@ -286,8 +256,8 @@ impl<'a> Item<'a> {
 
                         disallow!(@Proof, res, Const);
                         res
-                    }
-                    Keyword(Fn) => consume!(
+                    },
+                    TokenKind::Keyword(Fn) => consume!(
                         FnDecl,
                         Item::Fn,
                         proof_stmts,
@@ -296,7 +266,7 @@ impl<'a> Item<'a> {
                         is_const,
                         None
                     ),
-                    Keyword(Pure) => {
+                    TokenKind::Keyword(Pure) => {
                         // If we encounter a "pure", there's unfortunately *one* last check that we
                         // need to do. We *still* need to make sure that the next token is an "fn"
                         // keyword, so we'll do that now. There's a dedicated error for this one as
@@ -304,20 +274,9 @@ impl<'a> Item<'a> {
                         consumed += 1;
                         let is_pure = Some(snd);
 
-                        let expected_fn_token = get!(
-                            consumed,
-                            Err(e) => Error::ConstPureExpectedFn {
-                                before: [fst, snd],
-                                found: Source::TokenResult(Err(*e)),
-                            },
-                            None => Error::ConstPureExpectedFn {
-                                before: [fst, snd],
-                                found: end_source!(containing_token),
-                            },
-                        );
-
-                        if let Keyword(Fn) = expected_fn_token.kind {
-                            consume!(
+                        expect!((
+                            Ok(_),
+                            TokenKind::Keyword(Fn) => consume!(
                                 FnDecl,
                                 Item::Fn,
                                 proof_stmts,
@@ -325,25 +284,14 @@ impl<'a> Item<'a> {
                                 vis,
                                 is_const,
                                 is_pure
-                            )
-                        } else {
-                            errors.push(Error::ConstPureExpectedFn {
+                            ),
+                            @else(return Some) => ExpectedKind::ConstPureExpectedFn {
                                 before: [fst, snd],
-                                found: Source::TokenResult(Ok(expected_fn_token)),
-                            });
-
-                            return Err(Some(consumed));
-                        }
-                    }
-                    _ => {
-                        errors.push(Error::ExpectedAfterItemConst {
-                            before: fst,
-                            found: Source::TokenResult(Ok(snd)),
-                        });
-
-                        return Err(Some(consumed));
-                    }
-                }
+                            },
+                        ))
+                    },
+                    @else(return Some) => ExpectedKind::ItemAfterConst { before: fst },
+                ))
             }
 
             // "Pure" might also have something left to consume - we'll expect either "const" or
@@ -352,20 +300,9 @@ impl<'a> Item<'a> {
                 consumed += 1;
                 let is_pure = Some(fst);
 
-                let snd = get!(
-                    consumed,
-                    Err(e) => Error::PureItemExpectedFnDecl {
-                        before: fst,
-                        found: Source::TokenResult(Err(*e)),
-                    },
-                    None => Error::PureItemExpectedFnDecl {
-                        before: fst,
-                        found: end_source!(containing_token),
-                    },
-                );
-
-                match &snd.kind {
-                    Keyword(Fn) => consume!(
+                expect!((
+                    Ok(snd),
+                    TokenKind::Keyword(Fn) => consume!(
                         FnDecl,
                         Item::Fn,
                         proof_stmts,
@@ -374,26 +311,15 @@ impl<'a> Item<'a> {
                         None,
                         is_pure
                     ),
-                    Keyword(Const) => {
+                    TokenKind::Keyword(Const) => {
                         consumed += 1;
                         let is_const = Some(snd);
 
                         // A token sequence that starts [ "pure", "const", .. ] will be expected to
                         // have an "fn" keyword immediately following.
-                        let expected_fn_token = get!(
-                            consumed,
-                            Err(e) => Error::ConstPureExpectedFn {
-                                before: [fst, snd],
-                                found: Source::TokenResult(Err(*e)),
-                            },
-                            None => Error::ConstPureExpectedFn {
-                                before: [fst, snd],
-                                found: end_source!(containing_token),
-                            },
-                        );
-
-                        if let Keyword(Fn) = expected_fn_token.kind {
-                            consume!(
+                        expect!((
+                            Ok(_),
+                            TokenKind::Keyword(Fn) => consume!(
                                 FnDecl,
                                 Item::Fn,
                                 proof_stmts,
@@ -401,25 +327,14 @@ impl<'a> Item<'a> {
                                 vis,
                                 is_const,
                                 is_pure
-                            )
-                        } else {
-                            errors.push(Error::ConstPureExpectedFn {
+                            ),
+                            @else(return Some) => ExpectedKind::ConstPureExpectedFn {
                                 before: [fst, snd],
-                                found: Source::TokenResult(Ok(expected_fn_token)),
-                            });
-
-                            return Err(Some(consumed));
-                        }
-                    }
-                    _ => {
-                        errors.push(Error::PureItemExpectedFnDecl {
-                            before: fst,
-                            found: Source::TokenResult(Ok(snd)),
-                        });
-
-                        return Err(Some(consumed));
-                    }
-                }
+                            },
+                        ))
+                    },
+                    @else(return Some) => ExpectedKind::PureItemExpectedFnDecl { before: fst },
+                ))
             }
 
             // This is an arm of the match statement on the leading keyword that we found - we've

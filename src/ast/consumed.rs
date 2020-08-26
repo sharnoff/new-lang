@@ -87,11 +87,11 @@ impl_all! {
     SingleUse,
     @Single: FnParams,
     FnParamsReceiver,
-    GenericParams,
-    GenericParam { Type, Const, Ref },
-    GenericTypeParam,
-    GenericConstParam,
-    GenericRefParam,
+    GenericsParams,
+    GenericsParam { Type, Const, Ref },
+    GenericsTypeParam,
+    GenericsConstParam,
+    GenericsRefParam,
     TypeBound,
 
     // Expressions

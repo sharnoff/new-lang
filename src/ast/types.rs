@@ -261,11 +261,11 @@ impl<'a> Type<'a> {
 
         make_expect!(tokens, 0, ends_early, containing_token, errors);
         expect!((
+            Ok(fst),
             Ident(_) => consume!(NamedType, Named),
             Punctuation(Punc::And) => consume!(RefType, Ref, ctx),
             Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut, ctx),
             Tree { delim, inner, .. } => {
-                let fst = tokens[0].as_ref().unwrap();
                 match delim {
                     Delim::Squares => consume!(ArrayType, Array, ctx),
                     Delim::Curlies => StructType::parse(fst, inner, errors, ctx).map(Type::Struct)
@@ -275,7 +275,7 @@ impl<'a> Type<'a> {
                 }
             },
             Keyword(Kwd::Enum) => consume!(EnumType, Enum, ctx),
-            @else ExpectedKind::Type(ctx),
+            @else(return None) => ExpectedKind::Type(ctx),
         ))
     }
 
@@ -394,7 +394,7 @@ impl<'a> Type<'a> {
                 _ => false,
             },
             Err(e) => match e {
-                token_tree::Error::UnclosedDelim(_, _) => true,
+                token_tree::Error::UnclosedDelim(_, _, _) => true,
                 _ => false,
             },
         }
@@ -502,8 +502,9 @@ impl<'a> MutType<'a> {
 
         if has_not.is_some() {
             expect!((
+                Ok(_),
                 TokenKind::Keyword(Kwd::Mut) => consumed += 1,
-                @else ExpectedKind::MutTypeKeyword(ctx),
+                @else(return None) => ExpectedKind::MutTypeKeyword(ctx),
             ));
         }
 
@@ -559,8 +560,9 @@ impl<'a> ArrayType<'a> {
                 errors
             );
             expect!((
+                Ok(_),
                 TokenKind::Punctuation(Punc::Semi) => (),
-                @else ExpectedKind::ArrayTypeSemi(ctx),
+                @else(return None) => ExpectedKind::ArrayTypeSemi(ctx),
             ));
 
             let mut consumed = ty.consumed() + 1;
@@ -674,8 +676,9 @@ impl<'a> StructTypeField<'a> {
         consumed += 1;
 
         expect!((
+            Ok(_),
             TokenKind::Punctuation(Punc::Colon) => consumed += 1,
-            @else ExpectedKind::StructTypeFieldColon,
+            @else(return None) => ExpectedKind::StructTypeFieldColon,
         ));
 
         // If we get Err(Some(_)), we'll keep trying tp consume tokens so that *we* can return
@@ -857,7 +860,7 @@ impl<'a> EnumType<'a> {
                     Err(None)
                 }
             },
-            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _))) => Err(None),
+            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _, _))) => Err(None),
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::EnumTypeCurlies,
@@ -1166,9 +1169,10 @@ impl<'a> Refinements<'a> {
             }
 
             expect!((
+                Ok(_),
                 TokenKind::Punctuation(Punc::Comma) => consumed += 1,
                 TokenKind::Punctuation(Punc::Or) => break,
-                @else ExpectedKind::RefinementDelim,
+                @else(return None) => ExpectedKind::RefinementDelim,
             ));
         }
 
@@ -1589,6 +1593,7 @@ impl<'a> GenericsArg<'a> {
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         let res = expect!((
+            Ok(_),
             // Reference generics args can't be named
             TokenKind::Keyword(Kwd::Ref) if name.is_some() => {
                 errors.push(Error::NamedReferenceGenericsArg {
@@ -1611,7 +1616,7 @@ impl<'a> GenericsArg<'a> {
                 containing_token,
                 errors
             ),
-            @else ExpectedKind::GenericsArg { prev_tokens },
+            @else(return None) => ExpectedKind::GenericsArg { prev_tokens },
         ));
 
         match res {

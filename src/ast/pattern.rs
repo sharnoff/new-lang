@@ -229,6 +229,7 @@ impl<'a> Pattern<'a> {
     ) -> Result<Pattern<'a>, Option<usize>> {
         make_expect!(tokens, 0, ends_early, containing_token, errors);
         expect!((
+            Ok(fst_token),
             TokenKind::Ident(_) => {
                 NamedPattern::consume_absolute(tokens, ctx, ends_early, containing_token, errors)
                     .map(Pattern::Named)
@@ -238,11 +239,10 @@ impl<'a> Pattern<'a> {
                     .map(Pattern::Named)
             },
             TokenKind::Tree { delim, inner, .. } => {
-                let src = tokens[0].as_ref().unwrap();
                 let res = match delim {
-                    Delim::Curlies => StructPattern::parse(src, inner, ctx, errors).map(Pattern::Struct),
-                    Delim::Parens => TuplePattern::parse(src, inner, ctx, errors).map(Pattern::Tuple),
-                    Delim::Squares => ArrayPattern::parse(src, inner, ctx, errors).map(Pattern::Array),
+                    Delim::Curlies => StructPattern::parse(fst_token, inner, ctx, errors).map(Pattern::Struct),
+                    Delim::Parens => TuplePattern::parse(fst_token, inner, ctx, errors).map(Pattern::Tuple),
+                    Delim::Squares => ArrayPattern::parse(fst_token, inner, ctx, errors).map(Pattern::Array),
                 };
 
                 res.map_err(|()| Some(1))
@@ -281,7 +281,7 @@ impl<'a> Pattern<'a> {
             },
             TokenKind::Literal(_,_) => Literal::consume(tokens)
                 .map(Pattern::Literal),
-            @else ExpectedKind::Pattern(ctx),
+            @else(return None) => ExpectedKind::Pattern(ctx),
         ))
     }
 
@@ -324,7 +324,7 @@ impl<'a> Pattern<'a> {
                 // Some tokenizer errors are additionally parsing errors. However, because any token
                 // tree can represent a pattern, any error due to an unclosed delimiter is not
                 // necessarily a double-error.
-                Some(Err(token_tree::Error::UnclosedDelim(_, _))) => {
+                Some(Err(token_tree::Error::UnclosedDelim(_, _, _))) => {
                     poisoned = true;
                     break;
                 }
@@ -540,7 +540,7 @@ impl<'a> NamedPatternKind<'a> {
             // Certain tokenizer errors might constitute double-errors. Because curly braces and
             // parentheses *are* valid here, we'll intentionally prevent the caller from emitting
             // another error.
-            Some(Err(token_tree::Error::UnclosedDelim(d, _))) => match d {
+            Some(Err(token_tree::Error::UnclosedDelim(d, _, _))) => match d {
                 Delim::Curlies | Delim::Parens => Err(None),
                 // Square brackets will be left for the caller
                 Delim::Squares => Ok(None),
@@ -853,7 +853,7 @@ impl<'a> ElementPattern<'a> {
                 Err(None)
             }
             // Because any delimiter can be a valid pattern, we won't emit a second error here
-            Some(Err(token_tree::Error::UnclosedDelim(_, _))) => return Err(None),
+            Some(Err(token_tree::Error::UnclosedDelim(_, _, _))) => return Err(None),
             // Otherwise, this is *still* an error, so we'll generate another one
             Some(Err(e)) => {
                 errors.push(Error::Expected {

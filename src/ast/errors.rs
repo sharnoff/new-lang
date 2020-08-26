@@ -12,27 +12,6 @@ pub enum Error<'a> {
         found: Source<'a>,
     },
 
-    /// One of the leading keywords for an item was expected, but some other token was found.
-    ExpectedItemKwd {
-        kwds: &'static [Kwd],
-        found: Source<'a>,
-    },
-
-    /// We parsed the `const` keyword as the start of an `Item`, but didn't find what we were
-    /// expecting - either an `FnDecl` or a `ConstStmt`.
-    ///
-    /// Function declarations are started by `[ "const" ] [ "pure" ] "fn"`, whereas const
-    /// statements are started by `"const" Ident`.
-    ///
-    /// This is a more specialized error because it exists for a very specific case to provide a
-    /// better error message.
-    ExpectedAfterItemConst {
-        /// The token giving us the "const" keyword
-        before: &'a Token<'a>,
-        /// The token (or EOF) that we found instead
-        found: Source<'a>,
-    },
-
     /// Certain `Item`s are not allowed to have proof statements before them. This error allows us
     /// to give a clear error message when this type of mistake has been made.
     ProofStmtsDisallowedBeforeItem {
@@ -45,26 +24,6 @@ pub enum Error<'a> {
     VisDisallowedBeforeItem {
         vis: Source<'a>,
         item_kind: ItemKind,
-    },
-
-    /// If parsing an item starts with `["const", "pure"]` or `["pure", "const"]`, we expect `"fn"`
-    /// next. In the event that this wasn't what we found, we have a special case here because it
-    /// might not be completely clear to the user what went wrong.
-    ConstPureExpectedFn {
-        /// The two tokens preceeding what we expected to be a "fn" keyword
-        before: [&'a Token<'a>; 2],
-        /// The token (or EOF) that we found instead
-        found: Source<'a>,
-    },
-
-    /// Whenever we have an item definition starting with the "pure" keyword, we're expecting a
-    /// function declaration. We're therefore expecting the next token to be either a "const"
-    /// keyword or "fn" keyword.
-    PureItemExpectedFnDecl {
-        /// The token giving the "pure" keyword
-        before: &'a Token<'a>,
-        /// The token (or EOF) that we found instead
-        found: Source<'a>,
     },
 
     /// Generic const parameters are required to start with the keyword "const". This error results
@@ -104,7 +63,7 @@ pub enum Error<'a> {
     },
 
     /// A comma was found after generics argumetns
-    UnexpectedGenericArgsComma {
+    UnexpectedGenericsArgsComma {
         ident: &'a Token<'a>,
         args: Vec<GenericsArg<'a>>,
     },
@@ -173,6 +132,36 @@ pub enum ItemKind {
 
 #[derive(Debug, Copy, Clone)]
 pub enum ExpectedKind<'a> {
+    ItemKwd(&'static [Kwd]),
+    /// We parsed the `const` keyword as the start of an `Item`, but didn't find what we were
+    /// expecting - either an `FnDecl` or a `ConstStmt`.
+    ///
+    /// Function declarations are started by `[ "const" ] [ "pure" ] "fn"`, whereas const
+    /// statements are started by `"const" Ident`.
+    ///
+    /// This is a more specialized error because it exists for a very specific case to provide a
+    /// better error message.
+    ItemAfterConst {
+        /// The token giving us the "const" keyword
+        before: &'a Token<'a>,
+    },
+
+    /// If parsing an item starts with `["const", "pure"]` or `["pure", "const"]`, we expect `"fn"`
+    /// next. In the event that this wasn't what we found, we have a special case here because it
+    /// might not be completely clear to the user what went wrong.
+    ConstPureExpectedFn {
+        /// The two tokens preceeding what we expected to be a "fn" keyword
+        before: [&'a Token<'a>; 2],
+    },
+
+    /// Whenever we have an item definition starting with the "pure" keyword, we're expecting a
+    /// function declaration. We're therefore expecting the next token to be either a "const"
+    /// keyword or "fn" keyword.
+    PureItemExpectedFnDecl {
+        /// The token giving the "pure" keyword
+        before: &'a Token<'a>,
+    },
+
     Ident(IdentContext<'a>),
     ExprLhs,
     GenericsArgOrExpr,
@@ -208,7 +197,7 @@ pub enum ExpectedKind<'a> {
     TuplePatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
     ArrayPatternElement(PatternContext<'a>),
     ArrayPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
-    GenericParams(GenericParamsContext<'a>),
+    GenericsParams(GenericsParamsContext<'a>),
     Type(TypeContext<'a>),
     MutTypeKeyword(TypeContext<'a>),
     ArrayTypeSemi(TypeContext<'a>),
@@ -221,16 +210,16 @@ pub enum ExpectedKind<'a> {
     GenericsArgDelim,
     RefinementDelim,
     TypeBound(TypeBoundContext<'a>),
-    GenericParam {
-        ctx: GenericParamsContext<'a>,
+    GenericsParam {
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
     GenericTypeParamColons {
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
-    GenericParamDelim {
-        ctx: GenericParamsContext<'a>,
+    GenericsParamDelim {
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
     },
     GenericsArg {
@@ -241,7 +230,7 @@ pub enum ExpectedKind<'a> {
     },
     TypeParamFollowOn {
         after_type_bound: bool,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
         param: TokenSlice<'a>,
     },
@@ -262,7 +251,7 @@ pub enum IdentContext<'a> {
     /// The name at the start of a generic type parameter, given as part of a function declaration
     /// or type declaration. The attached slice of tokens gives the set of tokens already parsed as
     /// part of the list of generic parameters.
-    TypeParam(GenericParamsContext<'a>, TokenSlice<'a>),
+    TypeParam(GenericsParamsContext<'a>, TokenSlice<'a>),
 
     /// Path components expect an identifier
     PathComponent(PathComponentContext<'a>),
@@ -273,8 +262,8 @@ pub enum IdentContext<'a> {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum GenericParamsContext<'a> {
-    /// The generic parameters used in a function declaration. The attached slice of tokens gives
+pub enum GenericsParamsContext<'a> {
+    /// The generics parameters used in a function declaration. The attached slice of tokens gives
     /// the keywords and name that indicate a function declaration.
     FnDecl(TokenSlice<'a>),
 }
@@ -286,11 +275,11 @@ pub enum TypeContext<'a> {
     FnDeclReturn(TokenSlice<'a>),
     GenericTypeParam {
         param: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
     },
     GenericConstParam {
         param: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
     },
     GenericsArg {
         prev_tokens: TokenSlice<'a>,
@@ -307,7 +296,7 @@ pub enum TypeBoundContext<'a> {
     /// The optional type bound given for generic type parameters
     GenericTypeParam {
         param: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
     },
 }
 

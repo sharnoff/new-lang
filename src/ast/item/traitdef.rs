@@ -8,7 +8,7 @@ use super::*;
 ///
 /// The BNF for trait definitions is:
 /// ```text
-/// TraitDef = ProofStmts [ Vis ] "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
+/// TraitDef = ProofStmts [ Vis ] "trait" Ident [ GenericsParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
 /// ```
 /// Some of the syntax elements here warrant an explanation; we'll go through those in order.
 /// Firstly, while trait definitions may be preceeded by proof statements, there aren't currently
@@ -29,7 +29,7 @@ pub struct TraitDef<'a> {
     pub proof_stmts: Option<ProofStmts<'a>>,
     pub vis: Option<Vis<'a>>,
     pub name: Ident<'a>,
-    pub generic_params: Option<GenericParams<'a>>,
+    pub generic_params: Option<GenericsParams<'a>>,
     pub super_traits: Option<TypeBound<'a>>,
     pub body: Option<ImplBody<'a>>,
 }

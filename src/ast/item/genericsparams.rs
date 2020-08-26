@@ -1,22 +1,22 @@
 use super::*;
 
-/// A collection of generic parameters, given as part of a type or function declarations
+/// A collection of generics parameters, given as part of a type or function declarations
 ///
-/// This is provided separately (instead of just [`Vec<GenericParam>`]) so that we can track and
+/// This is provided separately (instead of just [`Vec<GenericsParam>`]) so that we can track and
 /// refer to the set of parameters as a whole group.
 ///
-/// Briefly, the BNF for generic parameters is:
+/// Briefly, the BNF for generics parameters is:
 /// ```text
-/// GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" .
+/// GenericsParams = "<" GenericsParam { "," GenericsParam } [ "," ] ">" .
 /// ```
-/// For more information, see [`GenericParam`].
+/// For more information, see [`GenericsParam`].
 ///
-/// [`Vec<GenericParam>`]: struct.GenericParam.html
-/// [`GenericParam`]: struct.GenericParam.html
+/// [`Vec<GenericsParam>`]: struct.GenericsParam.html
+/// [`GenericsParam`]: struct.GenericsParam.html
 #[derive(Debug, Clone)]
-pub struct GenericParams<'a> {
+pub struct GenericsParams<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
-    pub params: Vec<GenericParam<'a>>,
+    pub params: Vec<GenericsParam<'a>>,
     pub poisoned: bool,
 }
 
@@ -24,45 +24,45 @@ pub struct GenericParams<'a> {
 ///
 /// The BNF can be defined by either of these equivalent definitions:
 /// ```text
-/// GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
+/// GenericsParam = Ident [ "::" TypeBound ] [ "=" Type ]
 ///              | "const" Ident ":" Type [ "=" Expr ] .
 ///              | "ref" Ident .
-/// "          " = GenericTypeParam
-///              | GenericConstParam
-///              | GenericRefParam
+/// "          " = GenericsTypeParam
+///              | GenericsConstParam
+///              | GenericsRefParam
 /// ```
-/// These variants are represented by [`GenericTypeParam`], [`GenericConstParam`], and
-/// [`GenericRefParam`], respectively, as shown with the second definition. For more information,
+/// These variants are represented by [`GenericsTypeParam`], [`GenericsConstParam`], and
+/// [`GenericsRefParam`], respectively, as shown with the second definition. For more information,
 /// refer to the documentation for those types individually.
 ///
-/// [`GenericTypeParam`]: struct.GenericTypeParam.html
-/// [`GenericConstParam`]: struct.GenericConstParam.html
-/// [`GenericRefParam`]: struct.GenericRefParam.html
+/// [`GenericsTypeParam`]: struct.GenericsTypeParam.html
+/// [`GenericsConstParam`]: struct.GenericsConstParam.html
+/// [`GenericsRefParam`]: struct.GenericsRefParam.html
 #[derive(Debug, Clone)]
-pub enum GenericParam<'a> {
-    Type(GenericTypeParam<'a>),
-    Const(GenericConstParam<'a>),
-    Ref(GenericRefParam<'a>),
+pub enum GenericsParam<'a> {
+    Type(GenericsTypeParam<'a>),
+    Const(GenericsConstParam<'a>),
+    Ref(GenericsRefParam<'a>),
 }
 
 /// A generic type parameter, given as part of a type or function declaration
 ///
 /// Type parameters are the most common generic parameter. There are however, two others - to see
-/// the full set, refer to [`GenericParam`].
+/// the full set, refer to [`GenericsParam`].
 ///
 /// The BNF definition for a single generic type parameter is:
 /// ```text
-/// GenericTypeParam = Ident [ "::" TypeBound ] [ "=" Type ] .
+/// GenericsTypeParam = Ident [ "::" TypeBound ] [ "=" Type ] .
 /// ```
 /// All type parameters are given by their name, possibly followed by a [type bound], which
 /// restricts type arguments to those that implement a set of traits. Additionally, default values
 /// for these types can be given by the trailing [`"=" Type`].
 ///
-/// [`GenericParam`]: struct.GenericParam.html
+/// [`GenericsParam`]: struct.GenericsParam.html
 /// [type bound]: ../types/struct.TypeBound.html
 /// [`"=" Type`]: ../types/enum.Type.html
 #[derive(Debug, Clone)]
-pub struct GenericTypeParam<'a> {
+pub struct GenericsTypeParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub name: Ident<'a>,
     pub bound: Option<TypeBound<'a>>,
@@ -70,7 +70,7 @@ pub struct GenericTypeParam<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct GenericConstParam<'a> {
+pub struct GenericsConstParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub name: Ident<'a>,
     pub ty: Type<'a>,
@@ -78,14 +78,14 @@ pub struct GenericConstParam<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct GenericRefParam<'a> {
+pub struct GenericsRefParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub ref_name: Ident<'a>,
 }
 
-impl<'a> GenericParams<'a> {
-    /// Attempts to consume generic parameters as a prefix of the given tokens, failing with
-    /// `Ok(None)` if the tokens clearly do not start with generic parameters.
+impl<'a> GenericsParams<'a> {
+    /// Attempts to consume generics parameters as a prefix of the given tokens, failing with
+    /// `Ok(None)` if the tokens clearly do not start with generics parameters.
     ///
     /// More specifically, this returns `Ok(None)` if the first element of the tokens is not a
     /// less-than token (`"<"`). Otherwise, this will fully attempt to parse, generating all
@@ -97,14 +97,12 @@ impl<'a> GenericParams<'a> {
     /// responsibility.
     pub(super) fn try_consume(
         tokens: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
         allow_start_err: impl Fn(&token_tree::Error) -> bool,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<GenericParams<'a>>, Option<usize>> {
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
-
+    ) -> Result<Option<GenericsParams<'a>>, Option<usize>> {
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         match tokens.first() {
             Some(Ok(token)) => match &token.kind {
@@ -114,7 +112,7 @@ impl<'a> GenericParams<'a> {
             Some(Err(e)) => {
                 if allow_start_err(e) {
                     errors.push(Error::Expected {
-                        kind: ExpectedKind::GenericParams(ctx),
+                        kind: ExpectedKind::GenericsParams(ctx),
                         found: Source::TokenResult(Err(*e)),
                     });
                 }
@@ -123,7 +121,7 @@ impl<'a> GenericParams<'a> {
             }
             None => {
                 errors.push(Error::Expected {
-                    kind: ExpectedKind::GenericParams(ctx),
+                    kind: ExpectedKind::GenericsParams(ctx),
                     found: end_source!(containing_token),
                 });
 
@@ -135,8 +133,10 @@ impl<'a> GenericParams<'a> {
         let mut poisoned = false;
         let mut params = Vec::new();
 
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+
         loop {
-            let param_res = GenericParam::consume(
+            let param_res = GenericsParam::consume(
                 &tokens[consumed..],
                 ctx,
                 &tokens[..consumed],
@@ -156,50 +156,26 @@ impl<'a> GenericParams<'a> {
                 }
             }
 
-            let next = get!(
-                consumed,
-                Err(e) => Error::Expected {
-                    kind: ExpectedKind::GenericParamDelim {
-                        ctx,
-                        prev_tokens: &tokens[..consumed],
-                    },
-                    found: Source::TokenResult(Err(*e)),
-                },
-                None => Error::Expected {
-                    kind: ExpectedKind::GenericParamDelim {
-                        ctx,
-                        prev_tokens: &tokens[..consumed],
-                    },
-                    found: end_source!(containing_token),
-                },
-            );
-
-            match &next.kind {
-                // If we find ">", it's the end of the generic parameters.
+            expect!((
+                Ok(_),
+                // If we find ">", it's the end of the generics parameters.
                 TokenKind::Punctuation(Punc::Gt) => {
                     consumed += 1;
                     break;
-                }
-                // If we find ",", we're expecting another generic parameter
+                },
+                // If we find ",", we're expecting another generics parameter
                 TokenKind::Punctuation(Punc::Comma) => {
                     consumed += 1;
                     continue;
-                }
-                _ => {
-                    errors.push(Error::Expected {
-                        kind: ExpectedKind::GenericParamDelim {
-                            ctx,
-                            prev_tokens: &tokens[..consumed],
-                        },
-                        found: Source::TokenResult(Ok(next)),
-                    });
-
-                    return Err(None);
-                }
-            }
+                },
+                @else(return None) => ExpectedKind::GenericsParamDelim {
+                    ctx,
+                    prev_tokens: &tokens[..consumed],
+                },
+            ));
         }
 
-        Ok(Some(GenericParams {
+        Ok(Some(GenericsParams {
             src: &tokens[..consumed],
             params,
             poisoned,
@@ -207,31 +183,31 @@ impl<'a> GenericParams<'a> {
     }
 }
 
-impl<'a> GenericParam<'a> {
-    /// Consumes a single generic parameter as a prefix of the given tokens
+impl<'a> GenericsParam<'a> {
+    /// Consumes a single generics parameter as a prefix of the given tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     ///
     /// The value of `prev_tokens` gives the tokens already used in the greater scope of consuming
-    /// a set of generic parameters, so that error messages may mention it explicitly.
+    /// a set of generics parameters, so that error messages may mention it explicitly.
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericParam<'a>, Option<usize>> {
-        // Let's have a brief look at the first tokens of the BNF for a generic parameter:
-        //   GenericParam = Ident   ...
+    ) -> Result<GenericsParam<'a>, Option<usize>> {
+        // Let's have a brief look at the first tokens of the BNF for a generics parameter:
+        //   GenericsParam = Ident   ...
         //                | "const" ...
         //                | "ref"   ...
         // We can clearly see that these are the only options available, but we should be conscious
         // of how users might make mistakes. Expanding some of the definition now, we can see some
         // of the overlap between the items and how they might be mistakenly parsed as the others.
-        //   GenericParam =         Ident [ "::" [ Refinements ] Trait { "+" Trait } ] [ "=" Type ]
+        //   GenericsParam =         Ident [ "::" [ Refinements ] Trait { "+" Trait } ] [ "=" Type ]
         //                | "const" Ident   ":"                  Type                  [ "=" Expr ]
         //                | "ref"   Ident
         // "ref" parameters generally don't overlap with the others. For the other two, take the
@@ -240,7 +216,7 @@ impl<'a> GenericParam<'a> {
         // The user might have meant to write "const Foo: Display = Bar" OR "Foo :: Display = Bar"
         //                                     ^^^^^                             ^^
         // - and it isn't immediately clear which one it was. To manage this, we'll separately trap
-        // error mesages from the later portions of the generic parameter to make our best guess as
+        // error mesages from the later portions of the generics parameter to make our best guess as
         // to what went wrong.
         //
         // Because this function has a lot of control flow, we'll also lay out a flow chart for
@@ -259,63 +235,34 @@ impl<'a> GenericParam<'a> {
         //   |
         //   +-----> "ref"   --> Full errors (RefParam)
 
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
         let mut consumed = 0;
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let fst_token = get!(
-            consumed,
-            Err(e) => Error::Expected {
-                kind: ExpectedKind::GenericParam { ctx, prev_tokens },
-                found: Source::TokenResult(Err(*e)),
-            },
-            None => Error::Expected {
-                kind: ExpectedKind::GenericParam { ctx, prev_tokens },
-                found: end_source!(containing_token),
-            },
-        );
-        consumed += 1;
-
-        match &fst_token.kind {
+        let fst_token = expect!((
+            Ok(fst),
             // This is the more complex case as we mentioned above - we'll continue with it in this
             // function.
-            TokenKind::Ident(_) => (),
+            TokenKind::Ident(_) => fst,
             // We'll delegate to other functions for everything else.
             TokenKind::Keyword(Kwd::Const) => {
-                return GenericConstParam::consume(tokens, ends_early, containing_token, errors)
-                    .map(GenericParam::Const);
-            }
+                return GenericsConstParam::consume(tokens, ends_early, containing_token, errors)
+                    .map(GenericsParam::Const);
+            },
             TokenKind::Keyword(Kwd::Ref) => {
-                return GenericRefParam::consume(tokens, ends_early, containing_token, errors)
-                    .map(GenericParam::Ref)
-            }
-            _ => {
-                errors.push(Error::Expected {
-                    kind: ExpectedKind::GenericParam { ctx, prev_tokens },
-                    found: Source::TokenResult(Ok(fst_token)),
-                });
-
-                // FIXME: This should do some recovery here to find the next generic parameter,
-                // given by the commas, instead of trying again immediately.
-                return Err(Some(consumed));
-            }
-        }
-
-        let snd_token = get!(
-            consumed,
-            Err(e) => Error::Expected {
-                kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
-                found: Source::TokenResult(Err(*e)),
+                return GenericsRefParam::consume(tokens, ends_early, containing_token, errors)
+                    .map(GenericsParam::Ref)
             },
-            None => Error::Expected {
-                kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
-                found: end_source!(containing_token),
-            },
-        );
+            @else(return Some) => ExpectedKind::GenericsParam { ctx, prev_tokens },
+        ));
+
         consumed += 1;
 
-        match &snd_token.kind {
+        let snd_token = expect!((
+            Ok(snd),
+            // We're leaving the advanced error handling to *this* function, so we'll continue.
+            TokenKind::Punctuation(Punc::Colon) => snd,
             TokenKind::Punctuation(Punc::DoubleColon) => {
-                return GenericTypeParam::consume(
+                return GenericsTypeParam::consume(
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -323,16 +270,13 @@ impl<'a> GenericParam<'a> {
                     containing_token,
                     errors,
                 )
-                .map(GenericParam::Type)
-            }
+                .map(GenericsParam::Type)
+            },
 
-            // We're leaving the advanced error handling to *this* function, so we'll continue.
-            TokenKind::Punctuation(Punc::Colon) => (),
-
-            // For anything else, we leave it to `GenericTypeParam::consume` to generate the proper
+            // For anything else, we leave it to `GenericsTypeParam::consume` to generate the proper
             // error message
             _ => {
-                return GenericTypeParam::consume(
+                return GenericsTypeParam::consume(
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -340,9 +284,12 @@ impl<'a> GenericParam<'a> {
                     containing_token,
                     errors,
                 )
-                .map(GenericParam::Type)
-            }
-        }
+                .map(GenericsParam::Type)
+            },
+            @else(return Some) => ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
+        ));
+
+        consumed += 1;
 
         // At this point, we've found the tokens `[ Ident, ":", .. ]`. The flowchart now looks like
         // this:
@@ -355,7 +302,7 @@ impl<'a> GenericParam<'a> {
         // So, we'll attempt to parse the remaining pieces, first trying to parse the rest of a
         // type bound - and if that fails, we'll try a type instead.
         //
-        // If they both fail, we'll simply fall back to `GenericTypeParam::consume`, which will
+        // If they both fail, we'll simply fall back to `GenericsTypeParam::consume`, which will
         // generate more appropriate error messages.
         //
         // We'll attempt to parse these two pieces (without passing through extra errors) by
@@ -382,7 +329,7 @@ impl<'a> GenericParam<'a> {
         // type bound, so we can check again later if the thing parsed as a trait here turns out to
         // actually be a type.
         if type_bound_errors.is_empty() && type_bound_res.is_ok() {
-            return GenericTypeParam::consume(
+            return GenericsTypeParam::consume(
                 tokens,
                 ctx,
                 &tokens[..consumed],
@@ -390,7 +337,7 @@ impl<'a> GenericParam<'a> {
                 containing_token,
                 errors,
             )
-            .map(GenericParam::Type);
+            .map(GenericsParam::Type);
         }
 
         // Otherwise, we'll see if this can be successfully parsed as as a type
@@ -421,7 +368,7 @@ impl<'a> GenericParam<'a> {
             return Err(Some(consumed + type_res_consumed));
         }
 
-        // If neither of these worked, we'll go back to assuming it's a `GenericTypeParam`, and
+        // If neither of these worked, we'll go back to assuming it's a `GenericsTypeParam`, and
         // produce the error from finding ":" instead of "::".
         errors.push(Error::Expected {
             kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
@@ -432,7 +379,7 @@ impl<'a> GenericParam<'a> {
     }
 }
 
-impl<'a> GenericTypeParam<'a> {
+impl<'a> GenericsTypeParam<'a> {
     /// Consumes a single generic type parameter as a prefix of the given tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
@@ -440,17 +387,17 @@ impl<'a> GenericTypeParam<'a> {
     /// the number of tokens that were marked as invalid here.
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
-        ctx: GenericParamsContext<'a>,
+        ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericTypeParam<'a>, Option<usize>> {
-        // Generic type parameters have the following form:
+    ) -> Result<GenericsTypeParam<'a>, Option<usize>> {
+        // Generics type parameters have the following form:
         //   Ident [ "::" TypeBound ] [ "=" Type ]
         // The rest of this function is fairly simple, following from this.
-        make_getter!(macro_rules! get, tokens, ends_early, errors);
         let mut consumed = 0;
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
         let ident_ctx = IdentContext::TypeParam(ctx, prev_tokens);
         let name = Ident::parse(
@@ -476,22 +423,10 @@ impl<'a> GenericTypeParam<'a> {
                 param: &tokens[..consumed],
             };
 
-            let token = get!(
-                consumed,
-                Err(e) => Error::Expected {
-                    kind: expected_kind,
-                    found: Source::TokenResult(Err(*e)),
-                },
-                None => Error::Expected {
-                    kind: expected_kind,
-                    found: end_source!(containing_token),
-                },
-            );
-
-            use TokenKind::Punctuation;
-
-            match &token.kind {
-                Punctuation(Punc::DoubleColon) if !after_type_bound => {
+            expect!((
+                Ok(_),
+                // If we haven't already consumed a type bound, we'll do that now
+                TokenKind::Punctuation(Punc::DoubleColon) if !after_type_bound => {
                     consumed += 1;
                     bound = Some(
                         TypeBound::consume(
@@ -506,8 +441,9 @@ impl<'a> GenericTypeParam<'a> {
                         )
                         .map_err(|_| None)?,
                     );
-                }
-                Punctuation(Punc::Eq) => {
+                },
+                // Otherwise, if we find a "=", we'll consume a type here
+                TokenKind::Punctuation(Punc::Eq) => {
                     consumed += 1;
                     default_type = Some(
                         Type::consume(
@@ -524,22 +460,17 @@ impl<'a> GenericTypeParam<'a> {
                     );
 
                     break;
-                }
+                },
                 // We'll also note the other possible tokens that are allowed to follow this
-                Punctuation(Punc::Gt) | Punctuation(Punc::Comma) => break,
-                _ => {
-                    errors.push(Error::Expected {
-                        kind: expected_kind,
-                        found: Source::TokenResult(Ok(token)),
-                    });
-
-                    // TODO: recover after failure here
-                    return Err(None);
-                }
-            }
+                TokenKind::Punctuation(Punc::Gt)
+                | TokenKind::Punctuation(Punc::Comma) => break,
+                // And finally, we'll produce an error if the token wasn't any of the ones we
+                // thought it would be
+                @else(return None) => expected_kind,
+            ));
         }
 
-        Ok(GenericTypeParam {
+        Ok(GenericsTypeParam {
             src: &tokens[..consumed],
             name,
             bound,
@@ -548,24 +479,24 @@ impl<'a> GenericTypeParam<'a> {
     }
 }
 
-impl<'a> GenericConstParam<'a> {
+impl<'a> GenericsConstParam<'a> {
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericConstParam<'a>, Option<usize>> {
+    ) -> Result<GenericsConstParam<'a>, Option<usize>> {
         todo!()
     }
 }
 
-impl<'a> GenericRefParam<'a> {
+impl<'a> GenericsRefParam<'a> {
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericRefParam<'a>, Option<usize>> {
+    ) -> Result<GenericsRefParam<'a>, Option<usize>> {
         todo!()
     }
 }

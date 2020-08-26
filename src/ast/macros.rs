@@ -19,53 +19,6 @@ macro_rules! p {
     }};
 }
 
-macro_rules! make_getter {
-    (macro_rules! $get_name:ident, $tokens:expr, $ends_early:expr, $errors:expr) => {
-        // A helper macro for local use within parsing functions
-        //
-        // This only works for functions returning `Result<_, Option<usize>>`, which corresponds to
-        // the consume-style parsers. The macro simply wraps `tokens.get(..)` so that we can
-        // extract a single `&Token` instead of a `&Result<Token, _>`. Error handling is given so
-        // that we can explicitly handle the cases of tokenzier errors and running out of tokens
-        // separately.
-        macro_rules! $get_name {
-            ($consumed:expr, Err($e:ident) => $err:expr, None => $none:expr,) => {
-                match $tokens.get($consumed) {
-                    Some(Ok(t)) => t,
-                    Some(Err($e)) => {
-                        use token_tree::Error::*;
-
-                        // All of the errors currently assume that tokenizer errors are due to
-                        // delimeters. For future compatability, we'll simply match on all of those
-                        // to ensure that this stays the case.
-                        //
-                        // NOTE: If you come here because this match statement is missing values,
-                        // there's other logic that needs to be replaced in *every* usage of this
-                        // macro - DO NOT make this a quick fix.
-                        match $e {
-                            UnexpectedCloseDelim(_)
-                            | MismatchedCloseDelim { .. }
-                            | UnclosedDelim(_, _) => (),
-                        }
-
-                        $errors.push($err);
-                        return Err(None);
-                    }
-                    // If we ran out of tokens but they were limited due to a previous error, we'll
-                    // silently ignore it and indicate that this token tree should no longer be
-                    // parsed.
-                    None if $ends_early => return Err(None),
-                    // Otherwise, we'll use the error given to us above
-                    None => {
-                        $errors.push($none);
-                        return Err(None);
-                    }
-                }
-            }
-        }
-    }
-}
-
 macro_rules! end_source {
     ($containing_token:expr) => {{
         match $containing_token {
@@ -172,46 +125,61 @@ macro_rules! make_expect {
         $ends_early:expr,
         $containing_token:expr,
         $errors:expr,
-        ($($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
-        @else $expected_kind:expr $(,)?)
+        (Ok(_), $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
+        @else(return $opt:ident) => $($expected:tt)+)
+    ) => {
+        make_expect!(
+            @inner:
+            $tokens, $consumed, $ends_early, $containing_token, $errors,
+            (Ok(_t), $($($token_kind)|+ $(if $cond)? => $arm,)+
+            @else(return $opt) => $($expected)+)
+        )
+    };
+    (
+        @inner:
+        $tokens:expr,
+        $consumed:expr,
+        $ends_early:expr,
+        $containing_token:expr,
+        $errors:expr,
+        (Ok($token:ident), $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
+        @else(return $opt:ident) => $($expected:tt)+)
     ) => {{
+        #[allow(unreachable_patterns)]
         match $tokens.get($consumed) {
             // If we run out of tokens (but it ended early), there's no point in reporting the same
             // error twice
             None if $ends_early => return Err(None),
             // Otherwise, we *were* expecting the given token kind!
             None => {
-                $errors.push(Error::Expected {
-                    kind: $expected_kind,
-                    found: end_source!($containing_token),
-                });
-
-                return Err(None);
+                make_expect!(@push: $errors, end_source!($containing_token), $($expected)+);
+                make_expect!(@inner_return: $opt, $consumed);
             }
 
-            Some(Err(e)) => {
-                $errors.push(Error::Expected {
-                    kind: $expected_kind,
-                    found: Source::TokenResult(Err(*e)),
-                });
-
-                return Err(None);
+            Some(Err(_e)) => {
+                make_expect!(@push: $errors, Source::TokenResult(Err(*_e)), $($expected)+);
+                make_expect!(@inner_return: $opt, $consumed);
             }
 
-            Some(Ok(t)) => match &t.kind {
+            Some(Ok($token)) => match &$token.kind {
                 $($($token_kind)|+ $(if $cond)? => $arm,)+
                 #[allow(unreachable_patterns)]
                 _ => {
-                    $errors.push(Error::Expected {
-                        kind: $expected_kind,
-                        found: Source::TokenResult(Ok(t)),
-                    });
-
-                    return Err(None);
+                    make_expect!(@push: $errors, Source::TokenResult(Ok($token)), $($expected)+);
+                    make_expect!(@inner_return: $opt, $consumed);
                 }
             }
         }
-    }}
+    }};
+    (@push: $errors:expr, $source:expr, @no_error $(,)?) => {};
+    (@push: $errors:expr, $source:expr, $expected_kind:expr $(,)?) => {{
+        $errors.push(Error::Expected {
+            kind: $expected_kind,
+            found: $source,
+        });
+    }};
+    (@inner_return: Some, $consumed:expr) => {{ return Err(Some($consumed)) }};
+    (@inner_return: None, $consumed:expr) => {{ return Err(None) }};
 }
 
 macro_rules! assert_token {

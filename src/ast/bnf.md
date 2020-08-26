@@ -61,13 +61,13 @@ Item = FnDecl
      | ImportStmt
      | UseStmt .
 
-FnDecl = ProofStmts [ Vis ] [ "const" ] [ "pure" ] "fn" Ident [ GenericParams ]
+FnDecl = ProofStmts [ Vis ] [ "const" ] [ "pure" ] "fn" Ident [ GenericsParams ]
          FnParams [ "->" Type ] ( ";" | BlockExpr ) .
 
 MacroDef   = ProofStmts [ Vis ] "macro" Ident MacroParams MacroBody .
-TypeDecl   = ProofStmts [ Vis ] "type" Ident [ GenericParams ]
+TypeDecl   = ProofStmts [ Vis ] "type" Ident [ GenericsParams ]
              [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
-TraitDef   = ProofStmts [ Vis ] "trait" Ident [ GenericParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
+TraitDef   = ProofStmts [ Vis ] "trait" Ident [ GenericsParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
 ImplBlock  =                    "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
 ConstStmt  =            [ Vis ] "const"  Field ";" .
 StaticStmt = ProofStmts [ Vis ] "static" Field ";" .
@@ -98,8 +98,8 @@ FnParamsReceiver = [ "&" [ Refinements ] ] [ "mut" ] "self" [ Refinements ] .
 
 ImplBody = "{" { Item } "}" .
 
-GenericParams = "<" GenericParam { "," GenericParam } [ "," ] ">" .
-GenericParam = Ident [ "::" TypeBound ] [ "=" Type ]
+GenericsParams = "<" GenericsParam { "," GenericsParam } [ "," ] ">" .
+GenericsParam = Ident [ "::" TypeBound ] [ "=" Type ]
              | "const" Ident ":" Type [ "=" Expr ] .
              | "ref" Ident" .
 
