@@ -67,7 +67,7 @@ pub struct FileTokenTree<'a> {
 pub struct Token<'a> {
     pub trailing_whitespace: &'a [SimpleToken<'a>],
     // Note: `src` doesn't contain leading or trailing whitespace
-    src: &'a [SimpleToken<'a>],
+    pub src: &'a [SimpleToken<'a>],
     pub kind: TokenKind<'a>,
 }
 

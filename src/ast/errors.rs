@@ -1,10 +1,11 @@
 //! Error types and messages for parsing into the AST
 
 use super::{ExprDelim, GenericsArg, Ident, TokenSlice};
-use crate::error::{Builder as ErrorBuilder, ToError};
+use crate::error::{Builder as ErrorBuilder, ToError, ERR_COLOR};
 use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
 
+#[derive(Debug)]
 pub enum Error<'a> {
     /// A catch-all error for generically expecting certain tokens or syntax elements
     Expected {
@@ -462,8 +463,88 @@ pub enum PatternContext<'a> {
     Is(&'a Token<'a>),
 }
 
-impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
-    fn to_error(self, _aux: &(F, &str)) -> ErrorBuilder {
-        todo!()
+impl<F: Fn(Option<&str>) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
+    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+        use Error::*;
+
+        let (ref ranger, ref file_name) = aux;
+
+        match self {
+            Expected { kind, found } => kind.make_error(found, ranger, file_name),
+            _ => {
+                println!("unformatted error: {:?}", self);
+                todo!()
+            }
+        }
+
+        // // TODO: This is really just a temporary implementation until we give these good formatting
+        // // later. It's just for checking that it *does* work
+        // let s = format!("{:?}", self);
+        // ErrorBuilder::new("Parse error").text(s)
+    }
+}
+
+// impl Error<'_> {
+//
+// }
+
+impl ExpectedKind<'_> {
+    fn make_error(
+        &self,
+        src: Source,
+        ranger: impl Fn(Option<&str>) -> Range<usize>,
+        file_name: &str,
+    ) -> ErrorBuilder {
+        let src_range = src.range(ranger);
+
+        // TODO: This is really just a temporary implementation until we give these good formatting
+        // later. It's just for checking that it *does* work
+        let s = format!("{:?}", self);
+        ErrorBuilder::new("Parse error")
+            .context(file_name, src_range.start)
+            .highlight(file_name, vec![src_range], ERR_COLOR)
+            .text(s)
+    }
+}
+
+trait Ranged {
+    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize>;
+}
+
+impl Ranged for Token<'_> {
+    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize> {
+        let start = ranger(Some(self.src[0].src));
+        let end = ranger(Some(self.src.last().unwrap().src));
+
+        start.start..end.end
+    }
+}
+
+impl Ranged for Source<'_> {
+    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize> {
+        match self {
+            Source::EndDelim(token) => {
+                let Range { start, end } = token.range(ranger);
+                assert!(start < end);
+
+                (end - 1)..end
+            }
+            Source::TokenResult(Ok(t)) => t.range(ranger),
+            Source::TokenResult(Err(e)) => {
+                use token_tree::Error::*;
+
+                match e {
+                    UnexpectedCloseDelim(t) => ranger(Some(t.src)),
+                    MismatchedCloseDelim { end, .. } => ranger(Some(end.src)),
+                    UnclosedDelim(_, ts, _) => {
+                        let start = ranger(Some(ts[0].src));
+                        let end = ranger(Some(ts.last().unwrap().src));
+                        start.start..end.end
+                    }
+                    NestedProofLines(_, t) => ranger(Some(t.src)),
+                }
+            }
+            Source::EOF => ranger(None),
+        }
     }
 }

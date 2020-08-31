@@ -1,4 +1,4 @@
-use std.foo.Bar;
+use type std.foo.Bar;
 
 // It's a comment!
 fn baz(x: int, y: bool) -> { z: Bar<int> } {

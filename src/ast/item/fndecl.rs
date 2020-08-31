@@ -181,11 +181,16 @@ impl<'a> FnDecl<'a> {
         // are in a parentheses-enclosed token tree, we only pass a single token
         let params = expect!((
             Ok(t),
-            TokenKind::Tree { delim: Delim::Curlies, inner, .. } => {
+            TokenKind::Tree { delim: Delim::Parens, inner, .. } => {
                 consumed += 1;
                 Ok(FnParams::parse(t, inner, errors))
             },
             _ => {
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::FnParams { fn_start: &tokens[ident_idx-1..consumed] },
+                    found: Source::TokenResult(Ok(t)),
+                });
+
                 // If we couldn't find the function parameters, we'll check whether continuing is
                 // feasible. This is essentially a set of heuristics for guess whether the user
                 // *did* intend to write a function here.

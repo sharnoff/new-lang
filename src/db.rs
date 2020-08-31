@@ -439,11 +439,19 @@ impl<'a> FileState {
                             let content: &str =
                                 &info_guard.as_ref().unwrap().as_ref().unwrap().content;
 
-                            let offset_fn = |line: &str| {
-                                let start = (line as *const str as *const u8 as usize)
-                                    - (content as *const str as *const u8 as usize);
+                            let end_point = match content {
+                                "" => 0..0,
+                                _ => (content.len() - 1)..content.len(),
+                            };
 
-                                start..start + line.len()
+                            let offset_fn = |string: Option<&str>| match string {
+                                Some(s) => {
+                                    let start = (s as *const str as *const u8 as usize)
+                                        - (content as *const str as *const u8 as usize);
+
+                                    start..start + s.len()
+                                }
+                                None => end_point.clone(),
                             };
 
                             let mut errors = self.errors.lock().unwrap();

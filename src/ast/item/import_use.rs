@@ -270,6 +270,7 @@ impl<'a> UseStmt<'a> {
 
         let path = UsePath::consume(&tokens[consumed..], ends_early, containing_token, errors)
             .map_err(ItemParseErr::add(consumed))?;
+        consumed += path.consumed();
 
         expect!((
             Ok(_),
@@ -505,6 +506,7 @@ impl<'a> SingleUse<'a> {
 
         let path = Path::consume(&tokens[consumed..], ends_early, containing_token, errors)
             .map_err(p!(Some(c) => Some(c + consumed)))?;
+        consumed += path.consumed();
 
         // [ "as" Ident ]
         let mut use_as = None;
