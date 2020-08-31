@@ -2611,7 +2611,7 @@ impl<'a> WhileExpr<'a> {
         let condition = Expr::consume(
             &tokens[..consumed],
             ExprDelim::Nothing,
-            Restrictions::default().no_struct_postfix(NoCurlyContext::ForIter),
+            Restrictions::default().no_struct_postfix(NoCurlyContext::WhileCondition),
             ends_early,
             containing_token,
             errors,
@@ -2871,7 +2871,7 @@ impl<'a> MatchExpr<'a> {
         let expr = Expr::consume(
             &tokens[consumed..],
             ExprDelim::Nothing,
-            Restrictions::default().no_struct_postfix(NoCurlyContext::IfCondition),
+            Restrictions::default().no_struct_postfix(NoCurlyContext::MatchExpr),
             ends_early,
             containing_token,
             errors,
