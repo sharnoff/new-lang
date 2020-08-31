@@ -13,12 +13,20 @@ impl<'a> MacroDef<'a> {
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ident_idx: usize,
-        ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
+        _ends_early: bool,
+        _containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-        proof_stmts: Option<ProofStmts<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<MacroDef<'a>, Option<usize>> {
-        todo!()
+        _proof_stmts: Option<ProofStmts<'a>>,
+        _vis: Option<Vis<'a>>,
+    ) -> Result<MacroDef<'a>, ItemParseErr> {
+        let macro_idx = ident_idx - 1;
+
+        errors.push(Error::MacrosUnimplemented {
+            macro_kwd: tokens[macro_idx].as_ref().unwrap(),
+        });
+
+        Err(ItemParseErr {
+            consumed: ident_idx,
+        })
     }
 }

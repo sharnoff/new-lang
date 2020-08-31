@@ -432,7 +432,8 @@ impl<'a> FileState {
                             .unwrap()
                             .early_err;
 
-                        let (items, ast_errors) = crate::ast::try_parse(&tt.tokens, early_err);
+                        let (items, poisoned, ast_errors) =
+                            crate::ast::try_parse(&tt.tokens, early_err);
                         if !ast_errors.is_empty() {
                             let info_guard = self.file_info.read().unwrap();
                             let content: &str =

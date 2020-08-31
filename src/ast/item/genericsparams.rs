@@ -3,7 +3,7 @@ use super::*;
 /// A collection of generics parameters, given as part of a type or function declarations
 ///
 /// This is provided separately (instead of just [`Vec<GenericsParam>`]) so that we can track and
-/// refer to the set of parameters as a whole group.
+/// refer to the source for the set of parameters as a whole group.
 ///
 /// Briefly, the BNF for generics parameters is:
 /// ```text
@@ -27,58 +27,85 @@ pub struct GenericsParams<'a> {
 /// GenericsParam = Ident [ "::" TypeBound ] [ "=" Type ]
 ///              | "const" Ident ":" Type [ "=" Expr ] .
 ///              | "ref" Ident .
-/// "          " = GenericsTypeParam
-///              | GenericsConstParam
-///              | GenericsRefParam
+/// "          " = GenericTypeParam
+///              | GenericConstParam
+///              | GenericRefParam
 /// ```
-/// These variants are represented by [`GenericsTypeParam`], [`GenericsConstParam`], and
-/// [`GenericsRefParam`], respectively, as shown with the second definition. For more information,
+/// These variants are represented by [`GenericTypeParam`], [`GenericConstParam`], and
+/// [`GenericRefParam`], respectively, as shown with the second definition. For more information,
 /// refer to the documentation for those types individually.
 ///
-/// [`GenericsTypeParam`]: struct.GenericsTypeParam.html
-/// [`GenericsConstParam`]: struct.GenericsConstParam.html
-/// [`GenericsRefParam`]: struct.GenericsRefParam.html
+/// [`GenericTypeParam`]: struct.GenericTypeParam.html
+/// [`GenericConstParam`]: struct.GenericConstParam.html
+/// [`GenericRefParam`]: struct.GenericRefParam.html
 #[derive(Debug, Clone)]
 pub enum GenericsParam<'a> {
-    Type(GenericsTypeParam<'a>),
-    Const(GenericsConstParam<'a>),
-    Ref(GenericsRefParam<'a>),
+    Type(GenericTypeParam<'a>),
+    Const(GenericConstParam<'a>),
+    Ref(GenericRefParam<'a>),
 }
 
 /// A generic type parameter, given as part of a type or function declaration
 ///
-/// Type parameters are the most common generic parameter. There are however, two others - to see
+/// Type parameters are the most common generics parameter. There are however, two others - to see
 /// the full set, refer to [`GenericsParam`].
 ///
 /// The BNF definition for a single generic type parameter is:
 /// ```text
-/// GenericsTypeParam = Ident [ "::" TypeBound ] [ "=" Type ] .
+/// GenericTypeParam = Ident [ "::" TypeBound ] [ "=" Type ] .
 /// ```
 /// All type parameters are given by their name, possibly followed by a [type bound], which
 /// restricts type arguments to those that implement a set of traits. Additionally, default values
 /// for these types can be given by the trailing [`"=" Type`].
 ///
 /// [`GenericsParam`]: struct.GenericsParam.html
-/// [type bound]: ../types/struct.TypeBound.html
-/// [`"=" Type`]: ../types/enum.Type.html
+/// [type bound]: ../struct.TypeBound.html
+/// [`"=" Type`]: ../../types/enum.Type.html
 #[derive(Debug, Clone)]
-pub struct GenericsTypeParam<'a> {
+pub struct GenericTypeParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub name: Ident<'a>,
     pub bound: Option<TypeBound<'a>>,
     pub default_type: Option<Type<'a>>,
 }
 
+/// A generic constant parameter, given as part of a type or function declaration
+///
+/// `const` parameters are one of three generics parameters; for the full set, see
+/// [`GenericsParam`].
+///
+/// These are defined by the folowing BNF:
+/// ```text
+/// GenericConstParam = "const" Field .
+/// ```
+/// Note that [`Field`] is primarily a helper type, and is defined to be:
+/// ```text
+/// Field = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ] .
+/// ```
+/// This allows `const` parameters to be generic in type as well as in value.
+///
+/// [`GenericsParam`]: enum.GenericsParam.html
+/// [`Field`]: ../struct.Field.html
 #[derive(Debug, Clone)]
-pub struct GenericsConstParam<'a> {
+pub struct GenericConstParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub ty: Type<'a>,
-    pub default: Option<Expr<'a>>,
+    pub field: Field<'a>,
 }
 
+/// A generic "ref" parameter, given as part of a type or function declaration
+///
+/// "ref" parameters allow for making types or functions generic on the lifetime of a referenced
+/// value. They are one of three types of generics parameters; for the full set, see
+/// [`GenericsParams`].
+///
+/// These are defined by the following BNF construction:
+/// ```text
+/// GenericRefParam = "ref" Ident .
+/// ```
+///
+/// [`GenericsParam`]: enum.GenericsParam.html
 #[derive(Debug, Clone)]
-pub struct GenericsRefParam<'a> {
+pub struct GenericRefParam<'a> {
     pub(in crate::ast) src: TokenSlice<'a>,
     pub ref_name: Ident<'a>,
 }
@@ -201,14 +228,14 @@ impl<'a> GenericsParam<'a> {
         errors: &mut Vec<Error<'a>>,
     ) -> Result<GenericsParam<'a>, Option<usize>> {
         // Let's have a brief look at the first tokens of the BNF for a generics parameter:
-        //   GenericsParam = Ident   ...
+        //   GenericsParam = Ident  ...
         //                | "const" ...
         //                | "ref"   ...
         // We can clearly see that these are the only options available, but we should be conscious
         // of how users might make mistakes. Expanding some of the definition now, we can see some
         // of the overlap between the items and how they might be mistakenly parsed as the others.
-        //   GenericsParam =         Ident [ "::" [ Refinements ] Trait { "+" Trait } ] [ "=" Type ]
-        //                | "const" Ident   ":"                  Type                  [ "=" Expr ]
+        //   GenericsParam =        Ident [ "::" TypeBound ]            [ "=" Type ]
+        //                | "const" Ident ( "::" TypeBound | ":" Type ) [ "=" Expr ]
         //                | "ref"   Ident
         // "ref" parameters generally don't overlap with the others. For the other two, take the
         // following example:
@@ -238,18 +265,18 @@ impl<'a> GenericsParam<'a> {
         let mut consumed = 0;
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let fst_token = expect!((
-            Ok(fst),
+        expect!((
+            Ok(_),
             // This is the more complex case as we mentioned above - we'll continue with it in this
             // function.
-            TokenKind::Ident(_) => fst,
+            TokenKind::Ident(_) => (),
             // We'll delegate to other functions for everything else.
             TokenKind::Keyword(Kwd::Const) => {
-                return GenericsConstParam::consume(tokens, ends_early, containing_token, errors)
+                return GenericConstParam::consume(tokens, ends_early, containing_token, errors)
                     .map(GenericsParam::Const);
             },
             TokenKind::Keyword(Kwd::Ref) => {
-                return GenericsRefParam::consume(tokens, ends_early, containing_token, errors)
+                return GenericRefParam::consume(tokens, ends_early, containing_token, errors)
                     .map(GenericsParam::Ref)
             },
             @else(return Some) => ExpectedKind::GenericsParam { ctx, prev_tokens },
@@ -262,7 +289,7 @@ impl<'a> GenericsParam<'a> {
             // We're leaving the advanced error handling to *this* function, so we'll continue.
             TokenKind::Punctuation(Punc::Colon) => snd,
             TokenKind::Punctuation(Punc::DoubleColon) => {
-                return GenericsTypeParam::consume(
+                return GenericTypeParam::consume(
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -273,10 +300,10 @@ impl<'a> GenericsParam<'a> {
                 .map(GenericsParam::Type)
             },
 
-            // For anything else, we leave it to `GenericsTypeParam::consume` to generate the proper
+            // For anything else, we leave it to `GenericTypeParam::consume` to generate the proper
             // error message
             _ => {
-                return GenericsTypeParam::consume(
+                return GenericTypeParam::consume(
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -302,7 +329,7 @@ impl<'a> GenericsParam<'a> {
         // So, we'll attempt to parse the remaining pieces, first trying to parse the rest of a
         // type bound - and if that fails, we'll try a type instead.
         //
-        // If they both fail, we'll simply fall back to `GenericsTypeParam::consume`, which will
+        // If they both fail, we'll simply fall back to `GenericTypeParam::consume`, which will
         // generate more appropriate error messages.
         //
         // We'll attempt to parse these two pieces (without passing through extra errors) by
@@ -312,10 +339,6 @@ impl<'a> GenericsParam<'a> {
         let mut type_bound_errors = Vec::new();
         let type_bound_res = TypeBound::consume(
             &tokens[consumed..],
-            TypeBoundContext::GenericTypeParam {
-                param: &tokens[..consumed],
-                ctx,
-            },
             ends_early,
             containing_token,
             &mut type_bound_errors,
@@ -329,7 +352,7 @@ impl<'a> GenericsParam<'a> {
         // type bound, so we can check again later if the thing parsed as a trait here turns out to
         // actually be a type.
         if type_bound_errors.is_empty() && type_bound_res.is_ok() {
-            return GenericsTypeParam::consume(
+            return GenericTypeParam::consume(
                 tokens,
                 ctx,
                 &tokens[..consumed],
@@ -368,7 +391,7 @@ impl<'a> GenericsParam<'a> {
             return Err(Some(consumed + type_res_consumed));
         }
 
-        // If neither of these worked, we'll go back to assuming it's a `GenericsTypeParam`, and
+        // If neither of these worked, we'll go back to assuming it's a `GenericTypeParam`, and
         // produce the error from finding ":" instead of "::".
         errors.push(Error::Expected {
             kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
@@ -379,7 +402,7 @@ impl<'a> GenericsParam<'a> {
     }
 }
 
-impl<'a> GenericsTypeParam<'a> {
+impl<'a> GenericTypeParam<'a> {
     /// Consumes a single generic type parameter as a prefix of the given tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
@@ -392,7 +415,7 @@ impl<'a> GenericsTypeParam<'a> {
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericsTypeParam<'a>, Option<usize>> {
+    ) -> Result<GenericTypeParam<'a>, Option<usize>> {
         // Generics type parameters have the following form:
         //   Ident [ "::" TypeBound ] [ "=" Type ]
         // The rest of this function is fairly simple, following from this.
@@ -431,10 +454,6 @@ impl<'a> GenericsTypeParam<'a> {
                     bound = Some(
                         TypeBound::consume(
                             &tokens[consumed..],
-                            TypeBoundContext::GenericTypeParam {
-                                param: &tokens[..consumed],
-                                ctx,
-                            },
                             ends_early,
                             containing_token,
                             errors,
@@ -470,7 +489,7 @@ impl<'a> GenericsTypeParam<'a> {
             ));
         }
 
-        Ok(GenericsTypeParam {
+        Ok(GenericTypeParam {
             src: &tokens[..consumed],
             name,
             bound,
@@ -479,24 +498,73 @@ impl<'a> GenericsTypeParam<'a> {
     }
 }
 
-impl<'a> GenericsConstParam<'a> {
+impl<'a> GenericConstParam<'a> {
+    /// Consumes a single generic `const` parameter as a prefix of the given tokens
+    ///
+    /// This function assumes that the first token it is given is the keyword `const`, and will
+    /// panic if this is not the case.
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericsConstParam<'a>, Option<usize>> {
-        todo!()
+    ) -> Result<GenericConstParam<'a>, Option<usize>> {
+        // The BNF for constant parameters is fairly simple - most of the work is done by the
+        // `Field` parser, so the BNF ends up simply being:
+        //   GenericConstParam = "const" Field .
+        //
+        // The first thing we'll do, however, is to assert hat the tokens we were given *do* start
+        // with the keyword `const`:
+        assert_token!(
+            tokens.first() => "keyword `const`",
+            Ok(t) && TokenKind::Keyword(Kwd::Const) => (),
+        );
+
+        // We offset by 1 on each piece here because we've already consumed the "const" token
+        let field = Field::consume(
+            &tokens[1..],
+            FieldContext::GenericConstParam,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(c + 1)))?;
+
+        let consumed = field.consumed() + 1;
+
+        Ok(GenericConstParam {
+            src: &tokens[..consumed],
+            field,
+        })
     }
 }
 
-impl<'a> GenericsRefParam<'a> {
+impl<'a> GenericRefParam<'a> {
+    /// Consumes a generic "ref" parameter as a prefix of the given tokens
+    ///
+    /// This function assumes that the first token in the list is the keyword `ref`, and will panic
+    /// if this is not the case.
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericsRefParam<'a>, Option<usize>> {
-        todo!()
+    ) -> Result<GenericRefParam<'a>, Option<usize>> {
+        assert_token!(
+            tokens.first() => "keyword `const`",
+            Ok(t) && TokenKind::Keyword(Kwd::Ref) => (),
+        );
+
+        make_expect!(tokens, 1, ends_early, containing_token, errors);
+        expect!((
+            Ok(t),
+            TokenKind::Ident(name) => {
+                Ok(GenericRefParam {
+                    src: &tokens[..2],
+                    ref_name: Ident { src: t, name },
+                })
+            },
+            @else(return None) => ExpectedKind::Ident(IdentContext::GenericRefParam),
+        ))
     }
 }

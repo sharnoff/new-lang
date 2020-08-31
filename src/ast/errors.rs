@@ -36,6 +36,13 @@ pub enum Error<'a> {
         type_src: TokenSlice<'a>,
     },
 
+    /// The user has attempted to write `"impl" "<"`, which might indicate generic parameters in
+    /// other languages (e.g. Rust), but is not allowed here.
+    GenericParamsOnImplBlock {
+        /// The less-than token immediately following the `impl`
+        src: &'a Token<'a>,
+    },
+
     /// In some places (e.g. 'if' conditions or match scrutinee expressions), curly braces are not
     /// allowed as they are ambiguous with the curly braces of the following block.
     CurliesDisallowed {
@@ -106,6 +113,46 @@ pub enum Error<'a> {
         name: Ident<'a>,
         ref_kwd: &'a Token<'a>,
     },
+
+    /// Parentheses were found as part of a [`UsePath`] following a dot token, e.g:
+    /// ```text
+    /// foo.bar.(<something inside parens>)
+    /// ```
+    /// The user probably meant to use curly braces instead
+    ///
+    /// [`UsePath`]: ../item/import_use/enum.UsePath.html
+    UsePathDotParens {
+        path: TokenSlice<'a>,
+        parens: &'a Token<'a>,
+    },
+
+    /// A [`UsePath`] was likely intended to be a simple use, which requires the type of item
+    /// brought into scope to prefix the path
+    ///
+    /// [`UsePath`]: ../item/import_use/enum.UsePath.html
+    MissingUseKind { path: TokenSlice<'a> },
+
+    /// A [glob use] was likely intended, but is missing the dot token between the path and the
+    /// asterisk. For example: `foo.bar*` instead of `foo.bar.*`.
+    ///
+    /// [glob use]: ../item/import_use/struct.GlobUse.html
+    MissingGlobUseDot { star_token: &'a Token<'a> },
+
+    /// A [multi-use] was likely intended, but is missing the dot token between the path and curly
+    /// braces. For example: `foo{bar, baz}` intead of `foo.{bar, baz}`.
+    ///
+    /// [multi-use]: ../item/import_use/struct.MultiUse.html
+    MissingMultiUseDot { curly_token: &'a Token<'a> },
+
+    /// Type declarations may optionally have bounds; these must be preceeded by a double-colon,
+    /// but a user might have accidentally left a single colon instead.
+    TypeDeclSingleColonBound { colon: &'a Token<'a> },
+
+    /// Macros are currently unimplemented
+    MacrosUnimplemented { macro_kwd: &'a Token<'a> },
+
+    /// Proof statements are currently unimplemented
+    ProofStmtsUnimplemented { proof_lines: &'a Token<'a> },
 }
 
 /// An individual source for a range of the source text, used within error messages.
@@ -162,6 +209,69 @@ pub enum ExpectedKind<'a> {
         before: &'a Token<'a>,
     },
 
+    /// When parsing an item, after finding the tokens `"fn" Ident` (and possibly generics
+    /// parameters), we'll be expecting the actual parameters of the function
+    FnParams {
+        /// The tokens starting the function declaration - i.e. `"fn" Ident [ GenericsParams ]`
+        fn_start: TokenSlice<'a>,
+    },
+
+    /// A comma following a function parameter - either the method receiver or a "normal" parameter
+    FnParamsDelim,
+
+    MethodReceiverOrParam,
+    MethodReceiverMutOrSelf,
+    MethodReceiverSelf,
+
+    ConstTrailingSemi,
+    StaticTrailingSemi,
+
+    /// After the `impl` keyword in an item, we're expecting a trait to implement or an
+    /// implementing type.
+    ImplTraitOrType,
+
+    /// There's some ambiguity when we first see `"impl" Path` - it could be that the path is a
+    /// trait we're implementing, or that the path refers instead to the type we're implementing
+    /// standalone methods on. There's a set of tokens that we might expect after a path, and this
+    /// error indicates that we didn't find something in that set.
+    ImplAfterPath,
+    ImplBody,
+
+    /// The body of a trait definition; either a semicolon or curly braces.
+    TraitDefBody,
+    TraitDefTypeBoundOrImplBody,
+
+    ImportSourceString,
+    /// In import statements, a tilde may be given after the source string in order to specify
+    /// version information. This variant represents a failure to find a tilde or any of the tokens
+    /// allowed after the initial source.
+    ImportVersionTilde,
+    /// The string literal giving the version of an imported library, given directly following the
+    /// tilde
+    ImportVersionString,
+    /// Like `ImportVersionTilde`, this error signifies that none of the set of expected tokens at
+    /// the point where we *might* parse the `as` keyword were there
+    ImportRenameAs,
+    ImportRenameIdent,
+    /// The trailing semicolon required after an import statement
+    ImportTrailingSemi,
+
+    UsePath,
+    /// The trailing semicolon required after a `use` statement
+    UseTrailingSemi,
+    UsePathSingleAsIdent,
+    /// The set of tokens in a `UsePath` that are allowed after a dot token - identifiers, curlies,
+    /// stars, and commas/semicolons.
+    UsePathPostDot,
+    /// Commas are expected between `UsePath`s in a `MultiUse`
+    MultiUseCommaDelim,
+
+    TypeDeclBoundOrAfter,
+    TypeDeclTrailingSemi,
+    TypeDeclType,
+
+    FieldBound(FieldContext),
+
     Ident(IdentContext<'a>),
     ExprLhs,
     GenericsArgOrExpr,
@@ -209,7 +319,6 @@ pub enum ExpectedKind<'a> {
     EnumTypeVariantDelim,
     GenericsArgDelim,
     RefinementDelim,
-    TypeBound(TypeBoundContext<'a>),
     GenericsParam {
         ctx: GenericsParamsContext<'a>,
         prev_tokens: TokenSlice<'a>,
@@ -253,12 +362,20 @@ pub enum IdentContext<'a> {
     /// part of the list of generic parameters.
     TypeParam(GenericsParamsContext<'a>, TokenSlice<'a>),
 
+    /// The name defined in a trait definition; the token here is the "trait" keyword
+    TraitDef {
+        kwd_token: &'a Token<'a>,
+    },
+
+    GenericRefParam,
+
     /// Path components expect an identifier
     PathComponent(PathComponentContext<'a>),
     PatternPath(PatternContext<'a>, TokenSlice<'a>),
     NamedExpr(super::ExprDelim),
     StructTypeField,
     EnumVariant,
+    Field(FieldContext),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -266,6 +383,11 @@ pub enum GenericsParamsContext<'a> {
     /// The generics parameters used in a function declaration. The attached slice of tokens gives
     /// the keywords and name that indicate a function declaration.
     FnDecl(TokenSlice<'a>),
+
+    /// The tokens given here are the
+    TraitDef(TokenSlice<'a>),
+
+    TypeDecl,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -289,15 +411,21 @@ pub enum TypeContext<'a> {
     TypeBinding {
         tilde: &'a Token<'a>,
     },
+    ImplBlockType {
+        /// The tokens starting the `impl` block; essentially defined to satisfy
+        /// `"impl" [ Trait "for" ]`
+        prev_tokens: TokenSlice<'a>,
+    },
+    TypeDecl,
+    FieldBound(FieldContext),
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum TypeBoundContext<'a> {
-    /// The optional type bound given for generic type parameters
-    GenericTypeParam {
-        param: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
-    },
+pub enum FieldContext {
+    FnParam,
+    ConstStmt,
+    StaticStmt,
+    GenericConstParam,
 }
 
 #[derive(Debug, Copy, Clone)]

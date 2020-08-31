@@ -66,42 +66,56 @@ FnDecl = ProofStmts [ Vis ] [ "const" ] [ "pure" ] "fn" Ident [ GenericsParams ]
 
 MacroDef   = ProofStmts [ Vis ] "macro" Ident MacroParams MacroBody .
 TypeDecl   = ProofStmts [ Vis ] "type" Ident [ GenericsParams ]
-             [ "::" TypeBound ] ( ";" | [ "=" ] Type [ ";" ] ) .
+             [ "::" TypeBound ] [ [ "=" ] Type ] ";" .
 TraitDef   = ProofStmts [ Vis ] "trait" Ident [ GenericsParams ] [ "::" TypeBound ] ( ImplBody | ";" ) .
 ImplBlock  =                    "impl" [ Trait "for" ] Type ( ImplBody | ";" ) .
 ConstStmt  =            [ Vis ] "const"  Field ";" .
 StaticStmt = ProofStmts [ Vis ] "static" Field ";" .
 
-ImportStmt = "import" StringLiteral [ "~" StringLiteral ] [ "as" Ident ] .
+ImportStmt = "import" StringLiteral [ "~" StringLiteral ] [ "as" Ident ] ";" .
 
-UseStmt = [ Vis ] "use" UsePath ";" .
-UsePath = Path "." "{" [ UsePath { "," UsePath } [ "," ] ] "}" .
-        | UseKind Path [ "as" Ident ] .
-UseKind = "fn" | "macro" | "type" | "trait" | "const" | "static" .
+UseStmt   = Vis "use" UsePath ";" .
+UsePath   = MultiUse | GlobUse | SingleUse .
+
+MultiUse  = Path "." "{" UsePath { "," UsePath } [ "," ] "}" .
+GlobUse   = Path "." "*" .
+SingleUse = UseKind Path [ "as" Ident ] .
+
+UseKind   = "fn" | "macro" | "type" | "trait" | "const" | "static" | "mod" .
+
 Path = PathComponent { "." PathComponent } .
 PathComponent = Ident [ GenericsArgs ] .
 
 Vis = "pub" .
 
-ProofStmts = { "#" ProofStmt "\n" } .
-ProofStmt = Expr ( "=>" | "<=>" ) Expr
-          | Expr
-          | "invariant" [ StringLiteral ] ":"
-          | "forall" Pattern [ "in" Expr ] ":"
-          | "exists" Pattern [ "in" Expr ] where ":" .
+ProofStmts = { ProofStmt ";" } .
+ProofStmt  = Invariant
+           | Forall
+           | Existential
+           | Implies
+           | DoubleImplies
+           | Expr .
+ProofBlock = ":" ProofStmt
+           | "{" ProofStmts "}" .
+Invariant     = "invariant" [ StringLiteral ] ProofBlock .
+Forall        = "forall" Pattern "in" Expr ProofBlock .
+Existential   = "exists" Pattern [ "in" Expr ] "where" Expr .
+Implies       = Expr "=>" Expr .
+DoubleImplies = Expr "<=>" Expr .
 
 > MacroParams = TODO
 > MacroBody = TODO
 
-FnParams = "(" [ FnParamsReceiver [ "," ] ] [ Field { "," Field } [ "," ] ] ")" .
-FnParamsReceiver = [ "&" [ Refinements ] ] [ "mut" ] "self" [ Refinements ] .
+FnParams = "(" MethodReceiver [ "," Field { "," Field } ] [ "," ] ")"
+         | "("                [     Field { "," Field } [ "," ] ] ")" .
+MethodReceiver = [ "&" [ Refinements ] [ "mut" ] ] "self" [ Refinements ] .
 
 ImplBody = "{" { Item } "}" .
 
 GenericsParams = "<" GenericsParam { "," GenericsParam } [ "," ] ">" .
 GenericsParam = Ident [ "::" TypeBound ] [ "=" Type ]
-             | "const" Ident ":" Type [ "=" Expr ] .
-             | "ref" Ident" .
+             | "const" Ident Field .
+             | "ref" Ident .
 
 GenericsArgs = "<" "(" GenericsArg { "," GenericsArg } [ "," ] ")" ">"
              | "<" GenericsArg ">"

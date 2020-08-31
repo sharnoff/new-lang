@@ -374,7 +374,7 @@ impl<'a> Type<'a> {
     }
 
     /// Returns whether the given token can start a type
-    fn is_starting_token(token_res: &Result<Token, token_tree::Error>) -> bool {
+    pub(super) fn is_starting_token(token_res: &Result<Token, token_tree::Error>) -> bool {
         match token_res {
             Ok(token) => match &token.kind {
                 // NamedType
@@ -397,6 +397,16 @@ impl<'a> Type<'a> {
                 token_tree::Error::UnclosedDelim(_, _, _) => true,
                 _ => false,
             },
+        }
+    }
+
+    /// Returns whether the given type requires a trailing delimiter
+    ///
+    /// This is concretely defined to be true if and only if the type is an enum or a struct.
+    pub(super) fn requires_trailing_delim(&self) -> bool {
+        match self {
+            Type::Enum(_) | Type::Struct(_) => true,
+            _ => false,
         }
     }
 }

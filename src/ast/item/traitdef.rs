@@ -35,6 +35,13 @@ pub struct TraitDef<'a> {
 }
 
 impl<'a> TraitDef<'a> {
+    /// Consumes a trait definition as a prefix of the given tokens
+    ///
+    /// The semantics for this function are identical to what's described in the documentation for
+    /// [`FnDecl::consume`]. For more information on the meaning of these arguments, please refer
+    /// to that function.
+    ///
+    /// [`FnDecl::consume`]: ../fndecl/struct.FnDecl.html#method.consume
     pub(super) fn consume(
         tokens: TokenSlice<'a>,
         ident_idx: usize,
@@ -43,7 +50,97 @@ impl<'a> TraitDef<'a> {
         errors: &mut Vec<Error<'a>>,
         proof_stmts: Option<ProofStmts<'a>>,
         vis: Option<Vis<'a>>,
-    ) -> Result<TraitDef<'a>, Option<usize>> {
-        todo!()
+    ) -> Result<TraitDef<'a>, ItemParseErr> {
+        // We'll do a little bit of setup here.
+
+        let mut consumed = ident_idx;
+
+        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        macro_rules! err {
+            () => {{
+                return Err(ItemParseErr { consumed });
+            }};
+        }
+
+        let kwd_idx = ident_idx - 1;
+        let kwd_token = assert_token!(
+            tokens.get(kwd_idx) => "keyword `trait`",
+            Ok(t) && TokenKind::Keyword(Kwd::Trait) => t,
+        );
+
+        // We're expecting a name at `ident_idx`
+        let name = expect!((
+            Ok(t),
+            TokenKind::Ident(name) => Ident { src: t, name },
+            @else { err!() } => ExpectedKind::Ident(IdentContext::TraitDef { kwd_token }),
+        ));
+
+        consumed += 1;
+
+        let generic_params = GenericsParams::try_consume(
+            &tokens[consumed..],
+            GenericsParamsContext::TraitDef(&tokens[kwd_idx..consumed]),
+            |_| true,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(ItemParseErr::add(consumed))?;
+
+        consumed += generic_params.consumed();
+
+        // If we find a double-colon ("::") after the trait name with generic parameters, we'll be
+        // expecting a type bound.
+        let super_traits = expect!((
+            Ok(_),
+            TokenKind::Punctuation(Punc::DoubleColon) => {
+                consumed += 1;
+
+                let bound = TypeBound::consume(
+                    &tokens[consumed..],
+                    ends_early,
+                    containing_token,
+                    errors,
+                ).map_err(ItemParseErr::add(consumed))?;
+
+                consumed += bound.consumed();
+
+                Some(bound)
+            },
+            _ => None,
+            @else { err!() } => ExpectedKind::TraitDefTypeBoundOrImplBody,
+        ));
+
+        // For the body of the trait definition, we're either expecting a semicolon or a
+        // curly-brace enclosed block.
+        let mut body = None;
+        expect!((
+            Ok(token),
+            TokenKind::Punctuation(Punc::Semi) => consumed += 1,
+            TokenKind::Tree { delim: Delim::Curlies, inner, .. } => {
+                consumed += 1;
+                let ends_early = false;
+
+                let (items, poisoned) =
+                    Item::parse_all(inner, ends_early, Some(token), errors);
+
+                body = Some(ImplBody {
+                    src: token,
+                    items,
+                    poisoned,
+                });
+            },
+            @else { err!() } => ExpectedKind::TraitDefBody,
+        ));
+
+        Ok(TraitDef {
+            src: &tokens[..consumed],
+            proof_stmts,
+            vis,
+            name,
+            generic_params,
+            super_traits,
+            body,
+        })
     }
 }

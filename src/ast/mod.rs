@@ -35,28 +35,11 @@ type TokenSlice<'a> = &'a [TokenResult<'a>];
 type TokenResult<'a> = Result<Token<'a>, token_tree::Error<'a>>;
 
 pub fn try_parse<'a>(
-    mut tokens: TokenSlice<'a>,
+    tokens: TokenSlice<'a>,
     ends_early: bool,
-) -> (Vec<Item<'a>>, Vec<Error<'a>>) {
-    let mut items = Vec::new();
+) -> (Vec<Item<'a>>, bool, Vec<Error<'a>>) {
     let mut errors = Vec::new();
 
-    while !tokens.is_empty() {
-        match Item::consume(tokens, ends_early, None, &mut errors) {
-            Ok(item) => {
-                tokens = &tokens[item.consumed()..];
-                items.push(item);
-            }
-            Err(Some(consumed)) => tokens = &tokens[consumed..],
-            Err(None) => break,
-        }
-    }
-
-    (items, errors)
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum Node<'a> {
-    Item(&'a Item<'a>),
-    Expr(&'a Expr<'a>),
+    let (items, poisoned) = Item::parse_all(tokens, ends_early, None, &mut errors);
+    (items, poisoned, errors)
 }

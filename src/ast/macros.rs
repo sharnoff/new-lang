@@ -125,14 +125,22 @@ macro_rules! make_expect {
         $ends_early:expr,
         $containing_token:expr,
         $errors:expr,
-        (Ok(_), $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
-        @else(return $opt:ident) => $($expected:tt)+)
+        (
+            Ok(_),
+            $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
+            $(@err $($err_kind:pat)|+ $(if $err_cond:expr)? => $err:expr,)*
+            @else $else_tt:tt => $($expected:tt)+
+        )
     ) => {
         make_expect!(
             @inner:
             $tokens, $consumed, $ends_early, $containing_token, $errors,
-            (Ok(_t), $($($token_kind)|+ $(if $cond)? => $arm,)+
-            @else(return $opt) => $($expected)+)
+            (
+                Ok(_t),
+                $($($token_kind)|+ $(if $cond)? => $arm,)+
+                $(@err $($err_kind)|+ $(if $err_cond)? => $err,)*
+                @else $else_tt => $($expected)+
+            )
         )
     };
     (
@@ -142,31 +150,40 @@ macro_rules! make_expect {
         $ends_early:expr,
         $containing_token:expr,
         $errors:expr,
-        (Ok($token:ident), $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
-        @else(return $opt:ident) => $($expected:tt)+)
+        (
+            Ok($token:ident),
+            $($($token_kind:pat)|+ $(if $cond:expr)? => $arm:expr,)+
+            $(@err $($err_kind:pat)|+ $(if $err_cond:expr)? => $err:expr,)*
+            @else $else_tt:tt => $($expected:tt)+
+        )
     ) => {{
         #[allow(unreachable_patterns)]
         match $tokens.get($consumed) {
             // If we run out of tokens (but it ended early), there's no point in reporting the same
             // error twice
-            None if $ends_early => return Err(None),
+            None if $ends_early => make_expect!(@do_else: $else_tt, $consumed),
             // Otherwise, we *were* expecting the given token kind!
             None => {
                 make_expect!(@push: $errors, end_source!($containing_token), $($expected)+);
-                make_expect!(@inner_return: $opt, $consumed);
+                make_expect!(@do_else: $else_tt, $consumed);
             }
 
             Some(Err(_e)) => {
-                make_expect!(@push: $errors, Source::TokenResult(Err(*_e)), $($expected)+);
-                make_expect!(@inner_return: $opt, $consumed);
+                // Commented out because we probably don't want to *normally* generate double errors
+                // make_expect!(@push: $errors, Source::TokenResult(Err(*_e)), $($expected)+);
+                make_expect!(@do_else: $else_tt, $consumed);
             }
 
             Some(Ok($token)) => match &$token.kind {
                 $($($token_kind)|+ $(if $cond)? => $arm,)+
+                $($($err_kind)|+ $(if $err_cond)? => {
+                    $errors.push($err);
+                    make_expect!(@do_else: $else_tt, $consumed);
+                })*
                 #[allow(unreachable_patterns)]
                 _ => {
                     make_expect!(@push: $errors, Source::TokenResult(Ok($token)), $($expected)+);
-                    make_expect!(@inner_return: $opt, $consumed);
+                    make_expect!(@do_else: $else_tt, $consumed);
                 }
             }
         }
@@ -178,8 +195,9 @@ macro_rules! make_expect {
             found: $source,
         });
     }};
-    (@inner_return: Some, $consumed:expr) => {{ return Err(Some($consumed)) }};
-    (@inner_return: None, $consumed:expr) => {{ return Err(None) }};
+    (@do_else: (return Some), $consumed:expr) => {{ return Err(Some($consumed)) }};
+    (@do_else: (return None), $consumed:expr) => {{ return Err(None) }};
+    (@do_else: { $exec:expr }, $consumed:expr) => {{ $exec }};
 }
 
 macro_rules! assert_token {

@@ -2282,45 +2282,36 @@ impl<'a> BlockExpr<'a> {
         // using `Item::consume` for anything that looks like an item, and doing a kind of dynamic
         // expression parsing for everything else. We'll get more into that later.
 
+        let mut consumed = 0;
+        let mut stmts = Vec::new();
+        let mut poisoned = false;
+
+        // A temporary macro for reducing the size of the match block for extracting the curly
+        // braces.
+        macro_rules! err {
+            ($source:expr) => {{
+                errors.push(Error::Expected {
+                    kind: ExpectedKind::BlockExpr,
+                    found: $source,
+                });
+
+                Err(())
+            }};
+        }
+
         let (src, inner, ends_early) = match token {
-            None if ends_early => return Err(()),
-            None => {
-                errors.push(Error::Expected {
-                    kind: ExpectedKind::BlockExpr,
-                    found: none_source,
-                });
-
-                return Err(());
-            }
-            Some(Err(token_tree::Error::UnclosedDelim(Delim::Curlies, _, _))) => return Err(()),
-            Some(Err(e)) => {
-                errors.push(Error::Expected {
-                    kind: ExpectedKind::BlockExpr,
-                    found: Source::TokenResult(Err(*e)),
-                });
-
-                return Err(());
-            }
             Some(Ok(t)) => match &t.kind {
                 TokenKind::Tree {
                     delim: Delim::Curlies,
                     inner,
                     ..
                 } => (t, inner, false),
-                _ => {
-                    errors.push(Error::Expected {
-                        kind: ExpectedKind::BlockExpr,
-                        found: Source::TokenResult(Ok(t)),
-                    });
-
-                    return Err(());
-                }
+                _ => return err!(Source::TokenResult(Ok(t))),
             },
+            Some(Err(_)) => return Err(()),
+            None if ends_early => return Err(()),
+            None => return err!(none_source),
         };
-
-        let mut consumed = 0;
-        let mut stmts = Vec::new();
-        let mut poisoned = false;
 
         // A helper macro for handling results
         macro_rules! handle {
@@ -2343,22 +2334,8 @@ impl<'a> BlockExpr<'a> {
         let tail_expr = loop {
             let next_token = match inner.get(consumed) {
                 None => break None,
-                // All delimiters can represent valid expressions (and hence can start valid
-                // statements) - We won't double-log these errors, but they *are* errors so we'll
-                // stop parsing at this level
-                Some(Err(token_tree::Error::UnclosedDelim(_, _, _))) => {
-                    poisoned = true;
-                    break None;
-                }
-                // For other errors, we'll record them and then break the loop
+                // If there was a tokenizer error, we'll just break out of the loop
                 Some(Err(e)) => {
-                    if !poisoned {
-                        errors.push(Error::Expected {
-                            kind: ExpectedKind::Stmt,
-                            found: Source::TokenResult(Err(*e)),
-                        });
-                    }
-
                     poisoned = true;
                     break None;
                 }
@@ -2371,15 +2348,24 @@ impl<'a> BlockExpr<'a> {
                 continue;
             }
 
-            if BlockExpr::starts_item(next_token) {
+            if Item::is_starting_token(next_token) {
                 let item_res = Item::consume(&inner[consumed..], ends_early, Some(src), errors);
-                handle!(item_res => {
+                match item_res {
                     Ok(item) => {
                         consumed += item.consumed();
                         stmts.push(Stmt::Item(item));
-                        continue;
-                    },
-                });
+                    }
+                    Err(ItemParseErr { consumed: c }) => {
+                        poisoned = true;
+                        consumed += c;
+                        match Item::seek_next_start(&inner[consumed..]) {
+                            Some(idx) => consumed += idx,
+                            None => break None,
+                        }
+                    }
+                }
+
+                continue;
             }
 
             // If we didn't find an item, we'll parse an expression, which may have a trailing
@@ -2468,48 +2454,6 @@ impl<'a> BlockExpr<'a> {
             tail: tail_expr.map(Box::new),
             poisoned,
         })
-    }
-
-    /// Returns whether the given token starts an item, or whether it must be
-    fn starts_item(token: &Token) -> bool {
-        // Whether a token starts an item is generally pretty simple. There's a set of keywords
-        // that are allowed, along with the optional "#" that might indicate the start of some set
-        // of proof lines.
-        match &token.kind {
-            TokenKind::ProofLines(_) => true,
-            TokenKind::Keyword(k) => match k {
-                // FnDecl:
-                //   ProofStmts Vis [ "const" ] [ "pure" ] "fn" ...
-                Kwd::Pub | Kwd::Const | Kwd::Pure | Kwd::Fn
-                // MacroDef:
-                //   ProofStmts Vis "macro" ...
-                | Kwd::Macro
-                // TypeDecl
-                //   ProofStmts Vis "type" ...
-                | Kwd::Type
-                // TraitDef
-                //   ProofStmts Vis "trait" ...
-                | Kwd::Trait
-                // ImplBlock
-                //   "impl" ...
-                | Kwd::Impl
-                // ConstStmt:
-                //   Vis "const" ...
-                // StaticStmt:
-                //   ProofStmts Vis "static" ...
-                | Kwd::Static
-                // ImportStmt
-                //   "import" ...
-                | Kwd::Import
-                // UseStmt
-                //   Vis "use" ...
-                | Kwd::Use => true,
-
-                // Everything else can't start an item
-                _ => false,
-            },
-            _ => false,
-        }
     }
 
     /// Returns whether an expression requires a trailing semicolon as part of a block
