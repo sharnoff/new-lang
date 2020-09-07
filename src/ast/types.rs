@@ -1243,7 +1243,7 @@ impl<'a> Refinements<'a> {
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<Refinements<'a>>, Option<usize>> {
-        let pipe_token = assert_token!(
+        assert_token!(
             tokens.first() => "pipe token (`|`)",
             Ok(t) && TokenKind::Punctuation(Punc::Or) => t,
         );
@@ -1353,7 +1353,7 @@ impl<'a> Refinements<'a> {
             // ambiguous!
             (true, true) => {
                 errors.push(Error::AmbiguousExprAfterRefinements {
-                    refinements_src: &tokens[..consumed],
+                    refinements_src: &tokens[..=end_pipe_idx],
                     ambiguous_token: next_token,
                 });
 

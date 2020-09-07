@@ -6,7 +6,6 @@ mod db;
 mod error;
 mod token_tree;
 mod tokens;
-mod types;
 mod utils;
 
 use db::Files;

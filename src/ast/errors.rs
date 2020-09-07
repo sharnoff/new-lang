@@ -300,7 +300,6 @@ pub enum ExpectedKind<'a> {
 
     Ident(IdentContext<'a>),
     ExprLhs,
-    GenericsArgOrExpr,
     LetColonOrEq(LetContext<'a>),
     LetEq(LetContext<'a>),
     ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
@@ -318,7 +317,6 @@ pub enum ExpectedKind<'a> {
     MatchArmDelim(TokenSlice<'a>), // The arm after which we're expecting a delimiter
     DotAccess(&'a Token<'a>),      // The dot token
     BlockExpr,
-    Stmt,
     TrailingSemi {
         expr_src: TokenSlice<'a>,
     },
@@ -436,7 +434,6 @@ pub enum IdentContext<'a> {
     /// Path components expect an identifier
     PathComponent(PathComponentContext<'a>),
     PatternPath(PatternContext<'a>, TokenSlice<'a>),
-    NamedExpr(super::ExprDelim),
     StructTypeField,
     EnumVariant,
     Field(FieldContext),

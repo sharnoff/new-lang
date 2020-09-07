@@ -423,7 +423,6 @@ impl<'a> GenericTypeParam<'a> {
         let mut consumed = 0;
         make_expect!(tokens, consumed, ends_early, containing_token, errors);
 
-        let ident_ctx = IdentContext::TypeParam(ctx, prev_tokens);
         let name = Ident::parse(
             tokens.get(consumed),
             IdentContext::TypeParam(ctx, prev_tokens),

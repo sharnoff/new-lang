@@ -58,6 +58,7 @@ macro_rules! binding_power {
                 unreachable!()
             }
 
+            /*
             /// Returns the `BindingPower` variant corresponding to
             #[allow(unused_assignments)]
             pub fn inc(&self) -> Option<BindingPower> {
@@ -74,6 +75,7 @@ macro_rules! binding_power {
 
                 unreachable!()
             }
+            */
         }
 
         impl PartialOrd for $binding_power {
@@ -100,12 +102,16 @@ macro_rules! binding_power {
     }
 }
 
+/*
+Commented out because it was previously used in `BindingPower::inc`
+
 // A helper macro for yielding the first expression of a list
 macro_rules! first {
     ($head:expr $(, $tail:expr)*) => {{
         $head
     }};
 }
+*/
 
 // We need to have rustfmt skip this, because it otherwise indents one further on every additional
 // run

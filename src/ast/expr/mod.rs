@@ -590,9 +590,9 @@ binding_power! {
     // There's commentary on each of the sections below, with reference to other languages.
     #[derive(Debug, Copy, Clone)]
     pub enum BindingPower {
-        // A reserved binding power primarily for internal use as a way of signifying the highest
-        // binding power, plus one.
-        ReservedHighest;
+        // // A reserved binding power primarily for internal use as a way of signifying the highest
+        // // binding power, plus one.
+        // ReservedHighest;
 
         // (Almost) All of the postfix operators have the highest binding power, because (almost)
         // all of them should apply before any prefix operators. The only one we leave is type
@@ -1006,10 +1006,10 @@ impl<'a> Expr<'a> {
     /// this is not the case.
     ///
     /// The delimited context here is provided so that better error messages can be given on
-    /// failure.
+    /// failure. (NOTE: Currently unimplemented)
     pub(super) fn consume_path_component(
         tokens: TokenSlice<'a>,
-        delim: ExprDelim,
+        _delim: ExprDelim,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -1040,7 +1040,7 @@ impl<'a> Expr<'a> {
         //
         // Essentially: We'll only continue (and try to parse generics args) if we find the
         // less-than binary operator. Other operators, like "<=" or "<<" cannot be used because the
-        // trailing "<" or "=" can't start an exprssion.
+        // trailing "<" or "=" can't start an expression.
         match BinOp::try_consume(&tokens[1..], Restrictions::default()) {
             Some((BinOp::Lt, _)) => (),
             _ => return_name!(),
@@ -1920,17 +1920,17 @@ impl BinOp {
 
         match &ts {
             // All of the assignment operators are composed of multiple tokens, so we do those
-            // first
-            punc!(Plus, Eq) => op!(AddAssign, 2),
-            punc!(Minus, Eq) => op!(SubAssign, 2),
-            punc!(Star, Eq) => op!(MulAssign, 2),
-            punc!(Slash, Eq) => op!(DivAssign, 2),
-            punc!(Percent, Eq) => op!(ModAssign, 2),
-            punc!(And, Eq) => op!(BitAndAssign, 2),
-            punc!(Or, Eq) => op!(BitOrAssign, 2),
-            punc!(Lt, Lt, Eq) => op!(ShlAssign, 3),
-            punc!(Gt, Gt, Eq) => op!(ShrAssign, 3),
-            punc!(Eq) => op!(Assign),
+            // first. They all require assignment to be available
+            punc!(Plus, Eq) if restrictions.allows_assignment() => op!(AddAssign, 2),
+            punc!(Minus, Eq) if restrictions.allows_assignment() => op!(SubAssign, 2),
+            punc!(Star, Eq) if restrictions.allows_assignment() => op!(MulAssign, 2),
+            punc!(Slash, Eq) if restrictions.allows_assignment() => op!(DivAssign, 2),
+            punc!(Percent, Eq) if restrictions.allows_assignment() => op!(ModAssign, 2),
+            punc!(And, Eq) if restrictions.allows_assignment() => op!(BitAndAssign, 2),
+            punc!(Or, Eq) if restrictions.allows_assignment() => op!(BitOrAssign, 2),
+            punc!(Lt, Lt, Eq) if restrictions.allows_assignment() => op!(ShlAssign, 3),
+            punc!(Gt, Gt, Eq) if restrictions.allows_assignment() => op!(ShrAssign, 3),
+            punc!(Eq) if restrictions.allows_assignment() => op!(Assign),
 
             punc!(Plus) => op!(Add),
             punc!(Minus) => op!(Sub),
@@ -2416,7 +2416,7 @@ impl<'a> BlockExpr<'a> {
             let next_token = match inner.get(consumed) {
                 None => break None,
                 // If there was a tokenizer error, we'll just break out of the loop
-                Some(Err(e)) => {
+                Some(Err(_)) => {
                     poisoned = true;
                     break None;
                 }
