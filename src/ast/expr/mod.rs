@@ -1681,6 +1681,11 @@ impl ExprDelim {
             _ => false,
         }
     }
+
+    /// Returns whether the `ExprDelim` includes commas; defined as `!ExprDelim::is_nothing`.
+    pub fn has_comma(&self) -> bool {
+        !self.is_nothing()
+    }
 }
 
 impl<'a> PrefixOp<'a> {
@@ -1809,6 +1814,7 @@ impl<'a> PrefixOp<'a> {
                         let_kwd,
                         pat: pat_src,
                     }),
+                    Restrictions::default(),
                     ends_early,
                     containing_token,
                     errors,
@@ -2082,14 +2088,10 @@ impl<'a> PostfixOp<'a> {
                     return Err(None);
                 }
                 TokenKind::Punctuation(Punc::Tilde) => {
-                    // NOTE: This implementation does *not* disambiguate between refinements
-                    // following the type versus bitwise-or. This might be improved in the future,
-                    // but currently it's not a big priority at the moment.
-                    //
-                    // TODO?
                     let res = Type::consume(
                         &tokens[1..],
                         TypeContext::TypeBinding { tilde: fst_token },
+                        restrictions,
                         ends_early,
                         containing_token,
                         errors,

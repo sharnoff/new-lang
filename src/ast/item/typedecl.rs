@@ -137,6 +137,7 @@ impl<'a> TypeDecl<'a> {
                 let t = Type::consume(
                     &tokens[consumed..],
                     TypeContext::TypeDecl,
+                    Restrictions::default(),
                     ends_early,
                     containing_token,
                     errors,

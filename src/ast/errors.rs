@@ -156,6 +156,29 @@ pub enum Error<'a> {
 
     /// Proof statements are currently unimplemented
     ProofStmtsUnimplemented { proof_lines: &'a Token<'a> },
+
+    /// Very occasionally, we'll have token following pipes that *might* be refinements in a way
+    /// that is properly ambiguous. We don't allow that as valid syntax, so we request that the user
+    /// disambiguate with parentheses.
+    ///
+    /// For context, here's an example of the type of expression that would produce this error:
+    /// ```text
+    /// (foo, bar ~ Vec |len == 4, baz| -3)
+    /// //          ^^^^^^^^^^^^^  ^^^^^^^ perhaps a single tuple entry?
+    /// //                \- the start of refinements?
+    /// ```
+    /// This should be rewritten as either of the following:
+    /// ```text
+    /// (foo, (bar ~ Vec |len == 4, baz|), -3)
+    /// (foo, (bar ~ Vec | len == 4), baz | -3)
+    /// ```
+    ///
+    /// This can happen for any token that can both start an expression and continue a fully-formed
+    /// one; it cannot happen for anything else.
+    AmbiguousExprAfterRefinements {
+        refinements_src: TokenSlice<'a>,
+        ambiguous_token: &'a Token<'a>,
+    },
 }
 
 /// An individual source for a range of the source text, used within error messages.

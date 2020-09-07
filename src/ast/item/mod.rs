@@ -660,6 +660,7 @@ impl<'a> FieldBound<'a> {
                 let ty = Type::consume(
                     &tokens[1..],
                     TypeContext::FieldBound(ctx),
+                    Restrictions::default(),
                     ends_early,
                     containing_token,
                     errors,
@@ -695,7 +696,13 @@ impl<'a> TypeBound<'a> {
         errors: &mut Vec<Error<'a>>,
     ) -> Result<TypeBound<'a>, Option<usize>> {
         // Type bounds may optionally start with refinements, so we'll check for those first
-        let refinements = Refinements::try_consume(tokens, ends_early, containing_token, errors)?;
+        let refinements = Refinements::try_consume(
+            tokens,
+            Restrictions::default(),
+            ends_early,
+            containing_token,
+            errors,
+        )?;
 
         let mut consumed = refinements.consumed();
 

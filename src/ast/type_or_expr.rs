@@ -205,8 +205,15 @@ impl<'a> TypeOrExpr<'a> {
                 .map(MaybeTypeOrExpr::Expr)
             }
             Marker::Type => {
-                return Type::consume(tokens, type_ctx, ends_early, containing_token, errors)
-                    .map(MaybeTypeOrExpr::Type)
+                return Type::consume(
+                    tokens,
+                    type_ctx,
+                    restrictions,
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(MaybeTypeOrExpr::Type)
             }
         }
     }
@@ -318,6 +325,7 @@ impl<'a> TypeOrExpr<'a> {
         let maybe_refs: Option<Refinements> = Refinements::consume_if_not_expr(
             &tokens[consumed..],
             expr_delim,
+            restrictions,
             ends_early,
             containing_token,
             errors,

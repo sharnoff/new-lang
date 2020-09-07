@@ -240,9 +240,15 @@ impl<'a> Type<'a> {
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
+    ///
+    /// The [`Restrictions`] passed in serve to give the restrictions for parsing refinement
+    /// expressions, in the event that is required.
+    ///
+    /// [`Restrictions`]: ../expr/restrictions/struct.Restrictions.html
     pub fn consume(
         tokens: TokenSlice<'a>,
         ctx: TypeContext<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -252,7 +258,7 @@ impl<'a> Type<'a> {
         // for special cases.
 
         macro_rules! consume {
-            ($type:ident, $variant:ident $(, $ctx:expr)?) => {{
+            ($type:ident, $variant:ident $(, $ctx:expr)*) => {{
                 $type::consume(tokens, $($ctx,)? ends_early, containing_token, errors).map(Type::$variant)
             }};
         }
@@ -262,12 +268,12 @@ impl<'a> Type<'a> {
         make_expect!(tokens, 0, ends_early, containing_token, errors);
         expect!((
             Ok(fst),
-            Ident(_) => consume!(NamedType, Named),
-            Punctuation(Punc::And) => consume!(RefType, Ref, ctx),
-            Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut, ctx),
+            Ident(_) => consume!(NamedType, Named, restrictions),
+            Punctuation(Punc::And) => consume!(RefType, Ref, ctx, restrictions),
+            Punctuation(Punc::Not) | Keyword(Kwd::Mut) => consume!(MutType, Mut, ctx, restrictions),
             Tree { delim, inner, .. } => {
                 match delim {
-                    Delim::Squares => consume!(ArrayType, Array, ctx),
+                    Delim::Squares => consume!(ArrayType, Array, ctx, restrictions),
                     Delim::Curlies => StructType::parse(fst, inner, errors, ctx).map(Type::Struct)
                         .map_err(|()| Some(1)),
                     Delim::Parens => TupleType::parse(fst, inner, errors, ctx).map(Type::Tuple)
@@ -416,6 +422,7 @@ impl<'a> NamedType<'a> {
     /// the number of tokens that were marked as invalid here.
     fn consume(
         tokens: TokenSlice<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -427,9 +434,14 @@ impl<'a> NamedType<'a> {
         let path = Path::consume(tokens, ends_early, containing_token, errors).map_err(|_| None)?;
         let mut consumed = path.consumed();
 
-        let refinements =
-            Refinements::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
-                .map_err(|_| None)?;
+        let refinements = Refinements::try_consume(
+            &tokens[consumed..],
+            restrictions,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(|_| None)?;
         consumed += refinements.consumed();
 
         Ok(NamedType {
@@ -448,6 +460,7 @@ impl<'a> RefType<'a> {
     fn consume(
         tokens: TokenSlice<'a>,
         ctx: TypeContext<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -460,15 +473,21 @@ impl<'a> RefType<'a> {
 
         let mut consumed = 1;
 
-        let refinements =
-            Refinements::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
-                .map_err(p!(Some(c) => Some(c + consumed)))?;
+        let refinements = Refinements::try_consume(
+            &tokens[consumed..],
+            Restrictions::default(),
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(c + consumed)))?;
 
         consumed += refinements.consumed();
 
         let ty = Type::consume(
             &tokens[consumed..],
             ctx,
+            restrictions,
             ends_early,
             containing_token,
             errors,
@@ -491,6 +510,7 @@ impl<'a> MutType<'a> {
     fn consume(
         tokens: TokenSlice<'a>,
         ctx: TypeContext<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -515,6 +535,7 @@ impl<'a> MutType<'a> {
         Type::consume(
             &tokens[consumed..],
             ctx,
+            restrictions,
             ends_early,
             containing_token,
             errors,
@@ -536,6 +557,7 @@ impl<'a> ArrayType<'a> {
     fn consume(
         tokens: TokenSlice<'a>,
         ctx: TypeContext<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -548,8 +570,15 @@ impl<'a> ArrayType<'a> {
         // For just the square-brackets portion, we're expecting something of the form:
         //   "[" Type [ ";" Expr ] "]"
         // So we can plainly do the following pieces:
-        let ty = Type::consume(inner, ctx, inner_ends_early, Some(fst_token), errors)
-            .map_err(|_| Some(1))?;
+        let ty = Type::consume(
+            inner,
+            ctx,
+            Restrictions::default(),
+            inner_ends_early,
+            Some(fst_token),
+            errors,
+        )
+        .map_err(|_| Some(1))?;
 
         let mut length = None;
         let mut poisoned = false;
@@ -603,9 +632,14 @@ impl<'a> ArrayType<'a> {
         }
 
         // The final thing we need to do is to check for refinements in the outer token tree!
-        let refinements =
-            Refinements::try_consume(&tokens[1..], ends_early, containing_token, errors)
-                .map_err(p!(Some(c) => Some(c + 1)))?;
+        let refinements = Refinements::try_consume(
+            &tokens[1..],
+            restrictions,
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(c + 1)))?;
 
         let consumed = 1 + refinements.consumed();
 
@@ -690,6 +724,7 @@ impl<'a> StructTypeField<'a> {
         let ty_res = Type::consume(
             &tokens[consumed..],
             ctx,
+            Restrictions::default(),
             ends_early,
             Some(containing_token),
             errors,
@@ -801,6 +836,7 @@ impl<'a> TupleTypeElement<'a> {
         let ty = Type::consume(
             &tokens[consumed..],
             ctx,
+            Restrictions::default(),
             ends_early,
             Some(containing_token),
             errors,
@@ -923,6 +959,7 @@ impl<'a> EnumVariant<'a> {
                 let t = Type::consume(
                     &tokens[consumed..],
                     ctx,
+                    Restrictions::default(),
                     ends_early,
                     Some(containing_token),
                     errors,
@@ -1126,12 +1163,14 @@ pub struct AmbiguousGenericsArg<'a> {
 }
 
 impl<'a> Refinements<'a> {
-    /// Attempts to consume refinements as part of a type
+    /// Attempts to consume refinements as part of a type, additionally given the expression
+    /// restrictions it is subject to
     ///
     /// Please note that this function does not handle any ambiguity that may be present when types
     /// are being parsed inside an expression context.
     pub fn try_consume(
         tokens: TokenSlice<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -1158,8 +1197,13 @@ impl<'a> Refinements<'a> {
                 }
             }
 
-            let res =
-                Refinement::consume(&tokens[consumed..], ends_early, containing_token, errors);
+            let res = Refinement::consume(
+                &tokens[consumed..],
+                restrictions,
+                ends_early,
+                containing_token,
+                errors,
+            );
             match res {
                 Ok(re) => {
                     consumed += re.consumed();
@@ -1187,14 +1231,135 @@ impl<'a> Refinements<'a> {
         }))
     }
 
+    /// Under the assumption that the first token is a pipe (`|`), consumes refinements if they
+    /// aren't part of an expression.
+    ///
+    /// This function will panic if the first token is not a pipe.
     pub fn consume_if_not_expr(
         tokens: TokenSlice<'a>,
         expr_delim: ExprDelim,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<Option<Refinements<'a>>, Option<usize>> {
-        todo!()
+        let pipe_token = assert_token!(
+            tokens.first() => "pipe token (`|`)",
+            Ok(t) && TokenKind::Punctuation(Punc::Or) => t,
+        );
+
+        let mut consumed = 1;
+
+        // We're doing some speculative parsing, so we'll store any errors generated until we
+        // commit to them (through returning an error; we'll just use `Refinements::try_consume` if
+        // we recognize that the tokens *do* represent refinements).
+        let mut local_errors = Vec::new();
+
+        // Because of this speculation, we'll define a helper macro for handling the return in the
+        // case of it being refinements. (Expressions are simple; it's just `return Ok(None)`).
+        macro_rules! return_refinements {
+            () => {{
+                return Refinements::try_consume(
+                    tokens,
+                    restrictions,
+                    ends_early,
+                    containing_token,
+                    errors,
+                );
+            }};
+        }
+
+        // From a high level, our strategy is to repeatedly parse individual refinements, and if we
+        // encounter any that *aren't* simple expressions, we return.
+        //
+        // In practice, we won't need to parse multiple very often, because we take `expr_delim`
+        // into account: encountering a trailing comma where the expression context wouldn't allow
+        // one means that this *must* be refinements. Likewise, `Ident ":"` isn't allowed in
+        // refinements, so we can infer the tokens are an expression.
+
+        // There must always be a refinement (or expression, which is included in the options for
+        // refinements) following the leading pipe, hence why this loop is not conditional on there
+        // being tokens remaining in the input.
+        loop {
+            let refinement = Refinement::consume(
+                &tokens[consumed..],
+                restrictions,
+                ends_early,
+                containing_token,
+                &mut local_errors,
+            )
+            .map_err(|_| None)?;
+
+            match refinement {
+                Refinement::Ref(_) | Refinement::Init(_) => return_refinements!(),
+                Refinement::Expr(ex) => consumed += ex.consumed(),
+            }
+
+            // After each refinement, we check what follows it.
+            //  * If there's nothing left, then we didn't get to the closing pipe for refinements -
+            //    it must be an expression.
+            //  * If there's a comma (and the expression delimiter doesn't allow one), we know it's
+            //    refinements.
+            //  * If there's a closing pipe, we break out of the loop (NOTE: this is the only
+            //    condition that breaks the loop).
+            // --> In any other case, we assume that this is an expression, so that - if it is
+            //     invalid - more context can be given.
+            match kind!(tokens)(consumed) {
+                Some(TokenKind::Punctuation(Punc::Comma)) if expr_delim.has_comma() => (),
+                Some(TokenKind::Punctuation(Punc::Comma)) => consumed += 1,
+                Some(TokenKind::Punctuation(Punc::Or)) => break,
+                _ => return Ok(None),
+            }
+        }
+
+        // We only *break* out of the loop when we find a trailing pipe
+        let end_pipe_idx = consumed;
+        consumed += 1;
+
+        // We then match on the token immediately following the pipe to determine whether the input
+        // tokens represented refinements or not.
+        //
+        // Essentially: If the pipe was part of an expression, we'd expect a token that can start
+        // an expression to follow this. If it was part of refinements, we'd expect something
+        // *other* than that.
+        //
+        // The only additional thing to note is that there's overlap between the set of tokens that
+        // can continue from a complete expression and those that can start a new one - these all
+        // cause ambiguity that we'll disallow, requesting manual disambiguation by the user.
+        //
+        // With that out of the way, we'll finish off the parsing here.
+        // First up: if we don't have any tokens left, this must have been refinements.
+        let next_token = match tokens.get(consumed) {
+            None => return_refinements!(),
+            Some(Err(_)) => return Err(None),
+            Some(Ok(t)) => t,
+        };
+
+        // Otherwise, we'll check if the next token can start or continue an expression
+        let can_start = Expr::is_starting_token(next_token);
+        let can_cont = Expr::can_continue_with(&tokens[consumed..], restrictions);
+
+        match (can_start, can_cont) {
+            // If the next token can't start an expression, then the trailing pipe couldn't have
+            // been a binary operator.
+            (false, _) => return_refinements!(),
+
+            // If the next token can start an expression, but can't continue one, the refinements
+            // here *couldn't* have been part of the left-hand-side expression - so there weren't
+            // refinements.
+            (true, false) => return Ok(None),
+
+            // Otherwise, if the next tokens can start an expression AND continue, this is
+            // ambiguous!
+            (true, true) => {
+                errors.push(Error::AmbiguousExprAfterRefinements {
+                    refinements_src: &tokens[..consumed],
+                    ambiguous_token: next_token,
+                });
+
+                return Err(Some(consumed + 1));
+            }
+        }
     }
 }
 
@@ -1204,6 +1369,7 @@ impl<'a> Refinement<'a> {
     /// This function makes no assumptions about its input.
     fn consume(
         tokens: TokenSlice<'a>,
+        restrictions: Restrictions,
         ends_early: bool,
         containing_token: Option<&'a Token<'a>>,
         errors: &mut Vec<Error<'a>>,
@@ -1250,7 +1416,7 @@ impl<'a> Refinement<'a> {
             (Some(TokenKind::Keyword(Kwd::Ref)), _) => Expr::consume(
                 &tokens[1..],
                 ExprDelim::Comma,
-                Restrictions::default().no_pipe(),
+                restrictions.no_pipe(),
                 ends_early,
                 containing_token,
                 errors,
@@ -1264,7 +1430,7 @@ impl<'a> Refinement<'a> {
             _ => Expr::consume(
                 tokens,
                 ExprDelim::Comma,
-                Restrictions::default().no_pipe(),
+                restrictions.no_pipe(),
                 ends_early,
                 containing_token,
                 errors,

@@ -244,6 +244,7 @@ impl<'a> FnDecl<'a> {
                     let ty = Type::consume(
                         &tokens[consumed..],
                         TypeContext::FnDeclReturn(&tokens[..consumed]),
+                        Restrictions::default(),
                         ends_early,
                         containing_token,
                         errors,
@@ -446,6 +447,7 @@ impl<'a> MethodReceiver<'a> {
 
                 let refinements = Refinements::try_consume(
                     &tokens[consumed..],
+                    Restrictions::default(),
                     ends_early,
                     Some(containing_token),
                     errors,
@@ -482,6 +484,7 @@ impl<'a> MethodReceiver<'a> {
         // And then, as our final component, we'll see if there's any refinements on `self`:
         let self_refinements = Refinements::try_consume(
             &tokens[consumed..],
+            Restrictions::default(),
             ends_early,
             Some(containing_token),
             errors,

@@ -127,6 +127,7 @@ impl<'a> ImplBlock<'a> {
                 TokenKind::Punctuation(Punc::Or) => {
                     let refinements = Refinements::try_consume(
                         &tokens[consumed..],
+                        Restrictions::default(),
                         ends_early,
                         containing_token,
                         errors,
@@ -175,6 +176,7 @@ impl<'a> ImplBlock<'a> {
                 TypeContext::ImplBlockType {
                     prev_tokens: &tokens[..consumed],
                 },
+                Restrictions::default(),
                 ends_early,
                 containing_token,
                 errors,
