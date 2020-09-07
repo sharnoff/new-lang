@@ -52,9 +52,6 @@ pub enum Error<'a> {
         source: Source<'a>,
     },
 
-    /// Comparison expressions are disallowed within a single generics argument
-    ComparisonExprDisallowed { source: TokenSlice<'a> },
-
     /// Some delimited expressions don't allow colons
     UnexpectedExprColon {
         delim: ExprDelim,
@@ -75,6 +72,11 @@ pub enum Error<'a> {
         ident: &'a Token<'a>,
         args: Vec<GenericsArg<'a>>,
     },
+
+    /// Assignment operators are disallowed in struct expressions. For more information, please
+    /// refer to the documentation for `StructExpr` and the comment inside of
+    /// `StructTypeOrExpr::parse`.
+    AssignOpDisallowedInStructExpr { op_src: TokenSlice<'a> },
 
     /// An anonymous struct instantiation was being used as a "big" expression; this is not
     /// allowed, but block expressions *are*.
@@ -338,6 +340,44 @@ pub enum ExpectedKind<'a> {
     GenericsArgCloseAngleBracket {
         args_tokens: TokenSlice<'a>,
     },
+    TypeOrExpr,
+    /// After a dot token (`.`) when parsing a `TypeOrExpr`, we're expecting either an integer
+    /// literal (for tuple access) or an identifier
+    TypeOrExprFollowDot,
+    /// After a reference (`&`), we're expecting refinements, a type, or an expression.
+    TypeOrExprFollowRef,
+    /// After something like `&!`, we're either expecting the keyword "mut" for a type, or an
+    /// expression.
+    ///
+    /// Note that neither of these are typically *semantically* valid, but we're required to parse
+    /// them correctly.
+    TypeOrExprFollowRefNot,
+    /// The comma separating items in a tuple `TypeOrExpr`
+    TupleTypeOrExprComma,
+    /// At the start of parsing a curly-brace-enclosed `TypeOrExpr`, we might have a visibility
+    /// qualifier. This is either part of a struct (type) field OR as an item in a block expression
+    /// (even though that visibility qualifier might be semantically invalid).
+    StructTypeFieldOrItem,
+    /// The first tokens inside of an ambiguous struct type or (maybe block) expression. This is an
+    /// exceptionally rare error because *literally anything* can go here.
+    StructTypeOrExprInner,
+    /// If we find an ambiguous struct type or expression with a leading identifier inside, we can
+    /// parse it as an expression, struct *expression* field name, or struct *type* field name.
+    /// This error represents none of these patterns fitting.
+    StructTypeOrExprFollowIdent,
+    /// The comma delimiting multiple fields in an ambiguous struct
+    StructTypeOrExprComma,
+    /// In a struct `TypeOrExpr`, each field must start with a name (or a visibility qualifier,
+    /// implying that it is a type).
+    StructTypeOrExprFieldNameOrVis,
+    /// Individual field names in struct `TypeOrExpr`s must be followed by any of ":" (ambiguous),
+    /// "," (expression), or the closing curly brace (also as an expression).
+    StructTypeOrExprFollowFieldIdent,
+
+    /// After an initial `TypeOrExpr` inside an array, we're either expecting a comma (to indicate
+    /// repeated elements in an expression) or a semicolon (to indicate the length, as a type).
+    ArrayTypeOrExprCommaOrSemi,
+
     TypeParamFollowOn {
         after_type_bound: bool,
         ctx: GenericsParamsContext<'a>,

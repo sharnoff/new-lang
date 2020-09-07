@@ -499,6 +499,21 @@ impl<'a> Item<'a> {
         }
     }
 
+    /// Returns whether the given token may continue an item after the leading visibility
+    /// qualifier.
+    pub(super) fn can_follow_vis(token: &Token) -> bool {
+        use Kwd::*;
+
+        // This is fairly trivial to determine, based on the BNF specification.
+        match &token.kind {
+            TokenKind::Keyword(k) => match k {
+                Const | Pure | Fn | Macro | Type | Trait | Impl | Static => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Returns whether the given token may end an item
     pub(super) fn is_ending_token(token: &Token) -> bool {
         match &token.kind {

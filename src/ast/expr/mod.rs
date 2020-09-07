@@ -315,7 +315,7 @@ pub struct FnArg<'a> {
 /// The fields are individually given by [`StructFieldExpr`]s. The relevant BNF definitions are:
 /// ```text
 /// StructExpr = "{" [ StructFieldExpr { "," StructFieldExpr } [ "," ] ] "}" .
-/// StructFieldExpr = Ident [ ":" Expr ] .
+/// StructFieldExpr = Ident [ ":" Expr* ] .
 /// ```
 /// Like Rust, the expresion used in assignment for the struct definition may be omitted; this is
 /// syntax sugar for assigning to a field the value of a local variable with the same name.
@@ -324,6 +324,10 @@ pub struct FnArg<'a> {
 /// struct initialization and as a postfix operator to have named struct initialization. The
 /// postfix representation is selectively disallowed in certain places (e.g. `if` conditions) due
 /// to the ambiguity it causes.
+///
+/// One final piece to note about the expressions assigned to the field is that they do not allow
+/// assignment operators (e.g. `=`, `+=`, etc.). This is to reduce ambiguity in cases where a
+/// construct may already be either a struct type or expression.
 ///
 /// [`StructFieldExpr`]: struct.StructFieldExpr.html
 #[derive(Debug, Clone)]
@@ -430,14 +434,14 @@ pub struct LittleExpr<'a> {
 /// A block expression or single-field anonymous struct initialization
 ///
 /// This is of a few forms of ambiguity that cannot be resolved at parse-time, and always has the
-/// form `"{" Ident "}"`. This could either be a anonymous struct initialization with the field
+/// form of `"{" [ Ident ] "}"`. This could either be a anonymous struct initialization with the field
 /// name abbreviation OR a block expression where the tail expression is the single identifier.
 ///
 /// It is represented by the containing token.
 #[derive(Debug, Clone)]
 pub struct AmbiguousBlockExpr<'a> {
     pub(super) src: &'a Token<'a>,
-    pub name: Ident<'a>,
+    pub name: Option<Ident<'a>>,
 }
 
 /// A single `for` expression for loops with iterators
@@ -969,13 +973,15 @@ impl<'a> Expr<'a> {
         use TokenKind::Punctuation;
 
         match &kinds as &[_] {
-            // The fully ambiguous case is when there's a single identifier within a
-            // curly-brace-enclosed block. That's what we have here.
+            // There's two fully ambiguous cases. The first is when there's nothing inside of the
+            // block...
+            [] => Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src, name: None })),
+            // ... and the second is when there's just a single identifier inside
             [&TokenKind::Ident(name)] => {
-                let name = Ident {
+                let name = Some(Ident {
                     src: inner[0].as_ref().unwrap(),
                     name,
-                };
+                });
 
                 Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src, name }))
             }
@@ -1001,7 +1007,7 @@ impl<'a> Expr<'a> {
     ///
     /// The delimited context here is provided so that better error messages can be given on
     /// failure.
-    fn consume_path_component(
+    pub(super) fn consume_path_component(
         tokens: TokenSlice<'a>,
         delim: ExprDelim,
         ends_early: bool,
@@ -1328,7 +1334,9 @@ impl<'a> Expr<'a> {
     fn consume_all_delimited<T: From<Delimited<'a>>>(
         src: &'a Token<'a>,
         inner: TokenSlice<'a>,
+        restrictions: Restrictions,
         delim: ExprDelim,
+        check_post_expr: Option<fn(TokenSlice<'a>) -> Result<(), Error<'a>>>,
         delim_err: fn(&'a Token<'a>) -> ExpectedKind<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<(Vec<T>, bool), ()> {
@@ -1337,73 +1345,45 @@ impl<'a> Expr<'a> {
         let mut poisoned = false;
         let mut fields = Vec::new();
 
-        loop {
-            match inner.get(consumed) {
-                // Running out of tokens is fine - it's the end of the list. We'll break out of the
-                // loop to do a normal return.
-                None => {
-                    if ends_early {
-                        poisoned = true;
-                    }
+        make_expect!(inner, consumed, ends_early, Some(src), errors);
+
+        while consumed < inner.len() {
+            let res = Expr::consume_delimited(&inner[consumed..], restrictions, delim, ends_early, src, errors);
+            match res {
+                Err(None) => {
+                    poisoned = true;
                     break;
                 }
+                Err(Some(c)) => {
+                    poisoned = true;
+                    consumed += c;
+                }
+                Ok(field) => {
+                    consumed += field.consumed();
+                    fields.push(field.into());
+                }
+            }
 
-                Some(_) => {
-                    let res =
-                        Expr::consume_delimited(&inner[consumed..], delim, ends_early, src, errors);
-
-                    match res {
-                        Err(None) => {
-                            poisoned = true;
-                            break;
-                        }
-                        Err(Some(c)) => {
-                            poisoned = true;
-                            consumed += c;
-                        }
-                        Ok(field) => {
-                            consumed += field.consumed();
-                            fields.push(field.into());
-                        }
-                    }
+            if let Some(check) = check_post_expr.as_ref() {
+                if let Err(e) = check(&inner[consumed..]) {
+                    errors.push(e);
+                    poisoned = true;
+                    break;
                 }
             }
 
             // Between elements, we'll expect trailing commas
-            match inner.get(consumed) {
-                // If we ran out of tokens, it's because there's no more elements/fields to
-                // consume. That's fine, so we'll exit the loop to return normally.
-                None => {
-                    if ends_early {
-                        poisoned = true;
-                    }
-
-                    break;
-                }
-
-                // If there was a tokenizer error, we'll exit without producing further errors
-                // here.
-                Some(Err(_)) => {
-                    poisoned = true;
-                    break;
-                }
-
-                // Otherwise, we'll check that we *do* have a trailing comma
-                Some(Ok(t)) => match &t.kind {
+            if consumed < inner.len() {
+                expect!((
+                    Ok(_),
                     TokenKind::Punctuation(Punc::Comma) => consumed += 1,
-                    // If we didn't have one, we'll produce an error
-                    _ => {
-                        errors.push(Error::Expected {
-                            kind: delim_err(src),
-                            found: Source::TokenResult(Ok(t)),
-                        });
-
-                        poisoned = true;
-                        break;
-                    }
-                },
+                    _ if poisoned => break,
+                    @else { poisoned = true; break } => delim_err(src),
+                ));
             }
         }
+
+        poisoned |= ends_early;
 
         Ok((fields, poisoned))
     }
@@ -1414,6 +1394,7 @@ impl<'a> Expr<'a> {
     /// this is not the case.
     fn consume_delimited(
         tokens: TokenSlice<'a>,
+        restrictions: Restrictions,
         delim: ExprDelim,
         ends_early: bool,
         containing_token: &'a Token<'a>,
@@ -1552,7 +1533,7 @@ impl<'a> Expr<'a> {
         let value_res = Expr::consume(
             &tokens[consumed..],
             delim,
-            Restrictions::default(),
+            restrictions,
             ends_early,
             Some(containing_token),
             errors,
@@ -1567,6 +1548,80 @@ impl<'a> Expr<'a> {
                 value: Some(value),
             }),
         }
+    }
+
+    /// Returns whether the token can start an expression
+    pub(super) fn is_starting_token(token: &Token) -> bool {
+        use TokenKind::*;
+
+        match &token.kind {
+            // "simple" atomic expressions
+            Literal(_,_)
+            | Ident(_)
+
+            // Prefix operators
+            | Punctuation(Punc::Not)
+            | Punctuation(Punc::Minus)
+            | Punctuation(Punc::Plus)
+            | Punctuation(Punc::Star)
+            | Keyword(Kwd::Let)
+            | Keyword(Kwd::Break)
+            | Keyword(Kwd::Return)
+            
+            // In order: block expr / structs / tuples / array literals
+            | Tree { delim: Delim::Curlies, .. }
+            | Tree { delim: Delim::Parens, .. }
+            | Tree { delim: Delim::Squares, .. }
+            
+            // And then the various atomic keyword expressions
+            | Keyword(Kwd::While)
+            | Keyword(Kwd::Do)
+            | Keyword(Kwd::Loop)
+            | Keyword(Kwd::If)
+            | Keyword(Kwd::Match)
+            | Keyword(Kwd::Continue) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns whether the tokens can continue an already-complete expression, subject to the given
+    /// set of restrictions
+    ///
+    /// This essentially returns whether the tokens start with a permitted binary or postfix
+    /// operator.
+    pub(super) fn can_continue_with(tokens: TokenSlice, restrictions: Restrictions) -> bool {
+        // A helper function to indicate whether a token can start a postfix operator
+        let starts_postfix = |kind: &TokenKind| -> bool {
+            match kind {
+                // We explicitly match all delimiters for forwards-compatability
+                TokenKind::Tree { delim, .. } => match delim {
+                    // named struct instantiation
+                    Delim::Curlies => restrictions.allows_structs(),
+                    // function calls, indexing
+                    Delim::Parens | Delim::Squares => true,
+                }
+                TokenKind::Punctuation(Punc::Dot)        // field/tuple access
+                | TokenKind::Punctuation(Punc::Tilde)    // type binding
+                | TokenKind::Punctuation(Punc::Question) // "try"
+                | TokenKind::Keyword(Kwd::Is)            // Pattern equivalence
+                => true,
+                
+                // Everything else isn't a postfix operator
+                _ => false,
+            }
+        };
+
+        let is_postfix = kind!(tokens)(0).map(starts_postfix).unwrap_or(false);
+        is_postfix || BinOp::try_consume(tokens, restrictions).is_some()
+    }
+
+    /// Returns whether the given set of tokens may continue an expression after an identifier
+    /// (notably including generics arguments)
+    pub(super) fn can_follow_ident(tokens: TokenSlice) -> bool {
+        // Because generics arguments would instead be recognized as the less-than (`<`) operator
+        // by `Expr::can_continue_with`, we actually don't need to separately account for them.
+        // This function becomes rather simple:
+        Expr::can_continue_with(tokens, Restrictions::default())
     }
 }
 
@@ -1929,7 +1984,7 @@ impl<'a> PostfixOp<'a> {
 
     /// Attempts to consume a postfix operator of the given tokens
     ///
-    /// This will return `Err(())` only if we encounter a
+    /// This will return `Err(_)` only if we encounter a previous tokenizer error.
     ///
     /// This function additionally handles the ambiguity that may be present with less-than (`<`)
     /// following identifiers - hence why it takes `stacks`. Note that if a *truly* ambiguous case
@@ -2073,7 +2128,9 @@ impl<'a> PostfixOp<'a> {
         let (values, poisoned) = Expr::consume_all_delimited(
             src,
             inner,
+            Restrictions::default(),
             ExprDelim::FnArgs,
+            None,
             ExpectedKind::FnArgDelim,
             errors,
         )?;
@@ -2179,15 +2236,32 @@ impl<'a> From<Delimited<'a>> for FnArg<'a> {
 }
 
 impl<'a> StructExpr<'a> {
+    /// Parses a `StructExpr` from the entire set of input tokens
     fn parse(
         src: &'a Token<'a>,
         inner: TokenSlice<'a>,
         errors: &mut Vec<Error<'a>>,
     ) -> Result<StructExpr<'a>, ()> {
+        fn starts_assignment<'b>(tokens: TokenSlice<'b>) -> Result<(), Error<'b>> {
+            let (op, op_src) = match BinOp::try_consume(tokens, Restrictions::default()) {
+                None => return Ok(()),
+                Some((op, src)) => (op, src),
+            };
+
+            match op.is_assign_op() {
+                false => Ok(()),
+                true => Err(Error::AssignOpDisallowedInStructExpr {
+                    op_src,
+                }),
+            }
+        }
+
         let (fields, poisoned) = Expr::consume_all_delimited(
             src,
             inner,
+            Restrictions::default().no_assignment(),
             ExprDelim::StructFields,
+            Some(starts_assignment),
             ExpectedKind::StructFieldExprDelim,
             errors,
         )?;
@@ -2221,7 +2295,9 @@ impl<'a> ArrayExpr<'a> {
         let (values, poisoned) = Expr::consume_all_delimited(
             src,
             inner,
+            Restrictions::default(),
             ExprDelim::Comma,
+            None,
             ExpectedKind::ArrayDelim,
             errors,
         )?;
@@ -2243,7 +2319,9 @@ impl<'a> TupleExpr<'a> {
         let (values, poisoned) = Expr::consume_all_delimited(
             src,
             inner,
+            Restrictions::default(),
             ExprDelim::Comma,
+            None,
             ExpectedKind::TupleDelim,
             errors,
         )?;

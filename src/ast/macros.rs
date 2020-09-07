@@ -197,7 +197,7 @@ macro_rules! make_expect {
     }};
     (@do_else: (return Some), $consumed:expr) => {{ return Err(Some($consumed)) }};
     (@do_else: (return None), $consumed:expr) => {{ return Err(None) }};
-    (@do_else: { $exec:expr }, $consumed:expr) => {{ $exec }};
+    (@do_else: { $($exec:tt)* }, $consumed:expr) => {{ $($exec)* }};
 }
 
 macro_rules! assert_token {

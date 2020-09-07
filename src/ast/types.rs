@@ -374,29 +374,23 @@ impl<'a> Type<'a> {
     }
 
     /// Returns whether the given token can start a type
-    pub(super) fn is_starting_token(token_res: &Result<Token, token_tree::Error>) -> bool {
-        match token_res {
-            Ok(token) => match &token.kind {
-                // NamedType
-                TokenKind::Ident(_)
-                // RefType
-                | TokenKind::Punctuation(Punc::And)
-                // MutType
-                | TokenKind::Punctuation(Punc::Not) | TokenKind::Keyword(Kwd::Mut)
-                // ArrayType
-                | TokenKind::Tree { delim: Delim::Squares, .. }
-                // StructType
-                | TokenKind::Tree { delim: Delim::Curlies, .. }
-                // TupleType
-                | TokenKind::Tree { delim: Delim::Parens, .. }
-                // EnumType
-                | TokenKind::Keyword(Kwd::Enum) => true,
-                _ => false,
-            },
-            Err(e) => match e {
-                token_tree::Error::UnclosedDelim(_, _, _) => true,
-                _ => false,
-            },
+    pub(super) fn is_starting_token(token: &Token) -> bool {
+        match &token.kind {
+            // NamedType
+            TokenKind::Ident(_)
+            // RefType
+            | TokenKind::Punctuation(Punc::And)
+            // MutType
+            | TokenKind::Punctuation(Punc::Not) | TokenKind::Keyword(Kwd::Mut)
+            // ArrayType
+            | TokenKind::Tree { delim: Delim::Squares, .. }
+            // StructType
+            | TokenKind::Tree { delim: Delim::Curlies, .. }
+            // TupleType
+            | TokenKind::Tree { delim: Delim::Parens, .. }
+            // EnumType
+            | TokenKind::Keyword(Kwd::Enum) => true,
+            _ => false,
         }
     }
 
@@ -923,8 +917,8 @@ impl<'a> EnumVariant<'a> {
 
         let mut ty = None;
 
-        // If there's a token immediately after the name that
-        if let Some(next) = tokens.get(consumed) {
+        // If there's a token immediately after the name that can be a type, we'll consume that
+        if let Some(Ok(next)) = tokens.get(consumed) {
             if Type::is_starting_token(next) {
                 let t = Type::consume(
                     &tokens[consumed..],
@@ -1191,6 +1185,16 @@ impl<'a> Refinements<'a> {
             refs,
             poisoned,
         }))
+    }
+
+    pub fn consume_if_not_expr(
+        tokens: TokenSlice<'a>,
+        expr_delim: ExprDelim,
+        ends_early: bool,
+        containing_token: Option<&'a Token<'a>>,
+        errors: &mut Vec<Error<'a>>,
+    ) -> Result<Option<Refinements<'a>>, Option<usize>> {
+        todo!()
     }
 }
 
@@ -1620,8 +1624,12 @@ impl<'a> GenericsArg<'a> {
             },
             _ => TypeOrExpr::consume(
                 &tokens[consumed..],
-                prev_tokens,
+                ExprDelim::FnArgs,
                 Restrictions::default().no_angle_bracket(),
+                TypeContext::GenericsArg {
+                    prev_tokens: &tokens[..consumed],
+                    name: name.map(|n| n.src),
+                },
                 ends_early,
                 containing_token,
                 errors

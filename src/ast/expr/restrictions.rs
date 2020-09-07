@@ -19,6 +19,7 @@ pub struct Restrictions {
     pub no_else_branch: bool,
     pub no_pipe: bool,
     pub no_angle_bracket: bool,
+    pub no_assignment: bool,
     pub allow_do_while: bool,
 }
 
@@ -40,11 +41,10 @@ impl Restrictions {
         }
     }
 
-    /// Produces a new set of restrictions, where whether do-while expressions are allowed is given
-    /// by the input boolaen
-    pub fn with_do_while(self, allow: bool) -> Self {
+    /// Produces a new set of restrictions, where pipes (`|`s) are disallowed
+    pub fn no_pipe(self) -> Self {
         Self {
-            allow_do_while: allow,
+            no_pipe: true,
             ..self
         }
     }
@@ -57,17 +57,33 @@ impl Restrictions {
         }
     }
 
-    /// Produces a new set of restrictions, where pipes (`|`s) are disallowed
-    pub fn no_pipe(self) -> Self {
+    /// Produces a new set of restrictions, where assignment operators are disallowed
+    pub fn no_assignment(self) -> Self {
         Self {
-            no_pipe: true,
+            no_assignment: true,
             ..self
         }
     }
 
-    /// Returns whether the set of restrictions allows binary operators using angle brackets
-    pub fn allows_angle_bracket(&self) -> bool {
-        !self.no_angle_bracket
+    /// Produces a new set of restrictions, where whether do-while expressions are allowed is given
+    /// by the input boolaen
+    pub fn with_do_while(self, allow: bool) -> Self {
+        Self {
+            allow_do_while: allow,
+            ..self
+        }
+    }
+
+    /// Returns whether the set of restrictions allows structs as postfix operators (i.e. named
+    /// structs)
+    pub fn allows_structs(&self) -> bool {
+        self.no_struct_postfix.is_none()
+    }
+
+    /// Returns whether the set of restrictions allows expressions that may be followed by an
+    /// [`else branch`](struct.ElseBranch.html)
+    pub fn allows_else_branch(&self) -> bool {
+        !self.no_else_branch
     }
 
     /// Returns whether the set of restrictions allows the [`BitOr`] binary operator
@@ -77,9 +93,13 @@ impl Restrictions {
         !self.no_pipe
     }
 
-    /// Returns whether the set of restrictions allows expressions that may be followed by an
-    /// [`else branch`](struct.ElseBranch.html)
-    pub fn allows_else_branch(&self) -> bool {
-        !self.no_else_branch
+    /// Returns whether the set of restrictions allows binary operators using angle brackets
+    pub fn allows_angle_bracket(&self) -> bool {
+        !self.no_angle_bracket
+    }
+
+    /// Returns whether the set of restrictions allows assignment operators
+    pub fn allows_assignment(&self) -> bool {
+        !self.no_assignment
     }
 }

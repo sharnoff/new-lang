@@ -103,7 +103,7 @@ impl<'a> ImplBlock<'a> {
         expect!((
             Ok(fst),
             TokenKind::Ident(_) => (),
-            _ if Type::is_starting_token(&tokens[consumed]) => jump_to_type = true,
+            _ if Type::is_starting_token(fst) => jump_to_type = true,
             @err TokenKind::Punctuation(Punc::Lt) => Error::GenericParamsOnImplBlock { src: fst },
             @else { return_err!() } => ExpectedKind::ImplTraitOrType,
         ));

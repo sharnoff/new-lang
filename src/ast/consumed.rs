@@ -174,6 +174,7 @@ impl_all! {
     RefTypeOrExpr,
     @Single: TupleTypeOrExpr,
     @Single: StructTypeOrExpr,
+    StructFieldTypeOrExpr,
     @Single: ArrayTypeOrExpr,
 
     // Literals

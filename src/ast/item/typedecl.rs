@@ -108,7 +108,7 @@ impl<'a> TypeDecl<'a> {
             },
 
             // We'll pass through the allowed next tokens:
-            _ if Type::is_starting_token(&tokens[consumed]) => (),
+            _ if Type::is_starting_token(t) => (),
             TokenKind::Punctuation(Punc::Semi)
             | TokenKind::Punctuation(Punc::Eq) => (),
 
@@ -132,8 +132,8 @@ impl<'a> TypeDecl<'a> {
         // And then the type:
         let mut ty = None;
         expect!((
-            Ok(_),
-            _ if Type::is_starting_token(&tokens[consumed]) => {
+            Ok(t),
+            _ if Type::is_starting_token(t) => {
                 let t = Type::consume(
                     &tokens[consumed..],
                     TypeContext::TypeDecl,
