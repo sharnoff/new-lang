@@ -241,16 +241,16 @@ impl<'a> FnDecl<'a> {
                 TokenKind::Punctuation(Punc::ThinArrow) => {
                     consumed += 1;
 
-                    Some(
-                        Type::consume(
-                            &tokens[consumed..],
-                            TypeContext::FnDeclReturn(&tokens[..consumed]),
-                            ends_early,
-                            containing_token,
-                            errors,
-                        )
-                        .map_err(ItemParseErr::add(consumed))?
-                    )
+                    let ty = Type::consume(
+                        &tokens[consumed..],
+                        TypeContext::FnDeclReturn(&tokens[..consumed]),
+                        ends_early,
+                        containing_token,
+                        errors,
+                    ).map_err(ItemParseErr::add(consumed))?;
+
+                    consumed += ty.consumed();
+                    Some(ty)
                 },
                 // The next token might be either of: curlies or a semicolon to account for the
                 // function body.
@@ -274,14 +274,16 @@ impl<'a> FnDecl<'a> {
                 None
             },
             TokenKind::Tree { delim: Delim::Curlies, .. } => {
-                BlockExpr::parse(
+                let body = BlockExpr::parse(
                     tokens.get(consumed),
                     ends_early,
                     end_source!(containing_token),
                     errors,
                 )
-                .map(Some)
-                .map_err(|()| ItemParseErr { consumed })?
+                .map_err(|()| ItemParseErr { consumed })?;
+
+                consumed += 1;
+                Some(body)
             },
             @else { return Err(ItemParseErr { consumed }) } => {
                 ExpectedKind::FnBody { fn_src: &tokens[..consumed] }
@@ -406,7 +408,8 @@ impl<'a> FnParams<'a> {
             if consumed < inner.len() {
                 expect!((
                     Ok(_),
-                    TokenKind::Punctuation(Punc::Comma) => consumed + 1,
+                    TokenKind::Punctuation(Punc::Comma) => consumed += 1,
+                    _ if poisoned => break,
                     @else { return_err!() } => ExpectedKind::FnParamsDelim,
                 ));
             }
