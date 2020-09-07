@@ -1984,7 +1984,8 @@ impl<'a> PostfixOp<'a> {
 
     /// Attempts to consume a postfix operator of the given tokens
     ///
-    /// This will return `Err(_)` only if we encounter a previous tokenizer error.
+    /// This will return `Err(_)` if we encounter a previous tokenizer error *or* if we encounter a
+    /// type binding and the restrictions prevent it (with `Restrictions::allows_pipe`).
     ///
     /// This function additionally handles the ambiguity that may be present with less-than (`<`)
     /// following identifiers - hence why it takes `stacks`. Note that if a *truly* ambiguous case

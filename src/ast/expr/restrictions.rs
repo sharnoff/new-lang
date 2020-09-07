@@ -86,7 +86,8 @@ impl Restrictions {
         !self.no_else_branch
     }
 
-    /// Returns whether the set of restrictions allows the [`BitOr`] binary operator
+    /// Returns whether the set of restrictions allows the [`BitOr`] binary operator and/or type
+    /// bindings (because they may have refinements).
     ///
     /// [`BitOr`]: enum.BitOr.html#variant.BitOr
     pub fn allows_pipe(&self) -> bool {
