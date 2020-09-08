@@ -1,7 +1,7 @@
 //! Handling for the stack-based portion of expression parsing
 
 use super::{
-    BinOp, BinOpExpr, BindingPower, Expr, PostfixOp, PostfixOpExpr, PrefixOp, PrefixOpExpr,
+    BinOp, BinOpExpr, BindingPower, Expr, Fixity, PostfixOp, PostfixOpExpr, PrefixOp, PrefixOpExpr,
 };
 use crate::ast::{Consumed, TokenSlice};
 
@@ -87,7 +87,7 @@ impl<'a> Stack<'a> {
 
     /// Pushes the given binary operator onto the stack
     pub fn push_binop(&mut self, src_offset: usize, op: BinOp, op_src: TokenSlice<'a>) {
-        self.collapse_bp_gt(op.bp());
+        self.collapse_bp_gt(op.bp(), op.fixity());
         let (start, lhs) = self.last_expr.take().unwrap();
 
         assert_eq!(start + lhs.consumed(), src_offset);
@@ -103,7 +103,9 @@ impl<'a> Stack<'a> {
 
     /// Pushes the given postfix operator onto the stack
     pub fn push_postfix(&mut self, src_offset: usize, op: PostfixOp<'a>, op_src: TokenSlice<'a>) {
-        self.collapse_bp_gt(op.bp());
+        // We use Fixity::Left just as a default here. Right-associative operators with the same
+        // binding power as any postfix operators is a bug.
+        self.collapse_bp_gt(op.bp(), Fixity::Left);
         let (start, mut expr) = self.last_expr.take().unwrap();
 
         assert_eq!(start + expr.consumed(), src_offset);
@@ -121,7 +123,7 @@ impl<'a> Stack<'a> {
     /// Consumes the stack and produces an expression from it
     pub fn finish(mut self) -> Expr<'a> {
         // Because we're finishing, we'll collapse the entire stack
-        self.collapse_bp_gt(BindingPower::ReservedLowest);
+        self.collapse_bp_gt(BindingPower::ReservedLowest, Fixity::Left);
 
         // After collapsing with the lowest binding power, there should be no more elements left,
         // and there *should* be a trailing expression
@@ -132,12 +134,55 @@ impl<'a> Stack<'a> {
         expr
     }
 
-    fn collapse_bp_gt(&mut self, bp: BindingPower) {
+    fn collapse_bp_gt(&mut self, bp: BindingPower, fixity: Fixity) {
         assert!(self.is_empty() || self.last_expr.is_some());
 
         let mut rhs = match self.last_expr.take() {
             None => return,
             Some(ex) => ex,
+        };
+
+        // Here, we bind `greater_than` - a function for comparing `BindingPower`s.
+        //
+        // Firstly: why do we need this function?
+        //
+        //   When we're pushing a binary- or postfix-operator to the stack, we take as the left-hand
+        //   side the final expression in the stack. Because of this, we *need* all of the pending
+        //   operators in the stack with *greater* binding power than the one we're adding to be
+        //   collected into the single, final expression.
+        //
+        //   For a more concrete example, let's look at an example. Given the input:
+        //     "x * y + z"
+        //   We'll encounter the token '+' with a stack that looks like this:
+        //     [ BinOp("x", '*') ]; last_expr = "y"
+        //   But because multiplication has higher binding power than addition, we actually want the
+        //   value of `last_expr` to be `x * y`.
+        //
+        //   So the binding to this function exists in order to make that comparison.
+        //
+        // Secondly: why is this conditional? and why these values in particular?
+        //
+        //   Suppose we have a left-associative operator (maybe '+'), and a stack with last
+        //   expression that reads:
+        //     [ BinOp("1", '+') ]; last_expr = "2"
+        //   If we then encounter another '+' token, we'd like to fold this binary operator into
+        //   the value of `last_expr`, giving `1 + 2`. This is what allows `1 + 2 + 3` to be parsed
+        //   as `(1 + 2) + 3`. So clearly - for left-associative operators, we want to collapse
+        //   operators that are greater than **or equal to** the one that's being added.
+        //
+        //   Conversely, right-associative operators (mainly '=') work the other way. If we're
+        //   given `x = y = z` (an unusual case), we want to parse it as: `x = (y = z)`. So clearly
+        //   here, we *don't* want any starting `x = y` to be folded into the final expression if
+        //   we find a '=' as our next operator.
+        //
+        //   Because of the way that we always work backwards through the stack in a loop when we
+        //   collapse it, a single decision to *not* group earlier operators means that they will
+        //   be collected in a right-associative manner. In other words, the default method of
+        //   collapsing is right-associative, so the collapses before each operator is added serves
+        //   to allow others to be left-associative.
+        let greater_than = match fixity {
+            Fixity::Left => PartialOrd::ge,
+            Fixity::Right => PartialOrd::gt,
         };
 
         while let Some(elem) = self.elems.pop() {
@@ -148,22 +193,7 @@ impl<'a> Stack<'a> {
                     op,
                     op_src,
                 } => {
-                    // There's a little bit of explanation necessary for the choice of strictly
-                    // less-than in the condition below. We'll use this example:
-                    //   Given a stack and last expression that reads
-                    //      [ BinOp(1, +) ]; Some(Expr(2))
-                    //   and supposing we encounter the token `+`, we want to collapse the existing
-                    //   stack and expression to
-                    //      [ ]; Some(Expr(1 + 2))
-                    //   which we then turn into:
-                    //      [ BinOp(1 + 2, +) ]; None
-                    //   after applying the token
-                    //
-                    // The collapsing process above will be done with a call to this function, so we
-                    // want to collapse even if the operator's binding power is equal to the binding
-                    // power we were given - i.e. only if the operator's binding power is strictly
-                    // less than this `bp` will we stop collapsing the stack.
-                    if op.bp() < bp {
+                    if !greater_than(&op.bp(), &bp) {
                         self.elems.push(Element::BinOp {
                             src_offset,
                             lhs,
@@ -192,8 +222,7 @@ impl<'a> Stack<'a> {
                     op,
                     op_src,
                 } => {
-                    // See justification for `<` here (instead of `<=`) above
-                    if op.bp() < bp {
+                    if !greater_than(&op.bp(), &bp) {
                         self.elems.push(Element::PrefixOp {
                             src_offset,
                             op,

@@ -664,6 +664,24 @@ binding_power! {
     }
 }
 
+/// The direction in which operators are associative
+///
+/// This is defined so that a select few operators may be right-associative, namely assignment
+/// operators.
+enum Fixity {
+    /// A marker for left-associative operators. This implies that for some operator `*`,
+    /// `x * y * z` is equivalent to `(x * y) * z`.
+    ///
+    /// Most operators are left-associative
+    Left,
+
+    /// A marker for right-associative operators. This implies that for some operator `*`,
+    /// `x * y * z` is equivalent to `x * (y * z)`.
+    ///
+    /// The only operators that are right-associative are assignment operators
+    Right,
+}
+
 impl<'a> Expr<'a> {
     /// Consumes a single expression, within the given delimited context for the expression
     ///
@@ -1868,6 +1886,18 @@ impl BinOp {
             Le, Ge, Eq, Ne, AddAssign, SubAssign, MulAssign, DivAssign, ModAssign, BitAndAssign,
             BitOrAssign, ShlAssign, ShrAssign, Assign,
         )
+    }
+
+    /// Returns the fixity of the operator
+    fn fixity(&self) -> Fixity {
+        use BinOp::*;
+
+        match self {
+            Add | Sub | Mul | Div | Mod | BitAnd | BitOr | BitXor | Shl | Shr | LogicalAnd | LogicalOr | Lt | Gt |
+            Le | Ge | Eq | Ne => Fixity::Left,
+            AddAssign | SubAssign | MulAssign | DivAssign | ModAssign | BitAndAssign |
+            BitOrAssign | ShlAssign | ShrAssign | Assign  => Fixity::Right,
+        }
     }
 
     /// Attempts to consume a binary operator as a prefix of the given tokens
