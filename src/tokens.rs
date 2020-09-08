@@ -696,7 +696,7 @@ mod tests {
     fn invalid_no_nested() {
         use TokenKind::*;
 
-        let input = "foo ☺ bar~";
+        let input = "foo ☺ bar'";
 
         let expected = vec![
             Ok(token!(Ident, "foo")),
@@ -704,7 +704,7 @@ mod tests {
             Err(invalid!(None, "☺")),
             Ok(token!(Whitespace, " ")),
             Ok(token!(Ident, "bar")),
-            Err(invalid!(None, "~")),
+            Err(invalid!(None, "'")),
         ];
 
         let tokens = tokenize(input);
