@@ -28,7 +28,7 @@ impl<T: Consumed> Consumed for Option<T> {
 
 impl<T: Consumed> Consumed for Box<T> {
     fn consumed(&self) -> usize {
-        std::ops::Deref::deref(&self).consumed()
+        (&self as &T).consumed()
     }
 }
 

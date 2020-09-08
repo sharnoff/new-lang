@@ -9,6 +9,9 @@ mod consumed;
 pub mod errors;
 use errors::*;
 
+#[cfg(test)]
+mod tests;
+
 // We blanket import everything from the parser submodules so that everything can be under a single
 // namespace.
 pub mod expr;

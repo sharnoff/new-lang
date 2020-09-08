@@ -133,7 +133,7 @@ impl<'a> GenericsParams<'a> {
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         match tokens.first() {
             Some(Ok(token)) => match &token.kind {
-                TokenKind::Punctuation(Punc::Gt) => (),
+                TokenKind::Punctuation(Punc::Lt) => (),
                 _ => return Ok(None),
             },
             Some(Err(e)) => {

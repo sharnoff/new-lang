@@ -494,6 +494,8 @@ impl<'a> RefType<'a> {
         )
         .map_err(p!(Some(c) => Some(c + consumed)))?;
 
+        consumed += ty.consumed();
+
         Ok(RefType {
             src: &tokens[..consumed],
             refinements,
@@ -1181,7 +1183,7 @@ impl<'a> Refinements<'a> {
         }
 
         // After the initial "|", we'll progressively parse individual refinements
-        let mut consumed = 0;
+        let mut consumed = 1;
         let mut poisoned = false;
         let mut refs = Vec::new();
 
@@ -1829,6 +1831,18 @@ impl<'a> GenericsArg<'a> {
                     }
                 })
             }
+        }
+    }
+
+    /// Returns the source of the generics argument; used for generating error messages
+    pub(super) fn src(&self) -> TokenSlice<'a> {
+        use GenericsArg::*;
+
+        match self {
+            Type(t) => t.src,
+            Const(c) => c.src,
+            Ref(r) => r.src,
+            Ambiguous(a) => a.src,
         }
     }
 }

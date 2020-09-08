@@ -63,6 +63,7 @@ pub struct FileTokenTree<'a> {
     pub tokens: Vec<Result<Token<'a>, Error<'a>>>,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
     pub trailing_whitespace: &'a [SimpleToken<'a>],
@@ -71,6 +72,7 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Clone)]
 pub enum TokenKind<'a> {
     Punctuation(Punc),
@@ -85,6 +87,7 @@ pub enum TokenKind<'a> {
     Ident(&'a str),
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum Error<'a> {
     UnexpectedCloseDelim(SimpleToken<'a>),
@@ -97,6 +100,7 @@ pub enum Error<'a> {
     NestedProofLines(SimpleToken<'a>, SimpleToken<'a>),
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub struct ProofSrc<'a>(SimpleToken<'a>);
 

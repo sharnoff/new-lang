@@ -1161,7 +1161,7 @@ impl<'a> Expr<'a> {
             errors.extend(local_errors);
             errors.push(Error::UnexpectedGenericsArgsComma {
                 ident: name.src,
-                args,
+                args: args.iter().map(GenericsArg::src).collect(),
             });
 
             Err(None)

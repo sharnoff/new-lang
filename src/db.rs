@@ -122,6 +122,30 @@ impl Files {
         }
     }
 
+    /// A function to help with mocking the file state; only available when testing
+    ///
+    /// This function is essentially provides the equivalent of calling [`Files::reserve`] with the
+    /// given path, alongside setting the return value for [`FileState::get_content`] to always give
+    /// `input`.
+    ///
+    /// NOTE: because this is for *mocking* the typical usage, this function does not attempt to
+    /// canonicalize the path input into the store.
+    ///
+    /// [`Files::reserve`]: #method.reserve
+    /// [`FileState::get_content`]: struct.FileState.html#method.get_content
+    #[cfg(test)]
+    pub fn mock_single_file(name: impl AsRef<Path>, content: &str) -> Self {
+        let mut files = HashMap::new();
+
+        let mut fs = FileState::reserve(name.as_ref().to_string_lossy());
+        fs.file_info = RwLock::new(Some(Ok(String::from(content).into())));
+        files.insert(name.as_ref().into(), Arc::new(fs));
+
+        Files {
+            files: Mutex::new(files),
+        }
+    }
+
     /// Ensures a [`FileState`] with the given file path will be present
     ///
     /// This should be called before any call to [`file`] where the given path might not have been

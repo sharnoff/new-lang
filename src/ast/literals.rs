@@ -5,6 +5,7 @@
 use super::*;
 use crate::tokens::LiteralKind;
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub struct Ident<'a> {
     pub(super) src: &'a Token<'a>,

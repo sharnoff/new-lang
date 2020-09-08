@@ -1,10 +1,11 @@
 //! Error types and messages for parsing into the AST
 
-use super::{ExprDelim, GenericsArg, Ident, TokenSlice};
+use super::{ExprDelim, Ident, TokenSlice};
 use crate::error::{Builder as ErrorBuilder, ToError, ERR_COLOR};
 use crate::token_tree::{self, Kwd, Token};
 use std::ops::Range;
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug)]
 pub enum Error<'a> {
     /// A catch-all error for generically expecting certain tokens or syntax elements
@@ -67,10 +68,10 @@ pub enum Error<'a> {
         op_src: TokenSlice<'a>,
     },
 
-    /// A comma was found after generics argumetns
+    /// A comma was found after generics arguments
     UnexpectedGenericsArgsComma {
         ident: &'a Token<'a>,
-        args: Vec<GenericsArg<'a>>,
+        args: Vec<TokenSlice<'a>>,
     },
 
     /// Assignment operators are disallowed in struct expressions. For more information, please
@@ -182,6 +183,7 @@ pub enum Error<'a> {
 }
 
 /// An individual source for a range of the source text, used within error messages.
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum Source<'a> {
     EndDelim(&'a Token<'a>),
@@ -203,6 +205,7 @@ pub enum ItemKind {
     UseStmt,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum ExpectedKind<'a> {
     ItemKwd(&'static [Kwd]),
@@ -413,6 +416,7 @@ pub enum ExpectedKind<'a> {
     },
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum IdentContext<'a> {
     /// The identifier used to name functions, provided immediately following the `fn` keyword. The
@@ -439,6 +443,7 @@ pub enum IdentContext<'a> {
     Field(FieldContext),
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum GenericsParamsContext<'a> {
     /// The generics parameters used in a function declaration. The attached slice of tokens gives
@@ -451,6 +456,7 @@ pub enum GenericsParamsContext<'a> {
     TypeDecl,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum TypeContext<'a> {
     /// The optional return type used in a function declaration. The attached slice of tokens gives
@@ -481,6 +487,7 @@ pub enum TypeContext<'a> {
     FieldBound(FieldContext),
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum FieldContext {
     FnParam,
@@ -489,6 +496,7 @@ pub enum FieldContext {
     GenericConstParam,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub struct PathComponentContext<'a> {
     /// The previous tokens within the greater path; this will be `None` if the expected path
@@ -496,6 +504,7 @@ pub struct PathComponentContext<'a> {
     pub prev_tokens: Option<TokenSlice<'a>>,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum NoCurlyContext {
     IfCondition,
@@ -504,17 +513,20 @@ pub enum NoCurlyContext {
     MatchExpr,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum BigExprContext<'a> {
     Else(&'a Token<'a>),
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub struct LetContext<'a> {
     pub let_kwd: &'a Token<'a>,
     pub pat: TokenSlice<'a>,
 }
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum PatternContext<'a> {
     Let(&'a Token<'a>),
