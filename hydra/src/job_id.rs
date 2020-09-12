@@ -43,14 +43,19 @@ impl JobId {
     /// preventing users from creating new `JobId`s, outside of [`JobId::new_child`].
     ///
     /// [`JobId::new_child`]: #method.new_child.html
-    fn clone(&self) -> JobId {
+    pub(crate) fn clone(&self) -> JobId {
         JobId(Arc::clone(&self.0))
+    }
+
+    /// Returns the parent `JobId`, if there is one
+    pub(crate) fn parent(&self) -> Option<&JobId> {
+        self.0.parent.as_ref()
     }
 
     /// An internally method to determine whether the given job id is a descendant of another
     ///
     /// This is primarily used to find dependency loops.
-    fn descendant_of(&self, ancestor: &JobId) -> bool {
+    pub(crate) fn descendant_of(&self, ancestor: &JobId) -> bool {
         if self.0.depth < ancestor.0.depth {
             return false;
         }

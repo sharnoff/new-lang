@@ -11,6 +11,9 @@
 
 use crate::JobId;
 use std::collections::HashMap;
+use std::sync::RwLock;
+
+pub use crate::runtime::Executor;
 
 /// A singleton, unique type that only exists to act as an object for cross-macro storage
 ///
@@ -66,12 +69,6 @@ use std::collections::HashMap;
 ///     )
 /// }
 /// ```
-///
-/// Our pieces from the attribute macro might be given like:
-///
-/// ```ignore
-/// TODO
-/// ```
 pub struct Dummy;
 
 /// A wrapper around a `u16` to provide storage and dispatch to different database layers
@@ -83,22 +80,55 @@ pub trait Computable<DB> {
     type Value: Sized;
     const QUERY_KIND: QueryKind;
 
-    fn construct(db: DB, job: JobId, key: Self::Key) -> crate::Result<Self::Value>;
+    fn construct(db: DB, job: &JobId, key: Self::Key) -> crate::Result<Self::Value>;
 }
 
+#[doc(hidden)]
 pub trait Runtime {
     /// Mark the given job as blocked by a query
     ///
     /// This function should return `None` if the id given by `job` has already finished.
-    fn mark_blocked(&self, job: JobId, by: JobId) -> Option<()>;
+    fn mark_single_blocked(&self, job: &JobId, by: &JobId) -> Option<()>;
+
+    /// Returns the executor for handling tasks
+    fn executor(&self) -> &Executor;
+
+    /// A helper method to mark all ancestor jobs of the given one as being blocked by the the
+    /// given job.
+    ///
+    /// Contrary to the name "recursive", this method is only really structurally recursive - much
+    /// in the same way that
+    ///
+    /// This method should not be implemented manually (by users or the procedural macros).
+    ///
+    /// If the job has already finished, this function will simply return without doing anything.
+    fn mark_blocked_recursive(&self, mut job: &JobId, by: &JobId) {
+        // From the documentation of `mark_single_blocked`:
+        // > This function should return `None` if the id given by `job` has already finished
+        if self.mark_single_blocked(job, by).is_none() {
+            return;
+        }
+
+        while let Some(p) = job.parent() {
+            job = &p;
+            if self.mark_single_blocked(job, by).is_none() {
+                return;
+            }
+        }
+    }
+}
+
+pub enum Priority {
+    Defer,
+    Asap,
 }
 
 pub struct JobOwners {
-    map: HashMap<JobId, QueryKind>,
+    map: RwLock<HashMap<JobId, QueryKind>>,
 }
 
 impl JobOwners {
     pub fn query_kind(&self, job: &JobId) -> Option<QueryKind> {
-        self.map.get(job).cloned()
+        self.map.read().unwrap().get(job).cloned()
     }
 }

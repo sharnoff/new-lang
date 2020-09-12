@@ -20,6 +20,7 @@ static CRATE_NAME: &str = "hydra";
 #[doc(hidden)]
 pub fn __make_database(input: TokenStream) -> TokenStream {
     let database_input = parse_macro_input!(input as DatabaseAst);
+    let single_specs: Vec<_> = database_input.singles.into_iter().collect();
     let trait_specs: Vec<_> = database_input.traits.into_iter().collect();
 
     let db_type = database_input.name;
@@ -31,8 +32,8 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
     let mut db_layers = Vec::with_capacity(trait_specs.len());
     let mut field_names = Vec::with_capacity(trait_specs.len());
     let mut trait_impls = Vec::with_capacity(trait_specs.len());
-    let mut methods = Vec::with_capacity(trait_specs.len());
     let mut blocked_pats = Vec::with_capacity(trait_specs.len());
+    let mut methods = Vec::new();
 
     for spec in trait_specs {
         let trait_name = spec.name;
@@ -63,14 +64,48 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
                 &self,
                 job: hydra::JobId,
                 key: <#compute>::Key,
-            ) -> hydra::Result<<#compute>::Value> {
+            ) -> std::sync::Arc<hydra::Result<<#compute>::Value>> {
                 self.0.#field_name.get(self, job, key)
-                // <#compute>::construct(self.clone(), job, key)
             }
         ));
 
         db_layers.push(layer);
         field_names.push(field_name);
+    }
+
+    let mut single_fields = Vec::with_capacity(single_specs.len());
+    for field in single_specs {
+        let vis = field.vis;
+        let name = field.name;
+        let field_ty = field.ty;
+
+        single_fields.push(quote!(
+            #vis #name: std::sync::RwLock<Option<std::sync::Arc<#field_ty>>>
+        ));
+
+        let unset = format!("singular hydra field `{}` has not been set", name);
+
+        methods.push(quote!(
+            fn #name(&self) -> std::sync::Arc<#field_ty> {
+                self.0.#name.read().unwrap()
+                    .as_ref()
+                    .expect(#unset)
+                    .clone()
+            }
+        ));
+
+        let set_name = format_ident!("set_{}", name);
+
+        methods.push(quote!(
+            fn #set_name(&self, value: #field_ty) {
+                let mut guard = self.0.#name.write().unwrap();
+                if guard.is_some() {
+                    panic!("singular hydra field `{}` has already been set!", stringify!(#name));
+                }
+
+                *guard = Some(std::sync::Arc::new(value))
+            }
+        ));
     }
 
     let attrs = database_input.attrs;
@@ -79,13 +114,17 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
     // And finally, we construct the database struct itself
     quote!(
         #attrs
+        #[derive(Clone)]
         #vis struct #db_type(std::sync::Arc<#db_inner_type>);
 
         struct #db_inner_type {
+            #( #single_fields, )*
+
             #( #field_names: #db_layers, )*
 
             // A helper field to indicate where certain jobs are
             __active_jobs: hydra::internal::JobOwners,
+            __executor: std::sync::Arc<hydra::internal::Executor>,
         }
 
         impl #db_type {
@@ -93,16 +132,20 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         }
 
         impl hydra::internal::Runtime for #db_type {
-            fn mark_blocked(&self, job: hydra::JobId, by: hydra::JobId) -> Option<()> {
+            fn mark_single_blocked(&self, job: &hydra::JobId, by: &hydra::JobId) -> Option<()> {
                 use std::sync::Arc;
                 use std::ops::Deref;
 
-                let q_kind = Arc::deref(&self.0).__active_jobs.query_kind(&job)?;
+                let q_kind = self.0.__active_jobs.query_kind(job)?;
 
                 match q_kind {
                     #( #blocked_pats => self.0.#field_names.mark_blocked(job, by), )*
                     _ => panic!("unknown query kind {:?} of {} known", q_kind, #num_query_kind),
                 }
+            }
+
+            fn executor(&self) -> &hydra::internal::Executor {
+                &self.0.__executor
             }
         }
 
@@ -111,7 +154,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Constructs a wrapper query trait for the
+/// Constructs a wrapper query trait for a given function
 #[proc_macro_attribute]
 pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = parse_macro_input!(attr as QueryAttr);
@@ -161,11 +204,6 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
     )
     .into()
 }
-
-// #[proc_macro_attribute]
-// pub fn input(_attr: TokenStream, item: TokenStream) -> TokenStream {
-//     item
-// }
 
 /// A helper function to get the current kind count value, then increment it
 fn get_kind_count() -> u16 {

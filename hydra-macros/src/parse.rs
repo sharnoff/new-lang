@@ -17,8 +17,16 @@ pub struct DatabaseAst {
     pub attrs: TokenStream,
     pub vis: Visibility,
     pub name: Ident,
+    pub singles_paren: token::Paren,
+    pub singles: Punctuated<SingleInputSpec, Token![,]>,
     pub traits_paren: token::Paren,
     pub traits: Punctuated<TraitSpec, Token![,]>,
+}
+
+pub struct SingleInputSpec {
+    pub vis: Visibility,
+    pub name: Ident,
+    pub ty: Type,
 }
 
 pub struct TraitSpec {
@@ -29,7 +37,6 @@ pub struct TraitSpec {
 
 /// The parsed input for the parenthesized attribute for the `query` macro
 pub struct QueryAttr {
-    pub trait_token: Token![trait],
     pub name: Ident,
 }
 
@@ -47,6 +54,7 @@ pub struct QueryFn {
 impl Parse for DatabaseAst {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attr_paren;
+        let singles_paren;
         let traits_paren;
 
         Ok(DatabaseAst {
@@ -54,8 +62,20 @@ impl Parse for DatabaseAst {
             attrs: attr_paren.parse()?,
             vis: input.parse()?,
             name: input.parse()?,
+            singles_paren: parenthesized!(singles_paren in input),
+            singles: singles_paren.parse_terminated(SingleInputSpec::parse)?,
             traits_paren: parenthesized!(traits_paren in input),
             traits: traits_paren.parse_terminated(TraitSpec::parse)?,
+        })
+    }
+}
+
+impl Parse for SingleInputSpec {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(SingleInputSpec {
+            vis: input.parse()?,
+            name: input.parse()?,
+            ty: input.parse()?,
         })
     }
 }
@@ -73,7 +93,6 @@ impl Parse for TraitSpec {
 impl Parse for QueryAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(QueryAttr {
-            trait_token: input.parse()?,
             name: input.parse()?,
         })
     }

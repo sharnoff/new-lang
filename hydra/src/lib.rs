@@ -15,28 +15,26 @@ mod runtime;
 
 pub mod internal;
 
-pub use self::core::{Error, Result};
+pub use self::core::{Error, Future, Result};
 pub use job_id::JobId;
 pub use runtime::DBLayer;
 
+/// The macro that constructs the root database type itself
+///
+/// Documentation is a WIP
 #[macro_export]
 macro_rules! make_database {
     (
         $(#[$attr:meta])*
         $vis:vis struct $db_name:ident impl {
+            $( @single $single_vis:vis $field_name:ident: $field_ty:ty, )*
             $( $field_vis:vis $fn_name:ident: $trait:ident, )+
         }
     ) => {
         $crate::make_database_internal! {
-            ($(#[$attr])*) $vis $db_name ($($field_vis $trait $fn_name, )+)
+            ($(#[$attr])*) $vis $db_name
+                ($($single_vis $field_name $field_ty, )*)
+                ($($field_vis $trait $fn_name, )+)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }

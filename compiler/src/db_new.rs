@@ -6,11 +6,12 @@ hydra::make_database! {
     /// The central database used for managing queries of every piece of information in the
     /// compiler
     struct Database impl {
+        @single root_file: String,
         get_foo: Foo,
     }
 }
 
-#[hydra::query(trait Foo)]
-fn get_foo(db: Database, job: hydra::JobId, key: usize) -> hydra::Result<f64> {
+#[hydra::query(Foo)]
+fn get_foo(db: Database, job: &hydra::JobId, key: usize) -> hydra::Result<f64> {
     Ok(key as f64 / usize::MAX as f64)
 }
