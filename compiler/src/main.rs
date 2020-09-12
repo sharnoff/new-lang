@@ -3,6 +3,7 @@
 
 mod ast;
 mod db;
+mod db_new;
 mod error;
 mod token_tree;
 mod tokens;
