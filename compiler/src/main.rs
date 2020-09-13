@@ -1,6 +1,9 @@
 // #![allow(unused_variables)]
 // #![allow(dead_code)]
 
+use futures::executor::block_on;
+use hydra::JobId;
+
 mod ast;
 mod db;
 mod db_new;
@@ -12,6 +15,13 @@ mod utils;
 use db::Files;
 
 fn main() {
+    let db = db_new::Database::new();
+
+    let job = JobId::initial_seed();
+    let ast = block_on(db.get_ast_info(job, "test_input.tc".into()));
+    println!("{:?}", ast);
+
+    /*
     let mut files = Files::new();
 
     files.reserve("test_input.tc");
@@ -37,4 +47,5 @@ fn main() {
             num_err_str
         );
     }
+    */
 }

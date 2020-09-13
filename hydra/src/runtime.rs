@@ -25,7 +25,7 @@ pub struct DBLayer<K, V, DB, Token> {
 
 enum ComputeStatus<T> {
     InProgress(OngoingJob<T>),
-    Done(Arc<crate::Result<T>>),
+    Done(crate::Result<T>),
 }
 
 struct OngoingJob<T> {
@@ -34,7 +34,7 @@ struct OngoingJob<T> {
 
     // The set of jobs that are currently waiting for this job to finish
     // This list includes everything but the original query's job id
-    waiting: Vec<(JobId, Sender<Arc<crate::Result<T>>>)>,
+    waiting: Vec<(JobId, Sender<crate::Result<T>>)>,
 
     // The recursive set of jobs that the compute task is currently blocked on
     // TODO: This should probably be a structure that makes it easier to answer "is this other job
@@ -47,7 +47,7 @@ pub struct Executor(ThreadPool);
 impl<K, V, DB, Token> DBLayer<K, V, DB, Token>
 where
     K: 'static + Hash + Eq + Clone + Send + Sync,
-    V: 'static + Debug + Send + Sync,
+    V: 'static + Debug + Clone + Send + Sync,
     DB: Runtime + AsRef<Self>,
     Token: Computable<DB, Value = V, Key = K> + Send + Sync,
 {
@@ -61,7 +61,7 @@ where
     }
 
     /// Gets the value corresponding to a key, doing no work if it has already been computed
-    pub async fn query(&self, global: &DB, job: JobId, key: K) -> Arc<crate::Result<V>> {
+    pub async fn query(&self, global: &DB, job: JobId, key: K) -> crate::Result<V> {
         // We need to open `self.refs` first, because we might need to add to it later.
         let mut key_guard = self.refs.lock().await;
 
@@ -83,12 +83,14 @@ where
                     blocked_on: Vec::new(),
                 }));
 
+                drop((key_guard, values_guard));
+
                 rx.await.unwrap()
             }
 
             // Otherwise, if it's already computed (or already has been), we'll return that
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                ComputeStatus::Done(arc_value) => arc_value.clone(),
+                ComputeStatus::Done(result) => result.clone(),
                 ComputeStatus::InProgress(status) => {
                     // If the current job id is a descendant of the one that's supposed to be
                     // computing this, we'll return a cycle error. We ALSO have an error if the
@@ -108,9 +110,8 @@ where
                             cycles.push(status.job.clone());
                         }
 
-                        let res = Arc::new(Err(Error::Cycles(cycles)));
+                        let res = Err(Error::Cycles(Arc::new(cycles)));
                         *entry.into_mut() = ComputeStatus::Done(res.clone());
-                        // entry.replace_entry(ComputeStatus::Done(res.clone()));
                         return res;
                     }
 
@@ -128,11 +129,10 @@ where
     }
 
     /// Constructs a task for computing the value of the function
-    fn add_task(db: &DB, job: JobId, key: K, tx: Sender<Arc<crate::Result<V>>>) {
+    fn add_task(db: &DB, job: JobId, key: K, tx: Sender<crate::Result<V>>) {
         let global = db.clone();
         let task = async move {
             let result = Token::construct(global.clone(), &job, key.clone()).await;
-            let result = Arc::new(result);
 
             // After we're done constructing the value, we need to set the values inside the db
             // layer:
@@ -271,7 +271,7 @@ where
                 if job.descendant_of(blocked_by) {
                     did_err = true;
                     // sending won't block because the channel has capacity of 1
-                    tx.send(Arc::new(Err(Error::Cycles(vec![blocked_by.clone()]))))
+                    tx.send(Err(Error::Cycles(Arc::new(vec![blocked_by.clone()]))))
                         .unwrap();
                     None
                 } else {

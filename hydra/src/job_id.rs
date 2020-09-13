@@ -31,8 +31,11 @@ impl JobId {
         }))
     }
 
-    /// An internal function to produce a `JobId` as a standalone query
-    pub(crate) fn initial_seed() -> JobId {
+    /// An function to produce a `JobId` as a standalone query
+    ///
+    /// This should only be used when it is impossible for the query to be called from within
+    /// another query.
+    pub fn initial_seed() -> JobId {
         JobId(Arc::new(InternalJobId {
             parent: None,
             depth: 0,

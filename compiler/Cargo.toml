@@ -10,3 +10,4 @@ edition = "2018"
 ansi_term = "0.12"
 unicode-width = "0.1.7"
 hydra = { path = "../hydra" }
+futures = "0.3.5"

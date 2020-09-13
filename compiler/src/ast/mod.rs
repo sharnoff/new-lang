@@ -23,6 +23,8 @@ pub mod types;
 
 use self::{expr::*, item::*, literals::*, pattern::*, type_or_expr::*, types::*};
 
+pub use item::Item;
+
 use crate::token_tree::{self, Delim, Kwd, Punc, Token, TokenKind};
 use consumed::Consumed;
 

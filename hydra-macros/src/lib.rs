@@ -64,7 +64,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
                 &self,
                 job: hydra::JobId,
                 key: <#compute>::Key,
-            ) -> std::sync::Arc<hydra::Result<<#compute>::Value>> {
+            ) -> hydra::Result<<#compute>::Value> {
                 self.0.#field_name.query(self, job, key).await
             }
         ));
@@ -134,7 +134,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
             #( #methods )*
 
             /// Constructs a new database, additionally spawning idle executor work threads
-            fn new() -> Self {
+            #vis fn new() -> Self {
                 use hydra::DBLayer;
                 use hydra::internal::{JobOwners, Executor};
                 use hydra::futures::lock::Mutex;
@@ -192,6 +192,7 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let QueryFn {
+        vis,
         fn_name: _,
         fn_args,
         fn_out,
@@ -207,11 +208,12 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
     let token_type = format_ident!("Hydra{}Token", name);
 
     quote!(
-        trait #name<DB> {
+        #vis trait #name<DB> {
             type Token;
         }
 
-        struct #token_type;
+        #[doc(hidden)]
+        #vis struct #token_type;
 
         impl #name<#db_type> for hydra::internal::Dummy {
             type Token = #token_type;

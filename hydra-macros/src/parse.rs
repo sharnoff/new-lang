@@ -42,6 +42,7 @@ pub struct QueryAttr {
 
 /// The "parsed" value of a query function
 pub struct QueryFn {
+    pub vis: Visibility,
     pub fn_name: Ident,
     pub fn_args: Punctuated<FnArg, Token![,]>,
     pub fn_out: ReturnType,
@@ -218,6 +219,7 @@ impl TryFrom<ItemFn> for QueryFn {
         }
 
         Ok(QueryFn {
+            vis: func.vis,
             fn_name: fn_name.clone(),
             fn_args: func.sig.inputs,
             fn_out: func.sig.output,
