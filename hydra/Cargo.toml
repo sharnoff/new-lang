@@ -8,3 +8,5 @@ edition = "2018"
 
 [dependencies]
 hydra-macros = { path = "../hydra-macros" }
+futures = { version = "0.3.5", features = ["thread-pool"] }
+futures-util = "0.3.5"

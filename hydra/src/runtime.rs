@@ -2,19 +2,23 @@
 //! database
 
 use crate::internal::{Computable, Priority, Runtime};
-use crate::{Error, Future, JobId};
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use crate::{Error, JobId};
+use futures::channel::oneshot::{self, Sender};
+use futures::executor::ThreadPool;
+use futures::lock::Mutex;
+use futures::prelude::*;
+use std::collections::{hash_map::Entry, HashMap};
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::sync::mpsc::{sync_channel, SyncSender};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 
 pub struct DBLayer<K, V, DB, Token> {
     values: Mutex<HashMap<K, ComputeStatus<V>>>,
 
     /// A reference of the values for which keys we have `JobId`s currently active
     // NOTE: Always lock *before* `values`
-    refs: RwLock<HashMap<JobId, K>>,
+    refs: Mutex<HashMap<JobId, K>>,
 
     compute: PhantomData<(DB, Token)>,
 }
@@ -30,7 +34,7 @@ struct OngoingJob<T> {
 
     // The set of jobs that are currently waiting for this job to finish
     // This list includes everything but the original query's job id
-    waiting: Vec<(JobId, SyncSender<Arc<crate::Result<T>>>)>,
+    waiting: Vec<(JobId, Sender<Arc<crate::Result<T>>>)>,
 
     // The recursive set of jobs that the compute task is currently blocked on
     // TODO: This should probably be a structure that makes it easier to answer "is this other job
@@ -38,43 +42,40 @@ struct OngoingJob<T> {
     blocked_on: Vec<JobId>,
 }
 
-pub struct Executor {
-    defer: Mutex<VecDeque<Box<dyn FnOnce()>>>,
-    asap: Mutex<VecDeque<Box<dyn FnOnce()>>>,
-}
+pub struct Executor(ThreadPool);
 
 impl<K, V, DB, Token> DBLayer<K, V, DB, Token>
 where
-    K: 'static + Hash + Eq + Clone,
-    V: 'static,
-    DB: 'static + Runtime + Clone + AsRef<Self>,
-    Token: Computable<DB, Value = V, Key = K>,
+    K: 'static + Hash + Eq + Clone + Send,
+    V: 'static + Debug + Send + Sync,
+    DB: Runtime + AsRef<Self>,
+    Token: Computable<DB, Value = V, Key = K> + Send + Sync,
 {
-    /// Gets the value corresponding to a key, blocking until it becomes available
-    pub fn get(&self, global: &DB, job: JobId, key: K) -> Arc<crate::Result<V>> {
-        self.query(global, job, key).wait()
+    /// Constructs a new, blank `DBLayer`
+    pub fn new() -> Self {
+        Self {
+            values: Mutex::new(HashMap::new()),
+            refs: Mutex::new(HashMap::new()),
+            compute: PhantomData,
+        }
     }
 
-    /// Gets the value corresponding to a key, returning a future that may be unwrapped with
-    /// [`.wait()`]
-    ///
-    /// This function is efficient; if the result has already been calculated, it will return a
-    /// `Future::Done(_)`, without allocating more channels.
-    ///
-    /// [`.wait()`]: ../enum.Future.html#method.wait
-    pub fn query(&self, global: &DB, job: JobId, key: K) -> Future<Arc<crate::Result<V>>> {
-        // We need to open `self.refs` first, because we might need to add to it later:
-        let mut key_guard = self.refs.write().unwrap();
+    /// Gets the value corresponding to a key, doing no work if it has already been computed
+    pub async fn query(&self, global: &DB, job: JobId, key: K) -> Arc<crate::Result<V>> {
+        // We need to open `self.refs` first, because we might need to add to it later.
+        let mut key_guard = self.refs.lock().await;
 
-        // And then we check inside `self.values` to see if this has already been computed:
-        let mut values_guard = self.values.lock().unwrap();
+        // The first *actual* thing we do is checking inside `self.values` to see if the value for
+        // this key has alredy been computed:
+        let mut values_guard = self.values.lock().await;
         match values_guard.entry(key.clone()) {
             // If there's nothing here, then we need to compute the value!
             Entry::Vacant(entry) => {
-                let (tx, rx) = sync_channel(1);
-                let task = Self::make_task(global.clone(), job.clone(), key.clone(), tx);
-                global.executor().add_task(task, Priority::Asap);
+                let (tx, rx) = oneshot::channel();
+                Self::add_task(global, job.clone(), key.clone(), tx);
 
+                // After we've started the task -- but BEFORE WE LET GO OF THE LOCK -- we mark this
+                // key as bein currently computed.
                 key_guard.insert(job.clone(), key);
                 entry.insert(ComputeStatus::InProgress(OngoingJob {
                     job,
@@ -82,12 +83,12 @@ where
                     blocked_on: Vec::new(),
                 }));
 
-                Future::Queued(rx)
+                rx.await.unwrap()
             }
 
             // Otherwise, if it's already computed (or already has been), we'll return that
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                ComputeStatus::Done(arc_value) => Future::Done(arc_value.clone()),
+                ComputeStatus::Done(arc_value) => arc_value.clone(),
                 ComputeStatus::InProgress(status) => {
                     // If the current job id is a descendant of the one that's supposed to be
                     // computing this, we'll return a cycle error. We ALSO have an error if the
@@ -110,30 +111,26 @@ where
                         let res = Arc::new(Err(Error::Cycles(cycles)));
                         *entry.into_mut() = ComputeStatus::Done(res.clone());
                         // entry.replace_entry(ComputeStatus::Done(res.clone()));
-                        return Future::Done(res);
+                        return res;
                     }
 
                     // If we didn't immediately spot a cycle, then we're free to wait for this to
                     // finish. There's a few things that we need to do in order to register our
                     // future.
-                    let (tx, rx) = sync_channel(1);
+                    let (tx, rx) = oneshot::channel();
                     Self::delay_mark_ancestors_blocked(global.clone(), &job, status.job.clone());
                     status.waiting.push((job, tx));
 
-                    Future::Queued(rx)
+                    rx.await.unwrap()
                 }
             },
         }
     }
 
     /// Constructs a task for computing the value of the function
-    fn make_task(
-        global: DB,
-        job: JobId,
-        key: K,
-        tx: SyncSender<Arc<crate::Result<V>>>,
-    ) -> Box<dyn FnOnce()> {
-        Box::new(move || {
+    fn add_task(db: &DB, job: JobId, key: K, tx: Sender<Arc<crate::Result<V>>>) {
+        let global = db.clone();
+        let task = async move {
             let result = Token::construct(global.clone(), &job, key.clone());
             let result = Arc::new(result);
 
@@ -142,8 +139,8 @@ where
             let this = global.as_ref();
 
             // we always lock `refs` before values
-            let mut refs_guard = this.refs.write().unwrap();
-            let mut vals_guard = this.values.lock().unwrap();
+            let mut refs_guard = this.refs.lock().await;
+            let mut vals_guard = this.values.lock().await;
 
             // remove the job from the list of currently-running jobs
             refs_guard
@@ -167,10 +164,12 @@ where
             // helpful to know about a bug earlier on in the process
             waiting
                 .into_iter()
-                .for_each(|(_, s)| s.try_send(result.clone()).unwrap());
+                .for_each(|(_, s)| s.send(result.clone()).unwrap());
 
-            tx.try_send(result).unwrap();
-        })
+            tx.send(result).unwrap();
+        };
+
+        db.executor().add_task(task, Priority::Asap)
     }
 
     /// Queues a low-priority task into the global executor that marks all of the job's ancestors
@@ -183,10 +182,10 @@ where
             Some(p) => p.clone(),
         };
 
-        let db = global.clone();
-        let task = move || db.mark_blocked_recursive(&parent, &blocked_by);
-
-        global.executor().add_task(Box::new(task), Priority::Defer);
+        global.executor().add_task(
+            global.clone().mark_blocked_recursive(parent, blocked_by),
+            Priority::Defer,
+        );
     }
 
     /// Determines whether any of the `JobId`s in the list are an ancestor of the first, returning
@@ -200,11 +199,11 @@ where
     /// Marks the given job as blocked by another
     ///
     /// This function returns `None` if the original job is no longer in progress
-    pub fn mark_blocked(&self, job: &JobId, blocked_by: &JobId) -> Option<()> {
-        let key_guard = self.refs.read().unwrap();
+    pub async fn mark_blocked(&self, job: &JobId, blocked_by: &JobId) -> Option<()> {
+        let key_guard = self.refs.lock().await;
         let key = key_guard.get(job)?;
 
-        let mut values_guard = self.values.lock().unwrap();
+        let mut values_guard = self.values.lock().await;
         let status = values_guard
             .get_mut(key)
             .expect("could not find key in DBLayer value map");
@@ -266,12 +265,13 @@ where
         // errors at the minimum set of queries that will ensure everything *does* get calculated.
         let mut did_err = false;
         let waiting = std::mem::replace(&mut info.waiting, Vec::new());
+
         info.waiting = (waiting.into_iter())
             .filter_map(|(job, tx)| {
                 if job.descendant_of(blocked_by) {
                     did_err = true;
                     // sending won't block because the channel has capacity of 1
-                    tx.try_send(Arc::new(Err(Error::Cycles(vec![blocked_by.clone()]))))
+                    tx.send(Arc::new(Err(Error::Cycles(vec![blocked_by.clone()]))))
                         .unwrap();
                     None
                 } else {
@@ -285,10 +285,11 @@ where
 }
 
 impl Executor {
-    fn add_task(&self, f: Box<dyn FnOnce()>, priority: Priority) {
-        match priority {
-            Priority::Defer => self.defer.lock().unwrap().push_back(f),
-            Priority::Asap => self.asap.lock().unwrap().push_back(f),
-        }
+    pub fn new() -> Executor {
+        Executor(ThreadPool::new().expect("failed to build executor thread pool"))
+    }
+
+    fn add_task(&self, f: impl 'static + Send + Future<Output = ()>, _priority: Priority) {
+        self.0.spawn_ok(f);
     }
 }

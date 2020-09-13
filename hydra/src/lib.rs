@@ -15,9 +15,13 @@ mod runtime;
 
 pub mod internal;
 
-pub use self::core::{Error, Future, Result};
+pub use self::core::{Error, Result};
 pub use job_id::JobId;
 pub use runtime::DBLayer;
+
+// Re-export `futures` so that we guarantee that it's available for us in the macro
+#[doc(hidden)]
+pub use futures;
 
 /// The macro that constructs the root database type itself
 ///

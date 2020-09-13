@@ -10,8 +10,10 @@
 #![doc(hidden)]
 
 use crate::JobId;
+use futures::future::Future;
+use futures::lock::Mutex;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::pin::Pin;
 
 pub use crate::runtime::Executor;
 
@@ -84,11 +86,15 @@ pub trait Computable<DB> {
 }
 
 #[doc(hidden)]
-pub trait Runtime {
+pub trait Runtime: 'static + Clone + Send + Sync {
     /// Mark the given job as blocked by a query
     ///
     /// This function should return `None` if the id given by `job` has already finished.
-    fn mark_single_blocked(&self, job: &JobId, by: &JobId) -> Option<()>;
+    fn mark_single_blocked<'a>(
+        &'a self,
+        job: &'a JobId,
+        by: &'a JobId,
+    ) -> Pin<Box<dyn 'a + Send + Sync + Future<Output = Option<()>>>>;
 
     /// Returns the executor for handling tasks
     fn executor(&self) -> &Executor;
@@ -102,19 +108,29 @@ pub trait Runtime {
     /// This method should not be implemented manually (by users or the procedural macros).
     ///
     /// If the job has already finished, this function will simply return without doing anything.
-    fn mark_blocked_recursive(&self, mut job: &JobId, by: &JobId) {
-        // From the documentation of `mark_single_blocked`:
-        // > This function should return `None` if the id given by `job` has already finished
-        if self.mark_single_blocked(job, by).is_none() {
-            return;
-        }
+    fn mark_blocked_recursive(
+        self,
+        job: JobId,
+        by: JobId,
+    ) -> Pin<Box<dyn Send + Sync + Future<Output = ()>>> {
+        async fn inner(this: impl Runtime, job: JobId, by: JobId) {
+            let mut job = &job;
 
-        while let Some(p) = job.parent() {
-            job = &p;
-            if self.mark_single_blocked(job, by).is_none() {
-                return;
+            // From the documentation of `mark_single_blocked`:
+            // > This function should return `None` if the id given by `job` has already finished
+            if this.mark_single_blocked(job, &by).await.is_none() {
+                return ();
+            }
+
+            while let Some(p) = job.parent() {
+                job = &p;
+                if this.mark_single_blocked(job, &by).await.is_none() {
+                    return ();
+                }
             }
         }
+
+        Box::pin(inner(self, job, by))
     }
 }
 
@@ -124,11 +140,17 @@ pub enum Priority {
 }
 
 pub struct JobOwners {
-    map: RwLock<HashMap<JobId, QueryKind>>,
+    map: Mutex<HashMap<JobId, QueryKind>>,
 }
 
 impl JobOwners {
-    pub fn query_kind(&self, job: &JobId) -> Option<QueryKind> {
-        self.map.read().unwrap().get(job).cloned()
+    pub fn new() -> JobOwners {
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn query_kind(&self, job: &JobId) -> Option<QueryKind> {
+        self.map.lock().await.get(job).cloned()
     }
 }

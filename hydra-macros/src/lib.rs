@@ -60,12 +60,12 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         blocked_pats.push(quote!(<#compute>::QUERY_KIND));
 
         methods.push(quote!(
-            #vis fn #method_name(
+            #vis async fn #method_name(
                 &self,
                 job: hydra::JobId,
                 key: <#compute>::Key,
             ) -> std::sync::Arc<hydra::Result<<#compute>::Value>> {
-                self.0.#field_name.get(self, job, key)
+                self.0.#field_name.query(self, job, key).await
             }
         ));
 
@@ -73,21 +73,19 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         field_names.push(field_name);
     }
 
-    let mut single_fields = Vec::with_capacity(single_specs.len());
+    let mut singles_vis = Vec::with_capacity(single_specs.len());
+    let mut singles_names = Vec::with_capacity(single_specs.len());
+    let mut singles_types = Vec::with_capacity(single_specs.len());
     for field in single_specs {
         let vis = field.vis;
         let name = field.name;
         let field_ty = field.ty;
 
-        single_fields.push(quote!(
-            #vis #name: std::sync::RwLock<Option<std::sync::Arc<#field_ty>>>
-        ));
-
         let unset = format!("singular hydra field `{}` has not been set", name);
 
         methods.push(quote!(
-            fn #name(&self) -> std::sync::Arc<#field_ty> {
-                self.0.#name.read().unwrap()
+            #vis async fn #name(&self) -> std::sync::Arc<#field_ty> {
+                self.0.#name.lock().await
                     .as_ref()
                     .expect(#unset)
                     .clone()
@@ -97,8 +95,8 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         let set_name = format_ident!("set_{}", name);
 
         methods.push(quote!(
-            fn #set_name(&self, value: #field_ty) {
-                let mut guard = self.0.#name.write().unwrap();
+            #vis async fn #set_name(&self, value: #field_ty) {
+                let mut guard = self.0.#name.lock().await;
                 if guard.is_some() {
                     panic!("singular hydra field `{}` has already been set!", stringify!(#name));
                 }
@@ -106,6 +104,10 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
                 *guard = Some(std::sync::Arc::new(value))
             }
         ));
+
+        singles_vis.push(vis);
+        singles_names.push(name);
+        singles_types.push(quote!(std::sync::Arc<#field_ty>));
     }
 
     let attrs = database_input.attrs;
@@ -118,30 +120,52 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         #vis struct #db_type(std::sync::Arc<#db_inner_type>);
 
         struct #db_inner_type {
-            #( #single_fields, )*
+            #( #singles_names: hydra::futures::lock::Mutex<Option<#singles_types>>, )*
 
             #( #field_names: #db_layers, )*
 
-            // A helper field to indicate where certain jobs are
+            // A helper field to indicate which db layers certain jobs are in
             __active_jobs: hydra::internal::JobOwners,
-            __executor: std::sync::Arc<hydra::internal::Executor>,
+            // The internal executor
+            __executor: hydra::internal::Executor,
         }
 
         impl #db_type {
             #( #methods )*
+
+            /// Constructs a new database, additionally spawning idle executor work threads
+            fn new() -> Self {
+                use hydra::DBLayer;
+                use hydra::internal::{JobOwners, Executor};
+                use hydra::futures::lock::Mutex;
+
+                Self(std::sync::Arc::new(#db_inner_type {
+                    #( #singles_names: Mutex::new(None), )*
+                    #( #field_names: hydra::DBLayer::new(), )*
+
+                    __active_jobs: hydra::internal::JobOwners::new(),
+                    __executor: hydra::internal::Executor::new(),
+                }))
+            }
         }
 
         impl hydra::internal::Runtime for #db_type {
-            fn mark_single_blocked(&self, job: &hydra::JobId, by: &hydra::JobId) -> Option<()> {
+            fn mark_single_blocked<'a>(&'a self, job: &'a hydra::JobId, by: &'a hydra::JobId) ->
+                std::pin::Pin<Box<dyn 'a + Send + Sync + hydra::futures::prelude::Future<Output = Option<()>>>> {
                 use std::sync::Arc;
-                use std::ops::Deref;
+                use hydra::JobId;
 
-                let q_kind = self.0.__active_jobs.query_kind(job)?;
+                async fn inner(this: &#db_type, job: &JobId, by: &JobId) -> Option<()> {
+                    let q_kind = this.0.__active_jobs.query_kind(job).await?;
 
-                match q_kind {
-                    #( #blocked_pats => self.0.#field_names.mark_blocked(job, by), )*
-                    _ => panic!("unknown query kind {:?} of {} known", q_kind, #num_query_kind),
+                    match q_kind {
+                        #( #blocked_pats => this.0.#field_names.mark_blocked(job, by).await, )*
+                        _ => panic!("unknown query kind {:?} of {} known", q_kind, #num_query_kind),
+                    }
                 }
+
+                Box::pin(inner(self, job, by))
+
             }
 
             fn executor(&self) -> &hydra::internal::Executor {
