@@ -110,7 +110,7 @@ impl TryFrom<ItemFn> for QueryFn {
 
         // The input function must have a signature that looks exactly like:
         //
-        //   <Vis> fn <name>(<db>: Arc< <db_type> >, <job>: <JobId>, <key>: <key_type>)
+        //   <Vis> async fn <name>(<db>: Arc< <db_type> >, <job>: <JobId>, <key>: <key_type>)
         //       -> hydra::Result< <value_type> > {
         //      // -- internals --
         //   }
@@ -133,7 +133,7 @@ impl TryFrom<ItemFn> for QueryFn {
             output,
         } = &func.sig;
 
-        let is_immediately_malformed = asyncness.is_some()
+        let is_immediately_malformed = asyncness.is_none()
             || constness.is_some()
             || unsafety.is_some()
             || abi.is_some()

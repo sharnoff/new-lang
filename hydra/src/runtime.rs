@@ -46,7 +46,7 @@ pub struct Executor(ThreadPool);
 
 impl<K, V, DB, Token> DBLayer<K, V, DB, Token>
 where
-    K: 'static + Hash + Eq + Clone + Send,
+    K: 'static + Hash + Eq + Clone + Send + Sync,
     V: 'static + Debug + Send + Sync,
     DB: Runtime + AsRef<Self>,
     Token: Computable<DB, Value = V, Key = K> + Send + Sync,
@@ -131,7 +131,7 @@ where
     fn add_task(db: &DB, job: JobId, key: K, tx: Sender<Arc<crate::Result<V>>>) {
         let global = db.clone();
         let task = async move {
-            let result = Token::construct(global.clone(), &job, key.clone());
+            let result = Token::construct(global.clone(), &job, key.clone()).await;
             let result = Arc::new(result);
 
             // After we're done constructing the value, we need to set the values inside the db

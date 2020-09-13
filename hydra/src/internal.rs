@@ -82,7 +82,11 @@ pub trait Computable<DB> {
     type Value: Sized;
     const QUERY_KIND: QueryKind;
 
-    fn construct(db: DB, job: &JobId, key: Self::Key) -> crate::Result<Self::Value>;
+    fn construct<'a>(
+        db: DB,
+        job: &'a JobId,
+        key: Self::Key,
+    ) -> Pin<Box<dyn 'a + Send + Sync + Future<Output = crate::Result<Self::Value>>>>;
 }
 
 #[doc(hidden)]

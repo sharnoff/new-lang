@@ -223,7 +223,16 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             const QUERY_KIND: hydra::internal::QueryKind = hydra::internal::QueryKind(#kind_count);
 
-            fn construct(#fn_args) #fn_out #body
+            fn construct<'a>(db: #db_type, job: &'a hydra::JobId, key: Self::Key) ->
+                    std::pin::Pin<Box<
+                        dyn 'a + Send + Sync +
+                        hydra::futures::future::Future<Output=hydra::Result<#value_type>>
+                    >>
+            {
+                async fn inner(#fn_args) #fn_out #body
+
+                Box::pin(inner(db, job, key))
+            }
         }
     )
     .into()

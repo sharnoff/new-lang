@@ -12,6 +12,6 @@ hydra::make_database! {
 }
 
 #[hydra::query(Foo)]
-fn get_foo(db: Database, job: &hydra::JobId, key: usize) -> hydra::Result<f64> {
+async fn get_foo(db: Database, job: &hydra::JobId, key: usize) -> hydra::Result<f64> {
     Ok(key as f64 / usize::MAX as f64)
 }
