@@ -10,13 +10,25 @@ use std::io;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+// TODO: We actually need to modify `crate::error` to work with the new database
+#[derive(Clone)]
+pub struct CompilerError;
+
 hydra::make_database! {
     /// The central database used for managing queries of every piece of information in the
     /// compiler
-    pub struct Database impl {
+    pub struct Database {
         @single root_file: String,
-        pub get_file_content: GetFileContent,
-        pub get_ast_info: GetAst,
+
+        @indexed {
+            pub emit_error -> errors: CompilerError,
+            pub register_file -> files: String,
+        }
+
+        impl {
+            pub get_file_content: GetFileContent,
+            pub get_ast_info: GetAst,
+        }
     }
 }
 
@@ -27,6 +39,9 @@ pub struct IoError {
     err: io::Error,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct FileId(usize);
+
 pub type IoResult<T> = Result<Arc<T>, Arc<IoError>>;
 
 #[hydra::query(GetFileContent)]
@@ -34,7 +49,7 @@ pub async fn file_content(
     db: Database,
     job: &JobId,
     file_name: String,
-) -> hydra::Result<IoResult<String>> {
+) -> hydra::Result<IoResult<(FileId, String)>> {
     // This is one of the few things that doesn't cooperate. Ironically, because using async here
     // would require *more* dependencies (and an additional runtime), we actually do blocking io
     // here -- without allowing the runtime to delay.
@@ -43,12 +58,16 @@ pub async fn file_content(
     // having a small amount of inefficiency here.
 
     // wrap with `Ok` because there's never any other DB requirements here
-    Ok(match fs::read_to_string(file_name) {
+    Ok(match fs::read_to_string(&file_name) {
         Err(err) => Err(Arc::new(IoError {
             reported: AtomicBool::new(false),
             err,
         })),
-        Ok(s) => Ok(Arc::new(s)),
+        Ok(s) => {
+            let id = db.register_file(job, file_name).await;
+
+            Ok(Arc::new((FileId(id), s)))
+        }
     })
 }
 
@@ -58,7 +77,7 @@ pub async fn file_content(
 // following `tokens`
 #[derive(Debug)]
 pub struct AstGroup {
-    file_content: Arc<String>,
+    file_content: Arc<(FileId, String)>,
     tokens: Vec<SimpleToken<'static>>,
     tt: FileTokenTree<'static>,
     items: Vec<crate::ast::Item<'static>>,
@@ -76,7 +95,7 @@ pub async fn ast_group(
         Ok(Ok(c)) => c,
     };
 
-    let mut token_results = crate::tokens::tokenize(&file_content);
+    let mut token_results = crate::tokens::tokenize(&file_content.1);
     let tokens: Vec<SimpleToken> = (token_results.iter().cloned())
         .take_while(Result::is_ok)
         .map(Result::unwrap)

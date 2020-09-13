@@ -19,6 +19,8 @@ pub struct DatabaseAst {
     pub name: Ident,
     pub singles_paren: token::Paren,
     pub singles: Punctuated<SingleInputSpec, Token![,]>,
+    pub idxs_paren: token::Paren,
+    pub indexed: Punctuated<IndexedSpec, Token![,]>,
     pub traits_paren: token::Paren,
     pub traits: Punctuated<TraitSpec, Token![,]>,
 }
@@ -26,6 +28,13 @@ pub struct DatabaseAst {
 pub struct SingleInputSpec {
     pub vis: Visibility,
     pub name: Ident,
+    pub ty: Type,
+}
+
+pub struct IndexedSpec {
+    pub vis: Visibility,
+    pub add_name: Ident,
+    pub all_name: Ident,
     pub ty: Type,
 }
 
@@ -56,6 +65,7 @@ impl Parse for DatabaseAst {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attr_paren;
         let singles_paren;
+        let idxs_paren;
         let traits_paren;
 
         Ok(DatabaseAst {
@@ -65,6 +75,8 @@ impl Parse for DatabaseAst {
             name: input.parse()?,
             singles_paren: parenthesized!(singles_paren in input),
             singles: singles_paren.parse_terminated(SingleInputSpec::parse)?,
+            idxs_paren: parenthesized!(idxs_paren in input),
+            indexed: idxs_paren.parse_terminated(IndexedSpec::parse)?,
             traits_paren: parenthesized!(traits_paren in input),
             traits: traits_paren.parse_terminated(TraitSpec::parse)?,
         })
@@ -76,6 +88,17 @@ impl Parse for SingleInputSpec {
         Ok(SingleInputSpec {
             vis: input.parse()?,
             name: input.parse()?,
+            ty: input.parse()?,
+        })
+    }
+}
+
+impl Parse for IndexedSpec {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(IndexedSpec {
+            vis: input.parse()?,
+            add_name: input.parse()?,
+            all_name: input.parse()?,
             ty: input.parse()?,
         })
     }

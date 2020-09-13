@@ -21,6 +21,7 @@ static CRATE_NAME: &str = "hydra";
 pub fn __make_database(input: TokenStream) -> TokenStream {
     let database_input = parse_macro_input!(input as DatabaseAst);
     let single_specs: Vec<_> = database_input.singles.into_iter().collect();
+    let indexed_specs: Vec<_> = database_input.indexed.into_iter().collect();
     let trait_specs: Vec<_> = database_input.traits.into_iter().collect();
 
     let db_type = database_input.name;
@@ -76,6 +77,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
     let mut singles_vis = Vec::with_capacity(single_specs.len());
     let mut singles_names = Vec::with_capacity(single_specs.len());
     let mut singles_types = Vec::with_capacity(single_specs.len());
+
     for field in single_specs {
         let vis = field.vis;
         let name = field.name;
@@ -110,6 +112,39 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         singles_types.push(quote!(std::sync::Arc<#field_ty>));
     }
 
+    let mut indexed_field_names = Vec::with_capacity(indexed_specs.len());
+    let mut indexed_types = Vec::with_capacity(indexed_specs.len());
+
+    for spec in indexed_specs {
+        let vis = spec.vis;
+        let add = spec.add_name;
+        let all = spec.all_name;
+        let ty = spec.ty;
+
+        let extend = format_ident!("extend_{}", all);
+
+        methods.push(quote!(
+            #vis async fn #add(&self, job: &JobId, value: #ty) -> usize {
+                self.0.#all.push(job, value).await
+            }
+
+            #vis async fn #extend(
+                &self,
+                job: &JobId,
+                values: impl IntoIterator<Item=#ty>
+            ) -> std::ops::Range<usize> {
+                self.0.#all.extend(job, values).await
+            }
+
+            #vis async fn #all<'a>(&'a self) -> impl 'a + Iterator<Item = &'a #ty> {
+                self.0.#all.iter().await
+            }
+        ));
+
+        indexed_field_names.push(all);
+        indexed_types.push(ty);
+    }
+
     let attrs = database_input.attrs;
     let vis = database_input.vis;
 
@@ -122,7 +157,10 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         struct #db_inner_type {
             #( #singles_names: hydra::futures::lock::Mutex<Option<#singles_types>>, )*
 
+            #( #indexed_field_names: hydra::Indexed<#indexed_types>, )*
+
             #( #field_names: #db_layers, )*
+
 
             // A helper field to indicate which db layers certain jobs are in
             __active_jobs: hydra::internal::JobOwners,
@@ -142,6 +180,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
                 Self(std::sync::Arc::new(#db_inner_type {
                     #( #singles_names: Mutex::new(None), )*
                     #( #field_names: hydra::DBLayer::new(), )*
+                    #( #indexed_field_names: hydra::Indexed::new(), )*
 
                     __active_jobs: hydra::internal::JobOwners::new(),
                     __executor: hydra::internal::Executor::new(),

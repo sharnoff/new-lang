@@ -5,12 +5,13 @@ use crate::internal::{Computable, Priority, Runtime};
 use crate::{Error, JobId};
 use futures::channel::oneshot::{self, Sender};
 use futures::executor::ThreadPool;
-use futures::lock::Mutex;
+use futures::lock::{Mutex, MutexGuard};
 use futures::prelude::*;
 use std::collections::{hash_map::Entry, HashMap};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ops::Range;
 use std::sync::Arc;
 
 pub struct DBLayer<K, V, DB, Token> {
@@ -41,8 +42,6 @@ struct OngoingJob<T> {
     // a descendant of something in the set"
     blocked_on: Vec<JobId>,
 }
-
-pub struct Executor(ThreadPool);
 
 impl<K, V, DB, Token> DBLayer<K, V, DB, Token>
 where
@@ -283,6 +282,79 @@ where
         Some(())
     }
 }
+
+pub struct Indexed<V> {
+    inner: Mutex<Vec<(JobId, V)>>,
+}
+
+impl<V: Clone> Indexed<V> {
+    pub fn new() -> Indexed<V> {
+        Indexed {
+            inner: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Pushes an element to the set, returning a unqiue index for that value
+    ///
+    /// The element is tagged with the `JobId` that placed it there so that the dependencies for
+    /// the owning job can be bundled with the element here.
+    pub async fn push(&self, job: &JobId, elem: V) -> usize {
+        let mut guard = self.inner.lock().await;
+        let idx = guard.len();
+        guard.push((job.clone(), elem));
+        drop(guard);
+
+        idx
+    }
+
+    /// Extends the set of values stored in the indexed set, returning the range of indices that the
+    /// iterator covered
+    pub async fn extend(&self, job: &JobId, elems: impl IntoIterator<Item = V>) -> Range<usize> {
+        let mut guard = self.inner.lock().await;
+        let start_idx = guard.len();
+        guard.extend(elems.into_iter().map(|v| (job.clone(), v)));
+        let end_idx = guard.len();
+        drop(guard);
+        start_idx..end_idx
+    }
+
+    // TODO: Will be implemented if needed
+    // // async fn get(&self, job: &JobId, idx: usize) -> &V
+
+    /// Returns an iterator over the values in the indexed set
+    pub async fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = &'a V> {
+        struct Iter<'b, T> {
+            guard: MutexGuard<'b, Vec<(JobId, T)>>,
+            ptr: usize,
+        }
+
+        impl<'b, T> Iterator for Iter<'b, T> {
+            type Item = &'b T;
+
+            fn next(&mut self) -> Option<&'b T> {
+                if self.ptr >= self.guard.len() {
+                    return None;
+                }
+
+                let elem: &T = &self.guard[self.ptr].1;
+                self.ptr += 1;
+
+                // This is standard lifetime-extension here; we need to do this in order to give
+                // the sort of return type that would be expected out of an iterator like this
+                let elem: &'b T = unsafe { std::mem::transmute(elem) };
+
+                Some(elem)
+            }
+        }
+
+        Iter {
+            guard: self.inner.lock().await,
+            ptr: 0,
+        }
+    }
+}
+
+pub struct Executor(ThreadPool);
 
 impl Executor {
     pub fn new() -> Executor {
