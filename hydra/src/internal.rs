@@ -107,11 +107,12 @@ pub trait Runtime: 'static + Clone + Send + Sync {
     /// given job.
     ///
     /// Contrary to the name "recursive", this method is only really structurally recursive - much
-    /// in the same way that
-    ///
-    /// This method should not be implemented manually (by users or the procedural macros).
+    /// in the same way that linked lists are typically a "recursive" datatype though they an be
+    /// traversed without recursive function calls.
     ///
     /// If the job has already finished, this function will simply return without doing anything.
+    ///
+    /// This method should not be implemented manually (by users or the procedural macros).
     fn mark_blocked_recursive(
         self,
         job: JobId,
