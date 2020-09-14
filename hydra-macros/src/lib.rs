@@ -120,6 +120,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
     for spec in indexed_specs {
         let vis = spec.vis;
         let add = spec.add_name;
+        let get = spec.get_name;
         let all = spec.all_name;
         let ty = spec.ty;
         let indexer = spec.index;
@@ -129,6 +130,10 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         methods.push(quote!(
             #vis async fn #add(&self, job: &JobId, f: impl FnOnce(#indexer) -> #ty) {
                 self.0.#all.push_with(job, f).await
+            }
+
+            #vis async fn #get(&self, job: &JobId, idx: #indexer) -> #ty {
+                self.0.#all.get_cloned(job, idx).await
             }
 
             #vis async fn #extend(

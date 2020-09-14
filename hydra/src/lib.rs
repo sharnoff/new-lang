@@ -34,7 +34,7 @@ macro_rules! make_database {
             $(@single $single_vis:vis $single_name:ident: $single_ty:ty, )*
 
             $(@indexed {
-                $( $idx_vis:vis $add_idx:ident as $index:ty => $all_idx:ident: $idx_ty:ty, )+
+                $( $idx_vis:vis $add_idx:ident -> $get_idx:ident as $index:ty => $all_idx:ident: $idx_ty:ty, )+
             })?
 
             impl {
@@ -45,7 +45,7 @@ macro_rules! make_database {
         $crate::make_database_internal! {
             ($(#[$attr])*) $vis $db_name
                 ($($single_vis $single_name $single_ty, )*)
-                ($($($idx_vis $add_idx $index $all_idx $idx_ty, )+)?)
+                ($($($idx_vis $add_idx $get_idx $index $all_idx $idx_ty, )+)?)
                 ($($field_vis $trait $fn_name, )+)
         }
     }

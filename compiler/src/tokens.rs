@@ -508,28 +508,34 @@ fn consume_single_quote(s: &str, idx: usize) -> Option<usize> {
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
     fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-        use IncompleteKind::{BlockComment, StringLiteral};
-
-        let byte_range = &aux.0;
-        let file_name: &str = aux.1;
-
-        let range = byte_range(self.src);
-
-        match self.incomplete {
-            None => ErrorBuilder::new(format!("unrecognized character sequence: {:?}", self.src))
-                .context(file_name, range.start)
-                .highlight(file_name, vec![range], error::ERR_COLOR),
-            Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
-                .context(file_name, range.start)
-                .highlight(file_name, vec![range], error::ERR_COLOR)
-                .note("expected '*/', found EOF"),
-            Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
-                .context(file_name, range.start)
-                .highlight(file_name, vec![range], error::ERR_COLOR)
-                .note("expected '\"', found EOF"),
-        }
+        todo!()
     }
 }
+
+// impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
+//     fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+//         use IncompleteKind::{BlockComment, StringLiteral};
+//
+//         let byte_range = &aux.0;
+//         let file_name: &str = aux.1;
+//
+//         let range = byte_range(self.src);
+//
+//         match self.incomplete {
+//             None => ErrorBuilder::new(format!("unrecognized character sequence: {:?}", self.src))
+//                 .context(file_name, range.start)
+//                 .highlight(file_name, vec![range], error::ERR_COLOR),
+//             Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
+//                 .context(file_name, range.start)
+//                 .highlight(file_name, vec![range], error::ERR_COLOR)
+//                 .note("expected '*/', found EOF"),
+//             Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
+//                 .context(file_name, range.start)
+//                 .highlight(file_name, vec![range], error::ERR_COLOR)
+//                 .note("expected '\"', found EOF"),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

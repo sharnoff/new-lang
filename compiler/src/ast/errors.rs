@@ -537,9 +537,14 @@ pub enum PatternContext<'a> {
 
 impl<F: Fn(Option<&str>) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
     fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-        use Error::*;
+        todo!()
+    }
+}
 
-        let (ref ranger, ref file_name) = aux;
+/*
+impl<F: Fn(Option<&str>) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
+    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+        use Error::*;
 
         match self {
             Expected { kind, found } => kind.make_error(found, ranger, file_name),
@@ -620,3 +625,4 @@ impl Ranged for Source<'_> {
         }
     }
 }
+*/

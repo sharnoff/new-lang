@@ -583,6 +583,13 @@ impl<'a> FileTokenTree<'a> {
 
 impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
     fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+        todo!()
+    }
+}
+
+/*
+impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
+    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
         use Error::*;
 
         let file_name: &str = aux.1;
@@ -638,3 +645,4 @@ impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
         }
     }
 }
+*/

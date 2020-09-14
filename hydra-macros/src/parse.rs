@@ -34,6 +34,7 @@ pub struct SingleInputSpec {
 pub struct IndexedSpec {
     pub vis: Visibility,
     pub add_name: Ident,
+    pub get_name: Ident,
     pub index: Type,
     pub all_name: Ident,
     pub ty: Type,
@@ -99,6 +100,7 @@ impl Parse for IndexedSpec {
         Ok(IndexedSpec {
             vis: input.parse()?,
             add_name: input.parse()?,
+            get_name: input.parse()?,
             index: input.parse()?,
             all_name: input.parse()?,
             ty: input.parse()?,

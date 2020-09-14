@@ -3,8 +3,10 @@
 //! The primary interface here is through the [`Builder`] type, which allows for dynamic construction
 //! of complex error messages.
 
-use crate::db::Files;
+use crate::db::Database;
+use crate::files::{FileId, FileInfo, Span};
 use ansi_term::Color;
+use hydra::JobId;
 use std::fmt::Write;
 use std::mem;
 use std::ops::{Range, RangeInclusive};
@@ -43,6 +45,8 @@ pub struct Builder {
     /// The primary error message to go at the top of the error. This is is prefixed by 'error: ' to
     /// construct the final error message.
     msg: String,
+
+    /// The individual elements of the message
     elements: Vec<Element>,
 }
 
@@ -51,25 +55,31 @@ pub const CTX_COLOR: Color = Color::Blue;
 pub const INFO_COLOR: Color = Color::Yellow;
 pub const ACCENT_COLOR: Color = Color::Blue;
 
-/// Elements for use in constructing a complex error message
+/// A single element of a (possibly complex) error message
+///
+/// These are typically added to an error with the various dedicated methods available, though the
+/// [`element`] method is available to do this directly.
+///
+/// [`element`]: #method.elem
 #[derive(Debug, Clone)]
 pub enum Element {
     /// Contextual information for an error message. The byte index is used to generate the
     /// position (in lines and columns) that the error occured.
     ///
     /// Typically, only one context will be given, but this allows for multiple.
-    Context { file_name: String, byte_idx: usize },
+    Context { file: FileId, byte_idx: usize },
 
     /// A set of source ranges in a single file to be highlighted, in order. Multiple ranges are
     /// allowed here so that multiple highlights can be made on a single line, where applicable.
     Highlight {
-        file_name: String,
+        file: FileId,
         regions: Vec<Range<usize>>,
         color: Color,
     },
 
-    /// An individual line in the source file to display, usually for the effect o f
-    Line { file_name: String, byte_idx: usize },
+    /// An individual line in the source file to display, usually for the effect of providing
+    /// context for other parts of the error
+    Line { file: FileId, byte_idx: usize },
 
     /// A string to present following "note: "
     Note(String),
@@ -82,6 +92,7 @@ pub enum Element {
     Text(String),
 }
 
+/// A marker enum for the types of `Element`s available
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum ElementKind {
     Context,
@@ -97,11 +108,11 @@ pub trait ToError<A> {
 }
 
 /// Displays the set of errors, printing them to the terminal via stderr
-pub fn display_errors<A, E: ToError<A>>(errs: impl Iterator<Item = E>, aux: A, files: &Files) {
+pub async fn display_errors(db: &Database, job: &JobId, errs: impl Iterator<Item = &Builder>) {
     let mut count = 0;
 
     for err in errs {
-        eprintln!("{}", err.to_error(&aux).pretty_fmt(files));
+        eprintln!("{}", err.pretty_fmt(db, job).await);
         count += 1;
     }
 
@@ -135,15 +146,15 @@ impl Builder {
     ///
     /// Any contexts must be given at the start of building the error message; calling this method
     /// after other elements have been added will result in a panic.
-    pub fn context(self, file_name: impl Into<String>, byte_idx: usize) -> Self {
+    pub fn context(self, span: Span) -> Self {
         match self.elements.last().map(Element::kind) {
             Some(ElementKind::Context) | None => (),
             _ => panic!("cannot add context to error builder with other elements already there"),
         }
 
         self.element(Element::Context {
-            file_name: file_name.into(),
-            byte_idx,
+            file: span.file,
+            byte_idx: span.range().start,
         })
     }
 
@@ -162,26 +173,18 @@ impl Builder {
     ///
     /// The set of ranges given must be non-empty, and this function will panic if that is not the
     /// case.
-    pub fn highlight(
-        self,
-        file_name: impl Into<String>,
-        ranges: Vec<Range<usize>>,
-        color: Color,
-    ) -> Self {
+    pub fn highlight(self, file: FileId, ranges: Vec<Range<usize>>, color: Color) -> Self {
         assert!(ranges.len() >= 1);
 
         self.element(Element::Highlight {
-            file_name: file_name.into(),
+            file,
             regions: ranges,
             color,
         })
     }
 
-    pub fn line(self, file_name: impl Into<String>, byte_idx: usize) -> Self {
-        self.element(Element::Line {
-            file_name: file_name.into(),
-            byte_idx,
-        })
+    pub fn line(self, file: FileId, byte_idx: usize) -> Self {
+        self.element(Element::Line { file, byte_idx })
     }
 
     pub fn note(self, text: impl Into<String>) -> Self {
@@ -196,6 +199,10 @@ impl Builder {
         self.element(Element::Text(text.into()))
     }
 
+    /// A builder method to add an element directly
+    ///
+    /// This is not typically what you want; if generating the element yourself, it is better to
+    /// use the other, dedicated methods on the builder.
     pub fn element(mut self, elem: Element) -> Self {
         self.elements.push(elem);
         self
@@ -219,7 +226,7 @@ impl Element {
 
 impl Builder {
     /// Formats an error builder to a string with a trailing newline
-    pub fn pretty_fmt(&self, files: &Files) -> String {
+    pub async fn pretty_fmt(&self, db: &Database, job: &JobId) -> String {
         // There's a few assertions we'll make that should be true of any error message:
         assert!(!self.elements.is_empty());
         assert_eq!(self.elements[0].kind(), ElementKind::Context);
@@ -243,31 +250,24 @@ impl Builder {
         //
         // We'll find the largest line index (line number - 1) represented by the ranges and
         // individual points here, and then use that to determine the width
-        let max_line_idx = self
-            .elements
-            .iter()
-            .filter_map(|elem| match elem {
-                Element::Context {
-                    file_name,
-                    byte_idx,
-                } => Some(files.file(&file_name).line_idx(*byte_idx)),
-                Element::Highlight {
-                    file_name, regions, ..
-                } => Some(
-                    regions
-                        .iter()
-                        .map(|r| r.end)
-                        .max()
-                        .map(|idx| files.file(&file_name).line_idx(idx))
-                        .unwrap(),
-                ),
-                Element::Line {
-                    file_name,
-                    byte_idx,
-                } => Some(files.file(&file_name).line_idx(*byte_idx)),
-                _ => None,
-            })
-            .max();
+        let mut max_line_idx = None;
+        for elem in &self.elements {
+            let idx = match elem {
+                Element::Context { file, byte_idx } => {
+                    db.get_file(job, *file).await.line_idx(*byte_idx)
+                }
+                Element::Highlight { file, regions, .. } => {
+                    let byte_idx = regions.iter().map(|r| r.end).max().unwrap();
+                    db.get_file(job, *file).await.line_idx(byte_idx)
+                }
+                Element::Line { file, byte_idx } => {
+                    db.get_file(job, *file).await.line_idx(*byte_idx)
+                }
+                _ => continue,
+            };
+
+            max_line_idx = max_line_idx.max(Some(idx));
+        }
 
         // The width we need to provide in order to ensure all line numbers are evenly aligned.
         let width = match max_line_idx {
@@ -280,7 +280,7 @@ impl Builder {
 
         // We use `last_file` to determine whether we need to add some extra context to indicate
         // that a line or highlighted region is in a different file.
-        let mut last_file: Option<&str> = None;
+        let mut last_file: Option<FileId> = None;
 
         // `prev_space` indicates whether the previous line added to the file is "spacious". This
         // is loosely defined, but is essentially used to determine whether we need to add extra
@@ -304,9 +304,11 @@ impl Builder {
                 // Highlights and lines are the most complicated section. To account for that,
                 // they're extracted into a separate function, with more details there.
                 Element::Highlight { .. } | Element::Line { .. } => {
-                    let (next_idx, file, has_space) = self.write_fmt_lines_from_elem_idx(
-                        &mut msg, i, last_file, prev_space, files, &spacing,
-                    );
+                    let (next_idx, file, has_space) = self
+                        .write_fmt_lines_from_elem_idx(
+                            &mut msg, i, last_file, prev_space, db, job, &spacing,
+                        )
+                        .await;
                     i = next_idx;
                     last_file = Some(file);
                     prev_space = has_space;
@@ -324,12 +326,10 @@ impl Builder {
                 // ```
                 // They exist to provide an immediate source for the error, so that the user can
                 // determine where it is with a glance.
-                Element::Context {
-                    file_name,
-                    byte_idx,
-                } => {
-                    let line_no = files.file(&file_name).line_idx(*byte_idx) + 1;
-                    let col_no = files.file(&file_name).col_idx(*byte_idx) + 1;
+                Element::Context { file, byte_idx } => {
+                    let file_info = db.get_file(job, *file).await;
+                    let line_no = file_info.line_idx(*byte_idx) + 1;
+                    let col_no = file_info.col_idx(*byte_idx) + 1;
 
                     writeln!(
                         msg,
@@ -339,7 +339,7 @@ impl Builder {
                         spacing,
                         CTX_COLOR.paint("-->"),
                         // file_name:line:col is the standard format for displaying file locations
-                        file_name,
+                        file_info.name,
                         line_no,
                         col_no
                     )
@@ -353,8 +353,8 @@ impl Builder {
                     // should only give one context, and the ones that give two will both be in the
                     // same file.
                     match i {
-                        0 => last_file = Some(&file_name),
-                        _ if last_file == Some(&file_name) => (),
+                        0 => last_file = Some(*file),
+                        _ if last_file == Some(*file) => (),
                         _ => last_file = None,
                     }
                 }
@@ -426,51 +426,40 @@ impl Builder {
         msg
     }
 
-    fn write_fmt_lines_from_elem_idx<'a>(
+    async fn write_fmt_lines_from_elem_idx<'a>(
         &'a self,
         msg: &mut String,
         idx: usize,
-        last_file: Option<&str>,
+        last_file: Option<FileId>,
         mut prev_space: bool,
-        files: &Files,
+        db: &Database,
+        job: &JobId,
         spacing: &str,
-    ) -> (usize, &'a str, bool) {
+    ) -> (usize, FileId, bool) {
         assert!(idx < self.elements.len());
         assert!(
             self.elements[idx].kind() == ElementKind::Highlight
                 || self.elements[idx].kind() == ElementKind::Line
         );
 
-        let file: &str = match &self.elements[idx] {
-            Element::Highlight { file_name, .. } | Element::Line { file_name, .. } => &file_name,
+        let file_id: FileId = match &self.elements[idx] {
+            Element::Highlight { file, .. } | Element::Line { file, .. } => *file,
             _ => unreachable!(),
         };
 
-        let line_range = |elem: &Element| match elem {
-            Element::Highlight {
-                file_name, regions, ..
-            } => {
-                let start = regions
-                    .iter()
-                    .map(|r| r.start)
-                    .min()
-                    .map(|idx| files.file(&file_name).line_idx(idx))
-                    .unwrap();
+        let file_info = db.get_file(job, file_id).await;
 
-                let end = regions
-                    .iter()
-                    .map(|r| r.end)
-                    .max()
-                    .map(|idx| files.file(&file_name).line_idx(idx))
-                    .unwrap();
+        let line_range = |elem: &Element| match elem {
+            Element::Highlight { file, regions, .. } => {
+                assert!(*file == file_id);
+                let start = file_info.line_idx(regions.iter().map(|r| r.start).min().unwrap());
+                let end = file_info.line_idx(regions.iter().map(|r| r.start).min().unwrap());
 
                 start..=end
             }
-            Element::Line {
-                file_name,
-                byte_idx,
-            } => {
-                let line_idx = files.file(&file_name).line_idx(*byte_idx);
+            Element::Line { file, byte_idx } => {
+                assert!(*file == file_id);
+                let line_idx = file_info.line_idx(*byte_idx);
                 line_idx..=line_idx
             }
             _ => unreachable!(),
@@ -494,11 +483,9 @@ impl Builder {
 
         for (i, elem) in (idx + 1..).zip(&self.elements[idx + 1..]) {
             match elem {
-                Element::Highlight {
-                    file_name, regions, ..
-                } => {
+                Element::Highlight { file, regions, .. } => {
                     // If it's in a different file, we'll leave it out
-                    if &file_name != &file {
+                    if file != &file_id {
                         continue_idx = i;
                         break;
                     }
@@ -523,8 +510,8 @@ impl Builder {
                     last_is_highlight = true;
                 }
 
-                Element::Line { file_name, .. } => {
-                    if file_name != &file {
+                Element::Line { file, .. } => {
+                    if file != &file_id {
                         continue_idx = i;
                         break;
                     }
@@ -558,7 +545,7 @@ impl Builder {
 
         // And now we print each group, which we delegate to yet another function
         for (i, g) in groups.into_iter().enumerate() {
-            if i == 0 && last_file != Some(file) {
+            if i == 0 && last_file != Some(file_id) {
                 if !prev_space {
                     writeln!(msg, "{} {}", spacing, ACCENT_COLOR.paint("|")).unwrap();
                 }
@@ -573,25 +560,24 @@ impl Builder {
                     "{}{} in '{}':",
                     spacing,
                     ACCENT_COLOR.paint("-->"),
-                    file,
+                    file_info.name,
                 )
                 .unwrap();
             } else if !prev_space {
                 writeln!(msg, "{} {}", spacing, ACCENT_COLOR.paint("|")).unwrap();
             }
 
-            prev_space = Self::write_group(msg, g, files, file, spacing);
+            prev_space = Self::write_group(msg, g, &file_info, spacing);
         }
 
-        (continue_idx, file, prev_space)
+        (continue_idx, file_id, prev_space)
     }
 
     // Returns whether this group is spacious at the end
     fn write_group(
         msg: &mut String,
         group: Vec<(RangeInclusive<usize>, &Element)>,
-        files: &Files,
-        file_name: &str,
+        file: &FileInfo,
         spacing: &str,
     ) -> bool {
         let mut i = 0;
@@ -676,7 +662,7 @@ impl Builder {
             //
             // And because it's complicated, we're deferring it to yet another function!
             let byte_ranges = collapse_ranges(regions.iter().cloned());
-            Self::highlight_byte_ranges(msg, byte_ranges, color, files, file_name, spacing);
+            Self::highlight_byte_ranges(msg, byte_ranges, color, file, spacing);
             end_is_spacious = true;
             i = next;
         }
@@ -691,12 +677,9 @@ impl Builder {
         msg: &mut String,
         ranges: Vec<Range<usize>>,
         color: Color,
-        files: &Files,
-        file_name: &str,
+        file: &FileInfo,
         spacing: &str,
     ) {
-        let file = files.file(file_name);
-
         assert!(!ranges.is_empty());
 
         // We'll produce the ranges of lines corresponding to each input range, along with the

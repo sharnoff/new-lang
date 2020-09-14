@@ -6,22 +6,19 @@ use hydra::JobId;
 
 mod ast;
 mod db;
-mod db_new;
 mod error;
 mod files;
 mod token_tree;
 mod tokens;
 mod utils;
 
-use db_new::Database;
-
-// use db::Files;
+use db::Database;
 
 fn main() {
-    let db = db_new::Database::new();
+    let db = Database::new();
 
     let job = JobId::initial_seed();
-    let ast = block_on(db.get_ast_info(job, "test_input.tc".into()));
+    let ast = block_on(db.ast_info(job, "test_input.tc".into()));
     println!("{:?}", ast);
 
     /*
