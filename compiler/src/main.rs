@@ -8,11 +8,14 @@ mod ast;
 mod db;
 mod db_new;
 mod error;
+mod files;
 mod token_tree;
 mod tokens;
 mod utils;
 
-use db::Files;
+use db_new::Database;
+
+// use db::Files;
 
 fn main() {
     let db = db_new::Database::new();

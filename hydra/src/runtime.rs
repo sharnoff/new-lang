@@ -283,45 +283,48 @@ where
     }
 }
 
-pub struct Indexed<V> {
+pub struct Indexed<Idx, V> {
     inner: Mutex<Vec<(JobId, V)>>,
+    idx: PhantomData<Idx>,
 }
 
-impl<V: Clone> Indexed<V> {
-    pub fn new() -> Indexed<V> {
+pub trait Index {
+    fn index<T>(self, vs: &[T]) -> &T;
+
+    fn from_usize(idx: usize) -> Self;
+}
+
+impl<Idx: Index, V> Indexed<Idx, V> {
+    pub fn new() -> Indexed<Idx, V> {
         Indexed {
             inner: Mutex::new(Vec::new()),
+            idx: PhantomData,
         }
     }
 
-    /// Pushes an element to the set, returning a unqiue index for that value
+    /// Pushes an element to the set, after generating it with its provided index
     ///
     /// The element is tagged with the `JobId` that placed it there so that the dependencies for
     /// the owning job can be bundled with the element here.
-    pub async fn push(&self, job: &JobId, elem: V) -> usize {
+    pub async fn push_with(&self, job: &JobId, f: impl FnOnce(Idx) -> V) {
         let mut guard = self.inner.lock().await;
-        let idx = guard.len();
-        guard.push((job.clone(), elem));
+        let idx = Idx::from_usize(guard.len());
+        guard.push((job.clone(), f(idx)));
         drop(guard);
-
-        idx
     }
 
     /// Extends the set of values stored in the indexed set, returning the range of indices that the
     /// iterator covered
-    pub async fn extend(&self, job: &JobId, elems: impl IntoIterator<Item = V>) -> Range<usize> {
+    pub async fn extend(&self, job: &JobId, elems: impl IntoIterator<Item = V>) -> Range<Idx> {
         let mut guard = self.inner.lock().await;
-        let start_idx = guard.len();
+        let start_idx = Idx::from_usize(guard.len());
         guard.extend(elems.into_iter().map(|v| (job.clone(), v)));
-        let end_idx = guard.len();
+        let end_idx = Idx::from_usize(guard.len());
         drop(guard);
         start_idx..end_idx
     }
 
-    // TODO: Will be implemented if needed
-    // // async fn get(&self, job: &JobId, idx: usize) -> &V
-
-    /// Returns an iterator over the values in the indexed set
+    /// Returns an iterator over references to all values in the indexed set
     pub async fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = &'a V> {
         struct Iter<'b, T> {
             guard: MutexGuard<'b, Vec<(JobId, T)>>,
@@ -351,6 +354,25 @@ impl<V: Clone> Indexed<V> {
             guard: self.inner.lock().await,
             ptr: 0,
         }
+    }
+}
+
+impl<Idx: Index, V: Clone> Indexed<Idx, V> {
+    /// Clones and returns the value stored at the corresponding index
+    // TODO: Record the calling job as relying on the job from the index
+    pub async fn get_cloned(&self, _job: &JobId, idx: Idx) -> V {
+        let guard = self.inner.lock().await;
+        idx.index(&guard).1.clone()
+    }
+}
+
+impl Index for usize {
+    fn index<T>(self, vs: &[T]) -> &T {
+        &vs[self]
+    }
+
+    fn from_usize(idx: usize) -> Self {
+        idx
     }
 }
 

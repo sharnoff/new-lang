@@ -7,7 +7,7 @@
 pub use hydra_macros::__make_database as make_database_internal;
 
 // pub use hydra_macros::input;
-pub use hydra_macros::query;
+pub use hydra_macros::{query, Index};
 
 mod core;
 mod job_id;
@@ -17,7 +17,7 @@ pub mod internal;
 
 pub use self::core::{Error, Result};
 pub use job_id::JobId;
-pub use runtime::{DBLayer, Indexed};
+pub use runtime::{DBLayer, Index, Indexed};
 
 // Re-export `futures` so that we guarantee that it's available for us in the macro
 #[doc(hidden)]
@@ -34,7 +34,7 @@ macro_rules! make_database {
             $(@single $single_vis:vis $single_name:ident: $single_ty:ty, )*
 
             $(@indexed {
-                $( $idx_vis:vis $add_idx:ident -> $all_idx:ident: $idx_ty:ty, )+
+                $( $idx_vis:vis $add_idx:ident as $index:ty => $all_idx:ident: $idx_ty:ty, )+
             })?
 
             impl {
@@ -45,7 +45,7 @@ macro_rules! make_database {
         $crate::make_database_internal! {
             ($(#[$attr])*) $vis $db_name
                 ($($single_vis $single_name $single_ty, )*)
-                ($($($idx_vis $add_idx $all_idx $idx_ty, )+)?)
+                ($($($idx_vis $add_idx $index $all_idx $idx_ty, )+)?)
                 ($($field_vis $trait $fn_name, )+)
         }
     }

@@ -2,6 +2,7 @@
 //!
 //! Once merged, this module will fully replace [`db`](../db/index.html).
 
+use crate::files::{FileId, FileInfo, GetFile, IoResult};
 use crate::token_tree::FileTokenTree;
 use crate::tokens::SimpleToken;
 use hydra::JobId;
@@ -21,54 +22,15 @@ hydra::make_database! {
         @single root_file: String,
 
         @indexed {
-            pub emit_error -> errors: CompilerError,
-            pub register_file -> files: String,
+            pub emit_error as usize => errors: CompilerError,
+            pub register_file as FileId => files: Arc<FileInfo>,
         }
 
         impl {
-            pub get_file_content: GetFileContent,
+            pub get_file: GetFile,
             pub get_ast_info: GetAst,
         }
     }
-}
-
-/// A wrapper around `io::Error` to track whether an error has been reported to the user
-#[derive(Debug)]
-pub struct IoError {
-    reported: AtomicBool,
-    err: io::Error,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct FileId(usize);
-
-pub type IoResult<T> = Result<Arc<T>, Arc<IoError>>;
-
-#[hydra::query(GetFileContent)]
-pub async fn file_content(
-    db: Database,
-    job: &JobId,
-    file_name: String,
-) -> hydra::Result<IoResult<(FileId, String)>> {
-    // This is one of the few things that doesn't cooperate. Ironically, because using async here
-    // would require *more* dependencies (and an additional runtime), we actually do blocking io
-    // here -- without allowing the runtime to delay.
-    //
-    // Thankfully, file IO should take an incredibly small amount of time, so we're okay with
-    // having a small amount of inefficiency here.
-
-    // wrap with `Ok` because there's never any other DB requirements here
-    Ok(match fs::read_to_string(&file_name) {
-        Err(err) => Err(Arc::new(IoError {
-            reported: AtomicBool::new(false),
-            err,
-        })),
-        Ok(s) => {
-            let id = db.register_file(job, file_name).await;
-
-            Ok(Arc::new((FileId(id), s)))
-        }
-    })
 }
 
 /// A wrapper around the simple tokens, token tree, and AST parsed from a file
@@ -77,7 +39,7 @@ pub async fn file_content(
 // following `tokens`
 #[derive(Debug)]
 pub struct AstGroup {
-    file_content: Arc<(FileId, String)>,
+    file: Arc<FileInfo>,
     tokens: Vec<SimpleToken<'static>>,
     tt: FileTokenTree<'static>,
     items: Vec<crate::ast::Item<'static>>,
@@ -89,13 +51,13 @@ pub async fn ast_group(
     job: &JobId,
     file_name: String,
 ) -> hydra::Result<IoResult<AstGroup>> {
-    let file_content = match db.get_file_content(job.new_child(), file_name).await {
+    let file = match db.get_file(job.new_child(), file_name).await {
         Err(e) => return Err(e),
         Ok(Err(e)) => return Ok(Err(e)),
         Ok(Ok(c)) => c,
     };
 
-    let mut token_results = crate::tokens::tokenize(&file_content.1);
+    let mut token_results = crate::tokens::tokenize(&file.content);
     let tokens: Vec<SimpleToken> = (token_results.iter().cloned())
         .take_while(Result::is_ok)
         .map(Result::unwrap)
@@ -123,7 +85,7 @@ pub async fn ast_group(
     let tokens: Vec<SimpleToken<'static>> = unsafe { std::mem::transmute(tokens) };
 
     Ok(Ok(Arc::new(AstGroup {
-        file_content,
+        file,
         tokens,
         tt,
         items,

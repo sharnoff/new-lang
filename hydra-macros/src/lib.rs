@@ -1,9 +1,10 @@
 use heck::SnakeCase;
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{format_ident, quote};
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU16, Ordering::SeqCst};
-use syn::{parse_macro_input, Ident, ItemFn, LitInt};
+use syn::{parse_macro_input, Ident, ItemFn, ItemStruct, LitInt, Type};
 
 mod parse;
 
@@ -114,25 +115,27 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
 
     let mut indexed_field_names = Vec::with_capacity(indexed_specs.len());
     let mut indexed_types = Vec::with_capacity(indexed_specs.len());
+    let mut indexers = Vec::with_capacity(indexed_specs.len());
 
     for spec in indexed_specs {
         let vis = spec.vis;
         let add = spec.add_name;
         let all = spec.all_name;
         let ty = spec.ty;
+        let indexer = spec.index;
 
         let extend = format_ident!("extend_{}", all);
 
         methods.push(quote!(
-            #vis async fn #add(&self, job: &JobId, value: #ty) -> usize {
-                self.0.#all.push(job, value).await
+            #vis async fn #add(&self, job: &JobId, f: impl FnOnce(#indexer) -> #ty) {
+                self.0.#all.push_with(job, f).await
             }
 
             #vis async fn #extend(
                 &self,
                 job: &JobId,
                 values: impl IntoIterator<Item=#ty>
-            ) -> std::ops::Range<usize> {
+            ) -> std::ops::Range<#indexer> {
                 self.0.#all.extend(job, values).await
             }
 
@@ -143,6 +146,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
 
         indexed_field_names.push(all);
         indexed_types.push(ty);
+        indexers.push(indexer);
     }
 
     let attrs = database_input.attrs;
@@ -157,7 +161,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         struct #db_inner_type {
             #( #singles_names: hydra::futures::lock::Mutex<Option<#singles_types>>, )*
 
-            #( #indexed_field_names: hydra::Indexed<#indexed_types>, )*
+            #( #indexed_field_names: hydra::Indexed<#indexers, #indexed_types>, )*
 
             #( #field_names: #db_layers, )*
 
@@ -273,6 +277,62 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
                 async fn inner(#fn_args) #fn_out #body
 
                 Box::pin(inner(db, job, key))
+            }
+        }
+    )
+    .into()
+}
+
+/// Derives `hydra::Index` for a type of the form `<vis> struct <name>(<vis> usize)`
+#[proc_macro_derive(Index)]
+pub fn derive_index(input: TokenStream) -> TokenStream {
+    use syn::Fields;
+
+    let struct_input = parse_macro_input!(input as ItemStruct);
+    let name = struct_input.ident;
+
+    macro_rules! malformed {
+        () => {{
+            return syn::Error::new(
+                Span::call_site(),
+                "malformed input to derive; expected a tuple struct with `usize` as its only field",
+            )
+            .to_compile_error()
+            .into();
+        }};
+    }
+
+    match struct_input.fields {
+        Fields::Named(_) | Fields::Unit => malformed!(),
+        Fields::Unnamed(fs) => {
+            let all_fields: Vec<_> = fs.unnamed.into_iter().collect();
+            match &all_fields[..] {
+                [single] => match &single.ty {
+                    Type::Path(p) => {
+                        if p.path.segments.len() != 1 {
+                            malformed!();
+                        } else {
+                            let last = p.path.segments.last().unwrap();
+                            if last.ident.to_string() != "usize" || !last.arguments.is_empty() {
+                                malformed!();
+                            }
+                        }
+                    }
+                    _ => malformed!(),
+                },
+                _ => malformed!(),
+            }
+        }
+    }
+
+    quote!(
+        impl hydra::Index for #name {
+            fn index<T>(self, vs: &[T]) -> &T {
+                &vs[self.0]
+            }
+
+            fn from_usize(idx: usize) -> Self {
+                Self(idx)
             }
         }
     )
