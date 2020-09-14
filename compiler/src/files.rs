@@ -8,6 +8,7 @@ use std::io;
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use unicode_width::UnicodeWidthStr;
 
 /// A unique identifier to track files that have been successfully read
 ///
@@ -25,19 +26,89 @@ pub struct FileInfo {
     pub id: FileId,
     pub name: String,
     pub content: String,
+    line_ranges: Vec<Range<usize>>,
 }
 
 impl FileInfo {
+    /// Returns the line corresponding to the given index in the lines of the file's content
+    ///
+    /// If the provided index is greater than or equal to the number of lines in the file, this
+    /// function will panic.
+    ///
+    /// Please note that the index is interpreted as starting at zero.
     pub fn get_line(&self, line_idx: usize) -> Cow<str> {
-        todo!()
+        let line = &self.content[self.line_ranges[line_idx].clone()];
+
+        if line.contains('\t') {
+            Cow::Owned(line.replace('\t', "    "))
+        } else {
+            Cow::Borrowed(line)
+        }
     }
 
+    /// Returns the line index corresponding to the given byte in the file
+    ///
+    /// If the given byte index is outside the range of bytes in the file, this function will
+    /// panic. A small exception is made for the *ending* byte of the file -- the byte index is
+    /// permitted to be exactly equal to the length of the file, but no greater.
+    ///
+    /// Please note that the returned index starts from zero; it is compatible with [`get_line`].
+    ///
+    /// [`get_line`]: #method.get_line
     pub fn line_idx(&self, byte_idx: usize) -> usize {
-        todo!()
+        if byte_idx > self.content.len() {
+            panic!(
+                "received byte index {} for file {:?} of size {}",
+                byte_idx,
+                self.name,
+                self.content.len()
+            );
+        }
+
+        self.line_ranges
+            .binary_search_by_key(&byte_idx, |range| range.start)
+            // Because `binary_search` returns the index where a value could be inserted to
+            // maintain the ordering, a byte index between two lines will return the index of the
+            // second, not the first - hence why we need to subtract one here.
+            .unwrap_or_else(|i| i - 1)
     }
 
+    /// Returns the column index corresponding to the given byte in the file
+    ///
+    /// The same restrictions on and behavior surrounding `byte_idx` apply here as from
+    /// [`line_idx`](#method.line_idx).
+    ///
+    /// Please note that the returned index starts from zero.
     pub fn col_idx(&self, byte_idx: usize) -> usize {
-        todo!()
+        let line_range = self.line_ranges[self.line_idx(byte_idx)].clone();
+
+        // We're nearly there. If the line contains any tab characters (it shouldn't!), we'll
+        // replace them and then get the line.
+        let line = &self.content[line_range.start..byte_idx];
+        let width = line.width();
+
+        let n_tabs = line.as_bytes().iter().filter(|&b| b == &b'\t').count();
+
+        // Because `unicode_width` registers tabs as having zero width when part of a larger string,
+        // we need to add that in for ourselves. We'll say that each tab is equivalent to four
+        // spaces :P
+        width + n_tabs * 4
+    }
+
+    /// An internal helper function to produce the `lines` field of `FileInfo`
+    fn make_lines(content: &str) -> Vec<Range<usize>> {
+        let content_mem_addr = content as *const str as *const u8 as usize;
+
+        content
+            .lines()
+            .map(|line| {
+                let line_mem_addr = line as *const str as *const u8 as usize;
+                let start = line_mem_addr - content_mem_addr;
+                let end = start + line.len();
+
+                start..end
+            })
+            .collect()
     }
 }
 
@@ -76,12 +147,15 @@ pub async fn file_content(
             err,
         })),
         Ok(content) => {
+            let line_ranges = FileInfo::make_lines(&content);
+
             let mut file = None;
             db.register_file(job, |id| {
                 let f = Arc::new(FileInfo {
                     id,
                     name: file_name,
                     content,
+                    line_ranges,
                 });
 
                 file = Some(f.clone());
@@ -99,8 +173,8 @@ pub async fn file_content(
 pub struct Span {
     pub file: FileId,
     // We use `start` and `end` here because we otherwise wouldn't be able to derive `Copy`... :(
-    start: usize,
-    end: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Span {

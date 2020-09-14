@@ -17,35 +17,11 @@ use db::Database;
 fn main() {
     let db = Database::new();
 
-    let job = JobId::initial_seed();
-    let ast = block_on(db.ast_info(job, "test_input.tc".into()));
-    println!("{:?}", ast);
+    block_on(async {
+        let job = JobId::initial_seed();
+        let _ast = db.ast_info(job, "test_input.tc".into()).await;
 
-    /*
-    let mut files = Files::new();
-
-    files.reserve("test_input.tc");
-
-    let test_input_file = files.file("test_input.tc");
-    let ast = test_input_file.get_ast(|err| panic!("Failed to open file: {:?}", err));
-
-    println!("{:?}", std::ops::Deref::deref(&ast));
-
-    drop(ast);
-    drop(test_input_file);
-
-    let num_errors = files.print_errors();
-    if num_errors != 0 {
-        let num_err_str = match num_errors {
-            1 => "a previous error".into(),
-            n => format!("{} previous errors", n),
-        };
-
-        eprintln!(
-            "{}: Failed due to {}",
-            error::ERR_COLOR.paint("error"),
-            num_err_str
-        );
-    }
-    */
+        let errors = db.errors().await;
+        error::display_errors(&db, &JobId::initial_seed(), errors).await;
+    })
 }

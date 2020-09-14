@@ -18,8 +18,8 @@
 //! [`file_tree`]: fn.file_tree.html
 
 use crate::error::{self, Builder as ErrorBuilder, ToError};
+use crate::files::{FileInfo, Span};
 use crate::tokens::{self, LiteralKind, SimpleToken};
-use std::ops::Range;
 
 // TODO: Document - gives the output of tokenizing the entire file.
 pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>], ends_early: bool) -> FileTokenTree<'a> {
@@ -581,42 +581,44 @@ impl<'a> FileTokenTree<'a> {
     }
 }
 
-impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
-    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-        todo!()
-    }
-}
-
-/*
-impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
-    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+impl ToError<FileInfo> for Error<'_> {
+    fn to_error(self, file: &FileInfo) -> ErrorBuilder {
         use Error::*;
 
-        let file_name: &str = aux.1;
+        let file_start_addr = &file.content as &str as *const str as *const u8 as usize;
+        let span = |s: &str| {
+            let start_addr = s as *const str as *const u8 as usize;
+            let start = start_addr - file_start_addr;
+            Span {
+                file: file.id,
+                start,
+                end: start + s.len(),
+            }
+        };
 
         match self {
             UnexpectedCloseDelim(token) => {
-                let range = (aux.0)(token.src);
+                let span = span(token.src);
 
                 ErrorBuilder::new(format!("unexpected close delimeter '{}'", token.src))
-                    .context(file_name, range.start)
-                    .highlight(file_name, vec![range], error::ERR_COLOR)
+                    .context(span)
+                    .highlight(span, error::ERR_COLOR)
             }
             MismatchedCloseDelim { delim, first, end } => {
-                let end_range = (aux.0)(end.src);
+                let end_span = span(end.src);
 
                 ErrorBuilder::new(format!(
                     "mismatched delimeter; expected '{}', found '{}'",
                     delim.open_char(),
                     end.src,
                 ))
-                .context(file_name, end_range.start)
-                .highlight(file_name, vec![(aux.0)(first.src)], error::CTX_COLOR)
-                .highlight(file_name, vec![end_range], error::ERR_COLOR)
+                .context(end_span)
+                .highlight(span(first.src), error::CTX_COLOR)
+                .highlight(end_span, error::ERR_COLOR)
             }
             UnclosedDelim(delim, src, inside_proof) => {
-                let start = (aux.0)(src[0].src).start;
-                let end = (aux.0)(src.last().unwrap().src).end;
+                let end_span = span(src.last().unwrap().src);
+                let span = span(src[0].src).join(end_span);
 
                 match inside_proof {
                     None => ErrorBuilder::new(format!(
@@ -624,25 +626,29 @@ impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
                         delim.open_char(),
                         delim.close_char(),
                     ))
-                    .context(file_name, start)
-                    .highlight(file_name, vec![start..end], error::ERR_COLOR),
+                    .context(span)
+                    .highlight(span, error::ERR_COLOR),
+
                     Some(_) => ErrorBuilder::new(format!(
                         "unclosed delimiter '{}' at end of proof lines",
                         delim.open_char(),
                     ))
-                    .context(file_name, end)
-                    .highlight(file_name, vec![start..end], error::ERR_COLOR),
+                    .context(end_span)
+                    .highlight(span, error::ERR_COLOR),
                 }
             }
             NestedProofLines(fst, snd) => {
-                let fst_range = (aux.0)(fst.src);
-                let snd_range = (aux.0)(snd.src);
+                let fst_span = span(fst.src);
+                let snd_span = span(snd.src);
 
                 ErrorBuilder::new("cannot nest proof lines")
-                    .context(file_name, snd_range.start)
-                    .highlight(file_name, vec![fst_range, snd_range], error::ERR_COLOR)
+                    .context(snd_span)
+                    .highlight_all(
+                        file.id,
+                        vec![fst_span.range(), snd_span.range()],
+                        error::ERR_COLOR,
+                    )
             }
         }
     }
 }
-*/

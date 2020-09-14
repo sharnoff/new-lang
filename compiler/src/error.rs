@@ -41,6 +41,7 @@ use unicode_width::UnicodeWidthStr;
 /// ```
 ///
 /// [`new`]: #method.new
+#[derive(Clone)]
 pub struct Builder {
     /// The primary error message to go at the top of the error. This is is prefixed by 'error: ' to
     /// construct the final error message.
@@ -108,7 +109,7 @@ pub trait ToError<A> {
 }
 
 /// Displays the set of errors, printing them to the terminal via stderr
-pub async fn display_errors(db: &Database, job: &JobId, errs: impl Iterator<Item = &Builder>) {
+pub async fn display_errors(db: &Database, job: &JobId, errs: impl IntoIterator<Item = &Builder>) {
     let mut count = 0;
 
     for err in errs {
@@ -158,6 +159,13 @@ impl Builder {
         })
     }
 
+    /// A convenience function for highlighting a single byte range within a file
+    ///
+    /// For more information, see [`highlight_all`](#method.highlight_all).
+    pub fn highlight(self, span: Span, color: Color) -> Self {
+        self.highlight_all(span.file, vec![span.range()], color)
+    }
+
     /// An error element that highlights a set of byte ranges within a file
     ///
     /// The typical use case will be a single range contained within a single line, which will
@@ -173,7 +181,7 @@ impl Builder {
     ///
     /// The set of ranges given must be non-empty, and this function will panic if that is not the
     /// case.
-    pub fn highlight(self, file: FileId, ranges: Vec<Range<usize>>, color: Color) -> Self {
+    pub fn highlight_all(self, file: FileId, ranges: Vec<Range<usize>>, color: Color) -> Self {
         assert!(ranges.len() >= 1);
 
         self.element(Element::Highlight {

@@ -17,7 +17,7 @@
 //! [`TokenKind`]: struct.TokenKind.html
 
 use crate::error::{self, Builder as ErrorBuilder, ToError};
-use std::ops::Range;
+use crate::files::{FileInfo, Span};
 
 // Note: tokens might not be strictly non-overlapping. This can occur in certain error cases, where
 // we might have string literals / block comments inside others
@@ -506,36 +506,57 @@ fn consume_single_quote(s: &str, idx: usize) -> Option<usize> {
     }
 }
 
-impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
-    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-        todo!()
+impl SimpleToken<'_> {
+    /// Returns the [`Span`] corresponding to the token's place in the provided file
+    ///
+    /// This function does not provide any failsafes if the source file does not actually contain
+    /// the given token.
+    pub fn span_in(&self, src_file: &FileInfo) -> Span {
+        let file_byte_addr = &src_file.content as &str as *const str as *const u8 as usize;
+        let start_byte_addr = self.src as *const str as *const u8 as usize;
+
+        let start = start_byte_addr - file_byte_addr;
+        let end = start + self.src.len();
+
+        Span {
+            file: src_file.id,
+            start,
+            end,
+        }
     }
 }
 
-// impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
-//     fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-//         use IncompleteKind::{BlockComment, StringLiteral};
-//
-//         let byte_range = &aux.0;
-//         let file_name: &str = aux.1;
-//
-//         let range = byte_range(self.src);
-//
-//         match self.incomplete {
-//             None => ErrorBuilder::new(format!("unrecognized character sequence: {:?}", self.src))
-//                 .context(file_name, range.start)
-//                 .highlight(file_name, vec![range], error::ERR_COLOR),
-//             Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
-//                 .context(file_name, range.start)
-//                 .highlight(file_name, vec![range], error::ERR_COLOR)
-//                 .note("expected '*/', found EOF"),
-//             Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
-//                 .context(file_name, range.start)
-//                 .highlight(file_name, vec![range], error::ERR_COLOR)
-//                 .note("expected '\"', found EOF"),
-//         }
-//     }
-// }
+impl ToError<FileInfo> for Invalid<'_> {
+    fn to_error(self, file: &FileInfo) -> ErrorBuilder {
+        use IncompleteKind::{BlockComment, StringLiteral};
+
+        let file_byte_addr = &file.content as &str as *const str as *const u8 as usize;
+        let start_byte_addr = self.src as *const str as *const u8 as usize;
+
+        let start = start_byte_addr - file_byte_addr;
+        let end = start + self.src.len();
+
+        let span = Span {
+            file: file.id,
+            start,
+            end,
+        };
+
+        match self.incomplete {
+            None => ErrorBuilder::new(format!("unrecognized character sequence: {:?}", self.src))
+                .context(span)
+                .highlight(span, error::ERR_COLOR),
+            Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
+                .context(span)
+                .highlight(span, error::ERR_COLOR)
+                .note("expected '*/', found EOF"),
+            Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
+                .context(span)
+                .highlight(span, error::ERR_COLOR)
+                .note("expected '\"', found EOF"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
