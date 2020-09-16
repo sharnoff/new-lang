@@ -3,19 +3,21 @@
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
 use super::*;
+use crate::files::FileInfo;
+use crate::files::Span;
 
 /// A pattern, used for destructuring and pattern matching
 ///
 /// Individual details are given in the documentation for the variant types.
-#[derive(Debug, Clone)]
-pub enum Pattern<'a> {
-    Named(NamedPattern<'a>),
-    Struct(StructPattern<'a>),
-    Tuple(TuplePattern<'a>),
-    Array(ArrayPattern<'a>),
-    Assign(AssignPattern<'a>),
-    Ref(RefPattern<'a>),
-    Literal(Literal<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Pattern {
+    Named(NamedPattern),
+    Struct(StructPattern),
+    Tuple(TuplePattern),
+    Array(ArrayPattern),
+    Assign(AssignPattern),
+    Ref(RefPattern),
+    Literal(Literal),
 }
 
 /// A named pattern - either empty, a named tuple, or a named struct
@@ -37,11 +39,12 @@ pub enum Pattern<'a> {
 /// [`PatternPath`]: enum.PatternPath.html
 /// [`Path`]: ../expr/struct.Path.html
 /// [`NamedPatternKind`]: enum.NamedPatternKind.html
-#[derive(Debug, Clone)]
-pub struct NamedPattern<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub path: PatternPath<'a>,
-    pub kind: Option<NamedPatternKind<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct NamedPattern {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub path: PatternPath,
+    pub kind: Option<NamedPatternKind>,
 }
 
 /// A path used in [`NamedPattern`]s
@@ -61,33 +64,39 @@ pub struct NamedPattern<'a> {
 /// identifier (using the second variant above), it may instead be used to bind a local variable.
 ///
 /// [`NamedPattern`]: struct.NamedPattern.html
-#[derive(Debug, Clone)]
-pub enum PatternPath<'a> {
-    Relative(RelativePatternPath<'a>),
-    Absolute(AbsolutePatternPath<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum PatternPath {
+    Relative(RelativePatternPath),
+    Absolute(AbsolutePatternPath),
 }
 
 /// "Relative" pattern paths - a helper type for [`PatternPath`](#enum.PatternPath.html)
-#[derive(Debug, Clone)]
-pub struct RelativePatternPath<'a> {
-    pub(super) src: TokenSlice<'a>,
-    name: Ident<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RelativePatternPath {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(2)] // +1 for the leading "."
+    pub name: Ident,
 }
 
 /// "Absolute" pattern paths - a helper type for [`PatternPath`](#enum.PatternPath.html)
-#[derive(Debug, Clone)]
-pub struct AbsolutePatternPath<'a> {
-    pub(super) src: TokenSlice<'a>,
-    components: Vec<Ident<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct AbsolutePatternPath {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(components.len() * 2 - 1)]
+    components: Vec<Ident>,
 }
 
 /// A helper type to express the right-hand-side of [`NamedPattern`]s
 ///
 /// [`NamedPattern`]: struct.NamedPattern.html
-#[derive(Debug, Clone)]
-pub enum NamedPatternKind<'a> {
-    Struct(StructPattern<'a>),
-    Tuple(TuplePattern<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum NamedPatternKind {
+    Struct(StructPattern),
+    Tuple(TuplePattern),
 }
 
 /// A struct pattern, which can be used to destructure or match named and anonymous structs
@@ -104,15 +113,22 @@ pub enum NamedPatternKind<'a> {
 /// syntactically invalid without a preceeding comma if there are fields named here.
 ///
 /// [`FieldPattern`]: struct.FieldPattern.html
-#[derive(Debug, Clone)]
-pub struct StructPattern<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub fields: Vec<FieldPattern<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructPattern {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub fields: Vec<FieldPattern>,
+
     /// A marker for whether the pattern includes trailing dots. If it does, this token will give
     /// the souce for them, and won't if there aren't any.
-    pub has_dots: Option<&'a Token<'a>>,
+    #[consumed(@ignore)]
+    pub has_dots: Option<Span>,
+
     /// Whether there were significant in parsing as to prevent some of the above elements from
     /// being properly instantiated.
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -127,11 +143,15 @@ pub struct StructPattern<'a> {
 /// abbreviation available in struct instantiation.
 ///
 /// [`StructPattern`]: struct.StructPattern.html
-#[derive(Debug, Clone)]
-pub struct FieldPattern<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub binding: Option<Pattern<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct FieldPattern {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub name: Ident,
+
+    // consumed + 1 to account for the additional colon token
+    #[consumed(binding.consumed() + 1)]
+    pub binding: Option<Pattern>,
 }
 
 /// A tuple pattern, which can be used to destructure or match named and anonymous tuples
@@ -142,12 +162,16 @@ pub struct FieldPattern<'a> {
 /// ```
 /// Tuple patterns consist of a list of elements, which are required to have the same arity as the
 /// tuple they are matching against.
-#[derive(Debug, Clone)]
-pub struct TuplePattern<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub elements: Vec<Pattern<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TuplePattern {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub elements: Vec<Pattern>,
     /// Whether there were errors in parsing so significant that we weren't able to provide a value
     /// in `elements` for each `Pattern` we parsed.
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -161,21 +185,26 @@ pub struct TuplePattern<'a> {
 /// While the definition indicates that dots (`..`) may be given anywhere in the list, it is
 /// important to note that only a small class of options here are semantically valid, primarily for
 /// practical reasons (e.g. not constant-time to match).
-#[derive(Debug, Clone)]
-pub struct ArrayPattern<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub elements: Vec<ElementPattern<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ArrayPattern {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub elements: Vec<ElementPattern>,
 
     /// Whether there were significant in parsing as to prevent some of the above elements from
     /// being properly instantiated.
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
 /// A helper type for [`ArrayPattern`](#struct.ArrayPattern.html)s
-#[derive(Debug, Clone)]
-pub enum ElementPattern<'a> {
-    Dots(&'a Token<'a>),
-    Pattern(Pattern<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum ElementPattern {
+    #[consumed(1)]
+    Dots(Span),
+    Pattern(Pattern),
 }
 
 /// Assignment to an expression on a successful match or destructuring
@@ -189,10 +218,13 @@ pub enum ElementPattern<'a> {
 /// ```
 /// An additional quirk is that `x = foo` is equivalent to `let assign x = foo` for any lvalue `x`
 /// and expression `foo`.
-#[derive(Debug, Clone)]
-pub struct AssignPattern<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub assignee: Box<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct AssignPattern {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(assignee.consumed() + 1)]
+    pub assignee: Box<Expr>,
 }
 
 /// Reference patterns that allow moving out behind references within matches
@@ -204,51 +236,57 @@ pub struct AssignPattern<'a> {
 /// ```text
 /// RefPattern = "&" Pattern .
 /// ```
-#[derive(Debug, Clone)]
-pub struct RefPattern<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub pat: Box<Pattern<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RefPattern {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(pat.consumed() + 1)]
+    pub pat: Box<Pattern>,
 }
 
-type ConsumeFn<'a, T> = fn(
-    TokenSlice<'a>,
-    PatternContext<'a>,
+type ConsumeFn<T> = fn(
+    &FileInfo,
+    TokenSlice,
+    PatternContext,
     bool,
-    Option<&'a Token<'a>>,
-    &mut Vec<Error<'a>>,
+    Option<&Token>,
+    &mut Vec<Error>,
 ) -> Result<T, Option<usize>>;
 
-impl<'a> Pattern<'a> {
+impl Pattern {
     /// Consumes a single pattern as a prefix of the given tokens
     pub fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: PatternContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Pattern<'a>, Option<usize>> {
-        make_expect!(tokens, 0, ends_early, containing_token, errors);
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Pattern, Option<usize>> {
+        make_expect!(file, tokens, 0, ends_early, containing_token, errors);
         expect!((
             Ok(fst_token),
             TokenKind::Ident(_) => {
-                NamedPattern::consume_absolute(tokens, ctx, ends_early, containing_token, errors)
+                NamedPattern::consume_absolute(file, tokens, ctx, ends_early, containing_token, errors)
                     .map(Pattern::Named)
             },
             TokenKind::Punctuation(Punc::Dot) => {
-                NamedPattern::consume_relative(tokens, ctx, ends_early, containing_token, errors)
+                NamedPattern::consume_relative(file, tokens, ctx, ends_early, containing_token, errors)
                     .map(Pattern::Named)
             },
             TokenKind::Tree { delim, inner, .. } => {
                 let res = match delim {
-                    Delim::Curlies => StructPattern::parse(fst_token, inner, ctx, errors).map(Pattern::Struct),
-                    Delim::Parens => TuplePattern::parse(fst_token, inner, ctx, errors).map(Pattern::Tuple),
-                    Delim::Squares => ArrayPattern::parse(fst_token, inner, ctx, errors).map(Pattern::Array),
+                    Delim::Curlies => StructPattern::parse(file, fst_token, inner, ctx, errors).map(Pattern::Struct),
+                    Delim::Parens => TuplePattern::parse(file, fst_token, inner, ctx, errors).map(Pattern::Tuple),
+                    Delim::Squares => ArrayPattern::parse(file, fst_token, inner, ctx, errors).map(Pattern::Array),
                 };
 
                 res.map_err(|()| Some(1))
             },
             TokenKind::Keyword(Kwd::Assign) => {
                 let res = Expr::consume(
+                    file,
                     &tokens[1..],
                     ExprDelim::Comma,
                     Restrictions::default(),
@@ -261,17 +299,17 @@ impl<'a> Pattern<'a> {
                     Err(None) => Err(None),
                     Err(Some(c)) => Err(Some(c + 1)),
                     Ok(expr) => {
-                        let src = &tokens[..1+expr.consumed()];
+                        let src = Source::slice_span(file, &tokens[..1+expr.consumed()]);
                         Ok(Pattern::Assign(AssignPattern { src, assignee: Box::new(expr) }))
                     }
                 }
             },
             TokenKind::Punctuation(Punc::And) => {
-                match Pattern::consume(&tokens[1..], ctx, ends_early, containing_token, errors) {
+                match Pattern::consume(file, &tokens[1..], ctx, ends_early, containing_token, errors) {
                     Err(None) => Err(None),
                     Err(Some(c)) => Err(Some(c + 1)),
                     Ok(pat) => {
-                        let src = &tokens[..1+pat.consumed()];
+                        let src = Source::slice_span(file, &tokens[..1+pat.consumed()]);
                         Ok(Pattern::Ref(RefPattern {
                             src,
                             pat: Box::new(pat),
@@ -279,7 +317,7 @@ impl<'a> Pattern<'a> {
                     }
                 }
             },
-            TokenKind::Literal(_,_) => Literal::consume(tokens)
+            TokenKind::Literal(_,_) => Literal::consume(file, tokens)
                 .map(Pattern::Literal),
             @else(return None) => ExpectedKind::Pattern(ctx),
         ))
@@ -296,13 +334,14 @@ impl<'a> Pattern<'a> {
     /// [`TuplePattern::parse`]: struct.TuplePattern.html#method.parse
     /// [`ArrayPattern::parse`]: struct.ArrayPattern.html#method.parse
     fn consume_delimited<T: Consumed>(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
-        consume_fn: ConsumeFn<'a, T>,
-        no_elem_err: fn(PatternContext<'a>) -> ExpectedKind<'a>,
-        delim_err: fn(PatternContext<'a>, &'a Token<'a>) -> ExpectedKind<'a>,
-        errors: &mut Vec<Error<'a>>,
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        ctx: PatternContext,
+        consume_fn: ConsumeFn<T>,
+        no_elem_err: fn(PatternContext) -> ExpectedKind,
+        delim_err: fn(PatternContext, Source) -> ExpectedKind,
+        errors: &mut Vec<Error>,
     ) -> Result<(Vec<T>, bool), ()> {
         let mut consumed = 0;
         let ends_early = false;
@@ -333,7 +372,7 @@ impl<'a> Pattern<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: no_elem_err(ctx),
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     poisoned = true;
@@ -341,7 +380,8 @@ impl<'a> Pattern<'a> {
                 }
 
                 Some(Ok(_)) => {
-                    let res = consume_fn(&inner[consumed..], ctx, ends_early, Some(src), errors);
+                    let res =
+                        consume_fn(file, &inner[consumed..], ctx, ends_early, Some(src), errors);
 
                     match res {
                         Err(None) => {
@@ -383,8 +423,8 @@ impl<'a> Pattern<'a> {
                     // If we didn't have one, we'll produce an error
                     _ => {
                         errors.push(Error::Expected {
-                            kind: delim_err(ctx, src),
-                            found: Source::TokenResult(Ok(t)),
+                            kind: delim_err(ctx, Source::token(file, src)),
+                            found: Source::token(file, t),
                         });
 
                         poisoned = true;
@@ -398,7 +438,7 @@ impl<'a> Pattern<'a> {
     }
 }
 
-impl<'a> NamedPattern<'a> {
+impl NamedPattern {
     /// Consumes an "absolute" named pattern
     ///
     /// Absolute named patterns are of the following form:
@@ -409,12 +449,13 @@ impl<'a> NamedPattern<'a> {
     /// This function additionally expects the first token it receives to be an identifier, and will
     /// panic if this is not the case.
     fn consume_absolute(
-        tokens: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: PatternContext,
         _ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<NamedPattern<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<NamedPattern, Option<usize>> {
         // This function comes in two pieces: we first consume the leading path, and then we parse
         // the trailing `[ StructPattern | TuplePattern ]`. We're able to assume that the first
         // token is an identifier because of the guarantees of this function, so we can simplify
@@ -422,7 +463,7 @@ impl<'a> NamedPattern<'a> {
 
         let fst_ident = assert_token!(
             tokens.first() => "identifier",
-            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t.span(file), name: (*name).into() },
         );
 
         let mut consumed = 1;
@@ -445,9 +486,10 @@ impl<'a> NamedPattern<'a> {
 
             // After finding `.`, we'll expect an identifier
             let id = Ident::parse(
+                file,
                 tokens.get(consumed),
-                IdentContext::PatternPath(ctx, &tokens[..consumed]),
-                end_source!(containing_token),
+                IdentContext::PatternPath(ctx, Source::slice_span(file, &tokens[..consumed])),
+                end_source!(file, containing_token),
                 errors,
             )
             .map_err(|()| Some(consumed))?;
@@ -457,18 +499,18 @@ impl<'a> NamedPattern<'a> {
         }
 
         let path = PatternPath::Absolute(AbsolutePatternPath {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             components,
         });
 
         // After parsing the absolute path, we then just parse the trailing struct or tuple
         // pattern, if it's there.
-        let kind = NamedPatternKind::try_parse(tokens.get(consumed), ctx, errors)
+        let kind = NamedPatternKind::try_parse(file, tokens.get(consumed), ctx, errors)
             .map_err(|cs| cs.map(|c| c + consumed))?;
         consumed += kind.consumed();
 
         Ok(NamedPattern {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             path,
             kind,
         })
@@ -484,12 +526,13 @@ impl<'a> NamedPattern<'a> {
     /// This function additionally expects the first token it receives to be the initial "dot"
     /// token, and will panic if this is not the case.
     fn consume_relative(
-        tokens: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: PatternContext,
         _ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<NamedPattern<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<NamedPattern, Option<usize>> {
         assert_token!(
             tokens.first() => "dot (`.`)",
             Ok(t) && TokenKind::Punctuation(Punc::Dot) => (),
@@ -498,37 +541,39 @@ impl<'a> NamedPattern<'a> {
         let mut consumed = 1;
 
         let name = Ident::parse(
+            file,
             tokens.get(consumed),
-            IdentContext::PatternPath(ctx, &tokens[..consumed]),
-            end_source!(containing_token),
+            IdentContext::PatternPath(ctx, Source::slice_span(file, &tokens[..consumed])),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| None)?;
         consumed += 1;
 
         let path = PatternPath::Relative(RelativePatternPath {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             name,
         });
 
-        let kind = NamedPatternKind::try_parse(tokens.get(consumed), ctx, errors)
+        let kind = NamedPatternKind::try_parse(file, tokens.get(consumed), ctx, errors)
             .map_err(|cs| cs.map(|c| c + consumed))?;
         consumed += kind.consumed();
 
         Ok(NamedPattern {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             path,
             kind,
         })
     }
 }
 
-impl<'a> NamedPatternKind<'a> {
+impl NamedPatternKind {
     fn try_parse(
-        token: Option<&'a Result<Token<'a>, token_tree::Error<'a>>>,
-        ctx: PatternContext<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<NamedPatternKind<'a>>, Option<usize>> {
+        file: &FileInfo,
+        token: Option<&Result<Token, token_tree::Error>>,
+        ctx: PatternContext,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<NamedPatternKind>, Option<usize>> {
         // We'll either expect a struct or tuple pattern here - if the next token consists either
         // of a curly-brace or parentheses enclosed token tree, we'll attempt to parse it.
         // Otherwise, we'll simply return `Ok(None)` because we didn't find the right-hand-side of
@@ -555,7 +600,7 @@ impl<'a> NamedPatternKind<'a> {
                     delim: Delim::Parens,
                     inner,
                     ..
-                } => TuplePattern::parse(t, inner, ctx, errors)
+                } => TuplePattern::parse(file, t, inner, ctx, errors)
                     .map(NamedPatternKind::Tuple)
                     .map(Some)
                     .map_err(|()| Some(1)),
@@ -563,7 +608,7 @@ impl<'a> NamedPatternKind<'a> {
                     delim: Delim::Curlies,
                     inner,
                     ..
-                } => StructPattern::parse(t, inner, ctx, errors)
+                } => StructPattern::parse(file, t, inner, ctx, errors)
                     .map(NamedPatternKind::Struct)
                     .map(Some)
                     .map_err(|()| Some(1)),
@@ -573,14 +618,15 @@ impl<'a> NamedPatternKind<'a> {
     }
 }
 
-impl<'a> StructPattern<'a> {
+impl StructPattern {
     /// Parses a struct pattern from the given curly-brace token and its inner tokens
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<StructPattern<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        ctx: PatternContext,
+        errors: &mut Vec<Error>,
+    ) -> Result<StructPattern, ()> {
         // This function has a fairly simple structure - we loop over the tokens (where the
         // majority of visual space is taken up) and parse fields individually. This is broken into
         // two match statements (both on `inner.get(consumed)`)
@@ -610,7 +656,7 @@ impl<'a> StructPattern<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::StructPatternField(ctx),
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     poisoned = true;
@@ -624,6 +670,7 @@ impl<'a> StructPattern<'a> {
                     // An identifier indicates the field
                     TokenKind::Ident(_) => {
                         let res = FieldPattern::consume(
+                            file,
                             &inner[consumed..],
                             ctx,
                             ends_early,
@@ -653,11 +700,11 @@ impl<'a> StructPattern<'a> {
                     TokenKind::Punctuation(Punc::DotDot) => {
                         consumed += 1;
                         match inner.get(consumed) {
-                            None => break Some(t),
+                            None => break Some(t.span(file)),
                             Some(res) => {
                                 errors.push(Error::Expected {
                                     kind: ExpectedKind::StructPatternEnd(ctx),
-                                    found: Source::TokenResult(res.as_ref().map_err(|e| *e)),
+                                    found: Source::from(file, res),
                                 });
 
                                 poisoned = true;
@@ -673,7 +720,7 @@ impl<'a> StructPattern<'a> {
                         if !poisoned {
                             errors.push(Error::Expected {
                                 kind: ExpectedKind::StructPatternField(ctx),
-                                found: Source::TokenResult(Ok(t)),
+                                found: Source::token(file, t),
                             });
                         }
 
@@ -706,8 +753,8 @@ impl<'a> StructPattern<'a> {
                     // If we didn't have one, we'll produce an error
                     _ => {
                         errors.push(Error::Expected {
-                            kind: ExpectedKind::StructPatternDelim(ctx, src),
-                            found: Source::TokenResult(Ok(t)),
+                            kind: ExpectedKind::StructPatternDelim(ctx, Source::token(file, src)),
+                            found: Source::token(file, t),
                         });
 
                         poisoned = true;
@@ -718,7 +765,7 @@ impl<'a> StructPattern<'a> {
         };
 
         Ok(StructPattern {
-            src,
+            src: src.span(file),
             fields,
             has_dots,
             poisoned,
@@ -726,27 +773,28 @@ impl<'a> StructPattern<'a> {
     }
 }
 
-impl<'a> FieldPattern<'a> {
+impl FieldPattern {
     /// Consumes a single struct field pattern as a prefix of the given tokens
     ///
     /// This function expects that the first token in the list will be an identifier, and will
     /// panic if this condition is not met.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: PatternContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<FieldPattern<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<FieldPattern, Option<usize>> {
         let name = assert_token!(
             tokens.first() => "identifier",
-            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t.span(file), name: (*name).into() },
         );
 
         macro_rules! only_name {
             () => {{
                 Ok(FieldPattern {
-                    src: &tokens[..1],
+                    src: Source::slice_span(file, &tokens[..1]),
                     name,
                     binding: None,
                 })
@@ -765,14 +813,20 @@ impl<'a> FieldPattern<'a> {
         }
 
         // At this point, we are expecting a pattern to bind for the field, so we'll do that now
-        let pat_res = Pattern::consume(&tokens[2..], ctx, ends_early, containing_token, errors);
+        let pat_res = Pattern::consume(
+            file,
+            &tokens[2..],
+            ctx,
+            ends_early,
+            containing_token,
+            errors,
+        );
         match pat_res {
             Err(None) => Err(None),
             Err(Some(c)) => Err(Some(c + 2)),
             Ok(pat) => {
-                let src = &tokens[..pat.consumed() + 2];
                 Ok(FieldPattern {
-                    src,
+                    src: Source::slice_span(file, &tokens[..pat.consumed() + 2]),
                     name,
                     binding: Some(pat),
                 })
@@ -781,15 +835,17 @@ impl<'a> FieldPattern<'a> {
     }
 }
 
-impl<'a> TuplePattern<'a> {
+impl TuplePattern {
     /// Parses a tuple pattern from the given parentheses-enclosed block and its inner tokens
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TuplePattern<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        ctx: PatternContext,
+        errors: &mut Vec<Error>,
+    ) -> Result<TuplePattern, ()> {
         let (elements, poisoned) = Pattern::consume_delimited(
+            file,
             src,
             inner,
             ctx,
@@ -800,21 +856,23 @@ impl<'a> TuplePattern<'a> {
         )?;
 
         Ok(TuplePattern {
-            src,
+            src: src.span(file),
             elements,
             poisoned,
         })
     }
 }
 
-impl<'a> ArrayPattern<'a> {
+impl ArrayPattern {
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ArrayPattern<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        ctx: PatternContext,
+        errors: &mut Vec<Error>,
+    ) -> Result<ArrayPattern, ()> {
         let (elements, poisoned) = Pattern::consume_delimited(
+            file,
             src,
             inner,
             ctx,
@@ -825,29 +883,30 @@ impl<'a> ArrayPattern<'a> {
         )?;
 
         Ok(ArrayPattern {
-            src,
+            src: src.span(file),
             elements,
             poisoned,
         })
     }
 }
 
-impl<'a> ElementPattern<'a> {
+impl ElementPattern {
     /// Consumes a single array element pattern; a helper function for [`ArrayPattern::parse`]
     ///
     /// [`ArrayPattern::parse`]: struct.ArrayPattern.html#method.parse
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: PatternContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ElementPattern<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<ElementPattern, Option<usize>> {
         match tokens.first() {
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::ArrayPatternElement(ctx),
-                    found: end_source!(containing_token),
+                    found: end_source!(file, containing_token),
                 });
 
                 Err(None)
@@ -858,7 +917,7 @@ impl<'a> ElementPattern<'a> {
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::ArrayPatternElement(ctx),
-                    found: Source::TokenResult(Err(*e)),
+                    found: Source::err(file, e),
                 });
 
                 Err(None)
@@ -867,8 +926,8 @@ impl<'a> ElementPattern<'a> {
             // If we do find a token, we'll give a special case for dots (`..`), else we'll try a
             // regular pattern.
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Punctuation(Punc::DotDot) => Ok(ElementPattern::Dots(t)),
-                _ => Pattern::consume(tokens, ctx, ends_early, containing_token, errors)
+                TokenKind::Punctuation(Punc::DotDot) => Ok(ElementPattern::Dots(t.span(file))),
+                _ => Pattern::consume(file, tokens, ctx, ends_early, containing_token, errors)
                     .map(ElementPattern::Pattern),
             },
         }

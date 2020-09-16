@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 // NOTE: Proof statements are currently unimplemented, pending revision.
 
@@ -13,11 +14,13 @@ use super::*;
 ///
 /// [`ProofLines`]: ../../token_tree/enum.TokenKind.html
 /// [`ProofStmt`]: struct.ProofStmt.html
-#[derive(Debug, Clone)]
-pub struct ProofStmts<'a> {
-    pub(in crate::ast) src: &'a Token<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ProofStmts {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
     // TODO: note - see above.
-    // pub stmts: Vec<ProofStmt<'a>>,
+    // pub stmts: Vec<ProofStmt>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 /*
@@ -57,13 +60,13 @@ pub struct ProofStmts<'a> {
 /// [`ProofStmts`]: struct.ProofStmts.html
 /// [block expression]: ../../expr/struct.BlockExpr.html
 #[derive(Debug, Clone)]
-pub enum ProofStmt<'a> {
-    Invariant(Invariant<'a>),
-    Forall(Forall<'a>),
-    Existential(Existential<'a>),
-    Implies(Implies<'a>),
-    DoubleImplies(DoubleImplies<'a>),
-    Expr(Expr<'a>),
+pub enum ProofStmt {
+    Invariant(Invariant),
+    Forall(Forall),
+    Existential(Existential),
+    Implies(Implies),
+    DoubleImplies(DoubleImplies),
+    Expr(Expr),
 }
 
 /// An "invariant" proof statment
@@ -75,10 +78,10 @@ pub enum ProofStmt<'a> {
 /// ```
 /// Invariants may additionally be named.
 #[derive(Debug, Clone)]
-pub struct Invariant<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub name: Option<StringLiteral<'a>>,
-    pub block: ProofBlock<'a>,
+pub struct Invariant {
+    pub(in crate::ast) src: TokenSlice,
+    pub name: Option<StringLiteral>,
+    pub block: ProofBlock,
 }
 
 /// A universal quantifier proof statement
@@ -89,38 +92,38 @@ pub struct Invariant<'a> {
 /// Forall = "forall" Pattern "in" Expr ProofBlock .
 /// ```
 #[derive(Debug, Clone)]
-pub struct Forall<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub pat: Pattern<'a>,
-    pub iter: Option<Expr<'a>>,
+pub struct Forall {
+    pub(in crate::ast) src: TokenSlice,
+    pub pat: Pattern,
+    pub iter: Option<Expr>,
 }
 
 /// An existential qualifier proof statement
 ///
 /// Existential statements use the `exists` keywod to define that
 #[derive(Debug, Clone)]
-pub struct Existential<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
+pub struct Existential {
+    pub(in crate::ast) src: TokenSlice,
 }
 
 #[derive(Debug, Clone)]
-pub struct Implies<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
+pub struct Implies {
+    pub(in crate::ast) src: TokenSlice,
 }
 
 #[derive(Debug, Clone)]
-pub struct DoubleImplies<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
+pub struct DoubleImplies {
+    pub(in crate::ast) src: TokenSlice,
 }
 
 #[derive(Debug, Clone)]
-pub enum ProofBlock<'a> {
-    Stmt(Box<ProofStmt<'a>>),
-    Block(ProofStmts<'a>),
+pub enum ProofBlock {
+    Stmt(Box<ProofStmt>),
+    Block(ProofStmts),
 }
 */
 
-impl<'a> ProofStmts<'a> {
+impl ProofStmts {
     /// Parses a single token tree as a list of proof statements
     ///
     /// This function always returns a set of proof statements, marking them internally as poisoned
@@ -129,14 +132,15 @@ impl<'a> ProofStmts<'a> {
     /// NOTE: At time of writing, this function will always add a `ProofStmtsUnimplemented` error
     /// to the given list, because syntax for proof statements has not yet been decided.
     pub(super) fn parse(
-        src: &'a Token<'a>,
-        _inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> ProofStmts<'a> {
-        errors.push(Error::ProofStmtsUnimplemented { proof_lines: src });
+        file: &FileInfo,
+        src: &Token,
+        _inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> ProofStmts {
+        errors.push(Error::ProofStmtsUnimplemented { proof_lines: src.span(file) });
 
         ProofStmts {
-            src,
+            src: src.span(file),
             poisoned: true,
         }
     }

@@ -3,6 +3,7 @@
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
 use super::*;
+use crate::files::{FileInfo, Span};
 
 // And all of the submodules here are really just for code organization; we want them all to exist
 // (and be documented) under the single `ast::item` namespace.
@@ -24,17 +25,17 @@ pub use self::{
     proofstmts::*, traitdef::*, typedecl::*,
 };
 
-#[derive(Debug, Clone)]
-pub enum Item<'a> {
-    Fn(FnDecl<'a>),
-    Macro(MacroDef<'a>),
-    Type(TypeDecl<'a>),
-    Trait(TraitDef<'a>),
-    Impl(ImplBlock<'a>),
-    Const(ConstStmt<'a>),
-    Static(StaticStmt<'a>),
-    Import(ImportStmt<'a>),
-    Use(UseStmt<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Item {
+    Fn(FnDecl),
+    Macro(MacroDef),
+    Type(TypeDecl),
+    Trait(TraitDef),
+    Impl(ImplBlock),
+    Const(ConstStmt),
+    Static(StaticStmt),
+    Import(ImportStmt),
+    Use(UseStmt),
 }
 
 /// A specific enum for handling item parsing failure
@@ -52,9 +53,10 @@ pub(super) struct ItemParseErr {
 /// Visibility qualifiers for [`Item`](enum.Item.html)s
 ///
 /// Currently there is a single variant ("pub") - this may be subject to change in the future.
-#[derive(Debug, Clone)]
-pub enum Vis<'a> {
-    Pub { src: &'a Token<'a> },
+#[derive(Debug, Clone, Consumed)]
+pub enum Vis {
+    #[consumed(1)]
+    Pub { src: Span },
 }
 
 /// A helper type for concrete, possibly bounded types, with optional default values
@@ -70,13 +72,17 @@ pub enum Vis<'a> {
 ///
 /// The full set of options expressable by a field are not always valid in all contexts; this is
 /// hanlded after parse-time, during validation of the AST.
-#[derive(Debug, Clone)]
-pub struct Field<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub bound_src: TokenSlice<'a>,
-    pub bound: FieldBound<'a>,
-    pub value: Option<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct Field {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub name: Ident,
+    #[consumed(@ignore)]
+    pub bound_src: Span,
+    pub bound: FieldBound,
+    #[consumed(value.as_ref().map(|v| v.consumed() + 1).unwrap_or(0))]
+    // +1 to account for the leading "+"
+    pub value: Option<Expr>,
 }
 
 /// The types of bounds on a type for a [`Field`]; A helper type for [`Field`]
@@ -92,10 +98,12 @@ pub struct Field<'a> {
 ///
 /// [`Field`]: struct.Field.html
 /// [parsing function]: #method.consume
-#[derive(Debug, Clone)]
-pub enum FieldBound<'a> {
-    Type(Type<'a>),
-    TypeBound(TypeBound<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum FieldBound {
+    #[consumed(_0.consumed() + 1)] // +1 for the leading ":"
+    Type(Type),
+    #[consumed(_0.consumed() + 1)] // +1 for the leading "::"
+    TypeBound(TypeBound),
 }
 
 /// Bounds on a type; refinements and trait bounds
@@ -106,25 +114,30 @@ pub enum FieldBound<'a> {
 /// TypeBound = [ Refinements ] Trait { "+" Trait } .
 /// ```
 /// Note that here, `Trait`s are defined as exactly equal to [`Path`]s.
-#[derive(Debug, Clone)]
-pub struct TypeBound<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub refinements: Option<Refinements<'a>>,
-    pub traits: Vec<Path<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TypeBound {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub refinements: Option<Refinements>,
+
+    // we need to factor in the "+" between traits
+    #[consumed(traits.consumed() + traits.len() - 1)]
+    pub traits: Vec<Path>,
 }
 
-impl<'a> Item<'a> {
+impl Item {
     /// Consumes an `Item` as a prefix of the tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Item<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Item, ItemParseErr> {
         // Per the BNF, most of the items present can have preceeding proof lines, so we'll consume
         // whatever proof lines might be at the beginning of the list of tokens beforehand. If we
         // do find proof lines, there's a limited set of items that we would be expecting.
@@ -141,7 +154,7 @@ impl<'a> Item<'a> {
         let mut consumed = 0;
         if let Some(TokenKind::ProofLines(inner)) = kind!(tokens)(0) {
             let src = tokens[0].as_ref().unwrap();
-            proof_stmts = Some(ProofStmts::parse(src, inner, errors));
+            proof_stmts = Some(ProofStmts::parse(file, src, inner, errors));
             consumed += 1;
         }
 
@@ -175,7 +188,7 @@ impl<'a> Item<'a> {
         // that - after consuming an optional visibility qualifier. We'll generate an error if the
         // visibility qualifier wasn't allowed.
 
-        let vis = Vis::try_consume(&tokens[consumed..]);
+        let vis = Vis::try_consume(file, &tokens[consumed..]);
         consumed += vis.consumed();
 
         // We'll get the next token, which *should* be one of a few different keywords. If it isn't, we'll indicate an
@@ -187,7 +200,7 @@ impl<'a> Item<'a> {
             Pure, Fn, Macro, Type, Trait, Impl, Const, Static, Import, Use,
         ];
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let (fst, kwd) = expect!((
             Ok(fst),
@@ -213,6 +226,7 @@ impl<'a> Item<'a> {
                 $(, $args:expr)* $(,)?
             ) => {
                 $base_ty::consume(
+                    file,
                     consume!(@tokens $($tokens)?),
                     consume!(@consumed $($consumed)?),
                     ends_early,
@@ -239,7 +253,7 @@ impl<'a> Item<'a> {
                 if $res.is_ok() {
                     if let Some(vis) = vis {
                         errors.push(Error::VisDisallowedBeforeItem {
-                            vis: vis.src(),
+                            vis: vis.span(),
                             item_kind: errors::ItemKind::$item_kind,
                         });
                     }
@@ -249,7 +263,7 @@ impl<'a> Item<'a> {
             (@Proof, $res:expr, $item_kind:ident) => {
                 if $res.is_ok() && has_proof_stmts {
                     errors.push(Error::ProofStmtsDisallowedBeforeItem {
-                        stmts: &tokens[..proof_stmts_consumed],
+                        stmts: Source::slice_span(file, &tokens[..proof_stmts_consumed]),
                         item_kind: errors::ItemKind::$item_kind,
                     });
                 }
@@ -261,9 +275,14 @@ impl<'a> Item<'a> {
             Type => consume!(TypeDecl, Item::Type, proof_stmts, vis),
             Trait => consume!(TraitDef, Item::Trait, proof_stmts, vis),
             Impl => {
-                let res =
-                    ImplBlock::consume(&tokens[consumed..], ends_early, containing_token, errors)
-                        .map(Item::Impl);
+                let res = ImplBlock::consume(
+                    file,
+                    &tokens[consumed..],
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(Item::Impl);
 
                 disallow!(@Vis, res, ImplBlock);
                 disallow!(@Proof, res, ImplBlock);
@@ -271,9 +290,14 @@ impl<'a> Item<'a> {
             }
             Static => consume!(StaticStmt, Item::Static, proof_stmts, vis),
             Import => {
-                let res =
-                    ImportStmt::consume(&tokens[consumed..], ends_early, containing_token, errors)
-                        .map(Item::Import);
+                let res = ImportStmt::consume(
+                    file,
+                    &tokens[consumed..],
+                    ends_early,
+                    containing_token,
+                    errors,
+                )
+                .map(Item::Import);
 
                 disallow!(@Vis, res, ImportStmt);
                 disallow!(@Proof, res, ImportStmt);
@@ -344,12 +368,14 @@ impl<'a> Item<'a> {
                                 is_pure
                             ),
                             @else { return Err(ItemParseErr { consumed }) } => {
-                                ExpectedKind::ConstPureExpectedFn { before: [fst, snd] }
+                                ExpectedKind::ConstPureExpectedFn {
+                                    before: [Source::token(file, fst), Source::token(file, snd)],
+                                }
                             }
                         ))
                     },
                     @else { return Err(ItemParseErr { consumed }) } => {
-                        ExpectedKind::ItemAfterConst { before: fst }
+                        ExpectedKind::ItemAfterConst { before: Source::token(file, fst) }
                     }
                 ))
             }
@@ -390,13 +416,13 @@ impl<'a> Item<'a> {
                             ),
                             @else { return Err(ItemParseErr { consumed }) } => {
                                 ExpectedKind::ConstPureExpectedFn {
-                                    before: [fst, snd],
+                                    before: [Source::token(file, fst), Source::token(file, snd)],
                                 }
                             }
                         ))
                     },
                     @else { return Err(ItemParseErr { consumed }) } => {
-                        ExpectedKind::PureItemExpectedFnDecl { before: fst }
+                        ExpectedKind::PureItemExpectedFnDecl { before: Source::token(file, fst) }
                     }
                 ))
             }
@@ -410,17 +436,24 @@ impl<'a> Item<'a> {
     /// Parses the entire set of tokens as a list of items, additionally returning whether the list
     /// was poisoned (i.e. if some items may have been omitted due to errors).
     pub(super) fn parse_all(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> (Vec<Item<'a>>, bool) {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> (Vec<Item>, bool) {
         let mut items = Vec::new();
         let mut consumed = 0;
         let mut poisoned = false;
 
         while consumed < tokens.len() {
-            let res = Item::consume(&tokens[consumed..], ends_early, containing_token, errors);
+            let res = Item::consume(
+                file,
+                &tokens[consumed..],
+                ends_early,
+                containing_token,
+                errors,
+            );
             match res {
                 Ok(item) => {
                     consumed += item.consumed();
@@ -548,49 +581,53 @@ impl ItemParseErr {
     }
 }
 
-impl<'a> Vis<'a> {
+impl Vis {
     /// Attempts to consume a visibility qualifier as a prefix of the given tokens
     ///
     /// If the tokens were unable to be parsed as a visbility qualifier, this will simply return
     /// `None`.
-    pub(super) fn try_consume(tokens: TokenSlice<'a>) -> Option<Vis<'a>> {
+    pub(super) fn try_consume(file: &FileInfo, tokens: TokenSlice) -> Option<Vis> {
         let token = match tokens.first() {
             Some(Ok(t)) => t,
             _ => return None,
         };
 
         if let TokenKind::Keyword(Kwd::Pub) = token.kind {
-            return Some(Vis::Pub { src: token });
+            return Some(Vis::Pub {
+                src: token.span(file),
+            });
         }
 
         None
     }
 
-    /// Returns the source backing the visibility qualifier
-    fn src(&self) -> Source<'a> {
+    /// Returns the source of the visibility qualifier
+    fn span(&self) -> Span {
         match self {
-            Vis::Pub { src } => Source::TokenResult(Ok(src)),
+            Vis::Pub { src } => *src,
         }
     }
 }
 
-impl<'a> Field<'a> {
+impl Field {
     /// Consumes a `Field` as a prefix of the given tokens
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ctx: FieldContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Field<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Field, Option<usize>> {
         // Fields are represented by the following BNF:
         //   Field = Ident ( ":" Type | "::" TypeBound ) [ "=" Expr ]
         //
         // As such, we're expecting an identifier as our first token:
         let name = Ident::parse(
+            file,
             tokens.first(),
             IdentContext::Field(ctx),
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| None)?;
@@ -599,6 +636,7 @@ impl<'a> Field<'a> {
         // `FieldBound` to handle this:
         let mut consumed = 1;
         let (bound, bound_src) = FieldBound::consume(
+            file,
             &tokens[consumed..],
             ctx,
             ends_early,
@@ -607,7 +645,7 @@ impl<'a> Field<'a> {
         )
         .map_err(p!(Some(c) => Some(c + consumed)))?;
 
-        consumed += bound_src.len();
+        consumed += bound.consumed();
 
         // Finally, if we have an equals, we'll consume a trailing expression
         let mut value = None;
@@ -619,6 +657,7 @@ impl<'a> Field<'a> {
             };
 
             let expr = Expr::consume(
+                file,
                 &tokens[consumed..],
                 expr_delim,
                 Restrictions::default(),
@@ -633,7 +672,7 @@ impl<'a> Field<'a> {
         }
 
         Ok(Field {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             name,
             bound_src,
             bound,
@@ -642,22 +681,24 @@ impl<'a> Field<'a> {
     }
 }
 
-impl<'a> FieldBound<'a> {
+impl FieldBound {
     /// Consumes a `FieldBound` as a prefix of the given tokens, returning the bound and its source
     /// on success.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ctx: FieldContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<(FieldBound<'a>, TokenSlice<'a>), Option<usize>> {
-        make_expect!(tokens, 0, ends_early, containing_token, errors);
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<(FieldBound, Span), Option<usize>> {
+        make_expect!(file, tokens, 0, ends_early, containing_token, errors);
 
         expect!((
             Ok(_),
             TokenKind::Punctuation(Punc::Colon) => {
                 let ty = Type::consume(
+                    file,
                     &tokens[1..],
                     TypeContext::FieldBound(ctx),
                     Restrictions::default(),
@@ -668,10 +709,11 @@ impl<'a> FieldBound<'a> {
 
                 let src = &tokens[..ty.consumed() + 1];
 
-                Ok((FieldBound::Type(ty), src))
+                Ok((FieldBound::Type(ty), Source::slice_span(file, src)))
             },
             TokenKind::Punctuation(Punc::DoubleColon) => {
                 let bound = TypeBound::consume(
+                    file,
                     &tokens[1..],
                     ends_early,
                     containing_token,
@@ -680,23 +722,25 @@ impl<'a> FieldBound<'a> {
 
                 let src = &tokens[..bound.consumed() + 1];
 
-                Ok((FieldBound::TypeBound(bound), src))
+                Ok((FieldBound::TypeBound(bound), Source::slice_span(file, src)))
             },
             @else(return None) => ExpectedKind::FieldBound(ctx),
         ))
     }
 }
 
-impl<'a> TypeBound<'a> {
+impl TypeBound {
     /// Consumes a type bound as a prefix of the given tokens
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TypeBound<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<TypeBound, Option<usize>> {
         // Type bounds may optionally start with refinements, so we'll check for those first
         let refinements = Refinements::try_consume(
+            file,
             tokens,
             Restrictions::default(),
             ends_early,
@@ -707,8 +751,14 @@ impl<'a> TypeBound<'a> {
         let mut consumed = refinements.consumed();
 
         // First, we'll expect an initial path, because each type bound is guaranteed to have one:
-        let base_path = Path::consume(&tokens[consumed..], ends_early, containing_token, errors)
-            .map_err(p!(Some(c) => Some(c + consumed)))?;
+        let base_path = Path::consume(
+            file,
+            &tokens[consumed..],
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(c + consumed)))?;
 
         consumed += base_path.consumed();
 
@@ -718,16 +768,21 @@ impl<'a> TypeBound<'a> {
         while let Some(TokenKind::Punctuation(Punc::Plus)) = kind!(tokens)(consumed) {
             consumed += 1;
 
-            let next_trait =
-                Path::consume(&tokens[consumed..], ends_early, containing_token, errors)
-                    .map_err(p!(Some(c) => Some(c + consumed)))?;
+            let next_trait = Path::consume(
+                file,
+                &tokens[consumed..],
+                ends_early,
+                containing_token,
+                errors,
+            )
+            .map_err(p!(Some(c) => Some(c + consumed)))?;
 
             consumed += next_trait.consumed();
             traits.push(next_trait);
         }
 
         Ok(TypeBound {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             refinements,
             traits,
         })

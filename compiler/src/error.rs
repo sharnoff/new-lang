@@ -109,7 +109,9 @@ pub trait ToError<A> {
 }
 
 /// Displays the set of errors, printing them to the terminal via stderr
-pub async fn display_errors(db: &Database, job: &JobId, errs: impl IntoIterator<Item = &Builder>) {
+///
+/// Returns the number of errors printed.
+pub async fn display_errors(db: &Database, job: &JobId, errs: impl IntoIterator<Item = &Builder>) -> usize {
     let mut count = 0;
 
     for err in errs {
@@ -117,12 +119,7 @@ pub async fn display_errors(db: &Database, job: &JobId, errs: impl IntoIterator<
         count += 1;
     }
 
-    let num_errs = match count {
-        1 => "a previous error".into(),
-        n => format!("{} previous errors", n),
-    };
-
-    eprintln!("{}: Failed due to {}", ERR_COLOR.paint("error"), num_errs);
+    count
 }
 
 impl Builder {

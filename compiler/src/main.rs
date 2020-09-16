@@ -22,6 +22,17 @@ fn main() {
         let _ast = db.ast_info(job, "test_input.tc".into()).await;
 
         let errors = db.errors().await;
-        error::display_errors(&db, &JobId::initial_seed(), errors).await;
+        let count = error::display_errors(&db, &JobId::initial_seed(), errors).await;
+
+        if count == 0 {
+            println!("Successfully parsed.");
+        } else {
+            let num_errs = match count {
+                1 => "a previous error".into(),
+                n => format!("{} previous errors", n),
+            };
+
+            eprintln!("{}: Failed due to {}", error::ERR_COLOR.paint("error"), num_errs);
+        }
     })
 }

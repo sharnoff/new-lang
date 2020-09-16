@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A type declaration, independent of where it might occur
 ///
@@ -29,18 +30,26 @@ use super::*;
 ///
 /// [`TypeBound`]: ../struct.TypeBound.html
 #[derive(Debug, Clone)]
-pub struct TypeDecl<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub proof_stmts: Option<ProofStmts<'a>>,
-    pub vis: Option<Vis<'a>>,
-    pub name: Ident<'a>,
-    pub generics_params: Option<GenericsParams<'a>>,
-    pub bound: Option<TypeBound<'a>>,
+pub struct TypeDecl {
+    pub(in crate::ast) src: Span,
+    pub proof_stmts: Option<ProofStmts>,
+    pub vis: Option<Vis>,
+    pub name: Ident,
+    pub generics_params: Option<GenericsParams>,
+    pub bound: Option<TypeBound>,
     pub is_alias: bool,
-    pub ty: Option<Type<'a>>,
+    pub ty: Option<Type>,
+
+    consumed: usize,
 }
 
-impl<'a> TypeDecl<'a> {
+impl Consumed for TypeDecl {
+    fn consumed(&self) -> usize {
+        self.consumed
+    }
+}
+
+impl TypeDecl {
     /// Consumes a type declaration as a prefix of the given tokens
     ///
     /// This function operates under the same semantics as [`FnDecl::consume`]; accurate
@@ -48,37 +57,39 @@ impl<'a> TypeDecl<'a> {
     ///
     /// [`FnDecl::consume`]: ../fndecl/struct.FnDecl.html#method.consume
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        proof_stmts: Option<ProofStmts<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<TypeDecl<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        proof_stmts: Option<ProofStmts>,
+        vis: Option<Vis>,
+    ) -> Result<TypeDecl, ItemParseErr> {
         let mut consumed = ident_idx;
 
         // Because we're starting at `ident_idx`, we only actually need to parse the following BNF
         // equivalent:
         //   Ident [ GenericsParams ] [ "::" TypeBound [ "=" Type ] | [ "=" ] Type ] ";"
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
         macro_rules! err {
             () => {{
                 return Err(ItemParseErr { consumed });
             }};
         }
 
-        let kwd_tokens = &tokens[proof_stmts.consumed()..consumed];
+        let kwd_tokens = Source::slice_span(file, &tokens[proof_stmts.consumed()..consumed]);
 
         let name = expect!((
-            Ok(src),
-            TokenKind::Ident(name) => Ident { src, name },
+            Ok(t),
+            TokenKind::Ident(name) => Ident { src: t.span(file), name: (*name).into() },
             @else { err!() } => ExpectedKind::Ident(IdentContext::FnDeclName(kwd_tokens)),
         ));
         consumed += 1;
 
         let generics_params = GenericsParams::try_consume(
+            file,
             &tokens[consumed..],
             GenericsParamsContext::TypeDecl,
             |_| true,
@@ -97,6 +108,7 @@ impl<'a> TypeDecl<'a> {
                 consumed += 1;
 
                 let b = TypeBound::consume(
+                    file,
                     &tokens[consumed..],
                     ends_early,
                     containing_token,
@@ -115,7 +127,7 @@ impl<'a> TypeDecl<'a> {
             // Someone might have left a single colon accidentally - we'll produce a distinct error
             // for this
             @err TokenKind::Punctuation(Punc::Colon) => {
-                Error::TypeDeclSingleColonBound { colon: t }
+                Error::TypeDeclSingleColonBound { colon: Source::token(file, t) }
             },
 
             // But if it isn't, we'll produce the appropriate error immediately instead of waiting
@@ -135,6 +147,7 @@ impl<'a> TypeDecl<'a> {
             Ok(t),
             _ if Type::is_starting_token(t) => {
                 let t = Type::consume(
+                    file,
                     &tokens[consumed..],
                     TypeContext::TypeDecl,
                     Restrictions::default(),
@@ -167,7 +180,7 @@ impl<'a> TypeDecl<'a> {
         }
 
         Ok(TypeDecl {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             proof_stmts,
             vis,
             name,
@@ -175,6 +188,7 @@ impl<'a> TypeDecl<'a> {
             bound,
             is_alias,
             ty,
+            consumed,
         })
     }
 }

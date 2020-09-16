@@ -1,6 +1,7 @@
 use super::*;
 use crate::tokens::LiteralKind;
 use std::convert::TryFrom;
+use crate::files::{FileInfo, Span};
 
 /// An import statment
 ///
@@ -25,12 +26,15 @@ use std::convert::TryFrom;
 /// converted to an identifier), the user *must* supply an identifier to rename as.
 ///
 /// [`UseStmt`s]: struct.UseStmt.html
-#[derive(Debug, Clone)]
-pub struct ImportStmt<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub source: StringLiteral<'a>,
-    pub version: Option<StringLiteral<'a>>,
-    pub rename: Option<Ident<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ImportStmt {
+    #[consumed(2)] // +1 for "import"; "+1" for trailing semicolon
+    pub(in crate::ast) src: Span,
+    pub source: StringLiteral,
+    #[consumed(version.as_ref().map(|s| s.consumed() + 1).unwrap_or(0))] // +1 for "~"
+    pub version: Option<StringLiteral>,
+    #[consumed(rename.as_ref().map(|i| i.consumed() + 1).unwrap_or(0))] // +1 for "as"
+    pub rename: Option<Ident>,
 }
 
 /// A `use` statment
@@ -60,11 +64,12 @@ pub struct ImportStmt<'a> {
 /// [`UsePath`]: enum.UsePath.html
 /// [`MultiUse`]: enum.MultiUse.html
 /// [`GlobUse`]: enum.GlobUse.html
-#[derive(Debug, Clone)]
-pub struct UseStmt<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub vis: Option<Vis<'a>>,
-    pub path: UsePath<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct UseStmt {
+    #[consumed(2)] // +1 for "use"; "+1" for trailing semicolon
+    pub(in crate::ast) src: Span,
+    pub vis: Option<Vis>,
+    pub path: UsePath,
 }
 
 /// A helper type for [`UseStmt`]s
@@ -74,11 +79,11 @@ pub struct UseStmt<'a> {
 /// refer to the documentation for [`UseStmt`].
 ///
 /// [`UseStmt`]: struct.UseStmt.html
-#[derive(Debug, Clone)]
-pub enum UsePath<'a> {
-    Multi(MultiUse<'a>),
-    Glob(GlobUse<'a>),
-    Single(SingleUse<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum UsePath {
+    Multi(MultiUse),
+    Glob(GlobUse),
+    Single(SingleUse),
 }
 
 /// A [`UsePath`] variant that allows for bringing multiple items into scope
@@ -87,11 +92,14 @@ pub enum UsePath<'a> {
 ///
 /// [`UsePath`]: enum.UsePath.html
 /// [`UseStmt`]: struct.UseStmt.html
-#[derive(Debug, Clone)]
-pub struct MultiUse<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub root: Path<'a>,
-    pub children: Vec<UsePath<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MultiUse {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub root: Path,
+    #[consumed(1)] // enclosed in curly braces
+    pub children: Vec<UsePath>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -101,11 +109,13 @@ pub struct MultiUse<'a> {
 ///
 /// [`UsePath`]: enum.UsePath.html
 /// [`UseStmt`]: struct.UseStmt.html
-#[derive(Debug, Clone)]
-pub struct GlobUse<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub root: Path<'a>,
-    pub star_token: &'a Token<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GlobUse {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub root: Path,
+    #[consumed(2)] // +1 for the "." between the path and the star
+    pub star_token: Span,
 }
 
 /// The standard method of bringing items into scope; a [`UsePath`] variant
@@ -118,13 +128,17 @@ pub struct GlobUse<'a> {
 /// Examples include:
 /// * `type std.foo.Bar`
 /// * `mod baz.qux as my_mod`
-#[derive(Debug, Clone)]
-pub struct SingleUse<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub kind_src: &'a Token<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct SingleUse {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    #[consumed(@ignore)]
+    pub kind_src: Span,
+    #[consumed(1)]
     pub kind: UseKind,
-    pub path: Path<'a>,
-    pub use_as: Option<Ident<'a>>,
+    pub path: Path,
+    #[consumed(use_as.as_ref().map(|i| i.consumed() + 1).unwrap_or(0))] // +1 for "as"
+    pub use_as: Option<Ident>,
 }
 
 /// The types of items that may be brought into scope with a [`UseStmt`]
@@ -148,24 +162,25 @@ pub enum UseKind {
     Mod,
 }
 
-impl<'a> ImportStmt<'a> {
+impl ImportStmt {
     /// Consumes an `import` statment as a prefix of the given tokens
     ///
     /// This function expects that the first token it is given is the keyword `import`, and will
     /// panic if this is not the case.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ImportStmt<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<ImportStmt, ItemParseErr> {
         assert_token!(
             tokens.first() => "keyword `import`",
             Ok(t) && TokenKind::Keyword(Kwd::Import) => (),
         );
 
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         macro_rules! err {
             () => {{
@@ -180,7 +195,7 @@ impl<'a> ImportStmt<'a> {
         // We expect the first string literal:
         let source = expect!((
             Ok(src),
-            TokenKind::Literal(content, LiteralKind::String) => StringLiteral { src, content },
+            TokenKind::Literal(content, LiteralKind::String) => StringLiteral { src: src.span(file), content: (*content).into() },
             @else { err!() } => ExpectedKind::ImportSourceString,
         ));
 
@@ -197,7 +212,7 @@ impl<'a> ImportStmt<'a> {
                 let lit = expect!((
                     Ok(src),
                     TokenKind::Literal(content, LiteralKind::String) => {
-                        StringLiteral { src, content }
+                        StringLiteral { src: src.span(file), content: (*content).into() }
                     },
                     @else { err!() } => ExpectedKind::ImportVersionString,
                 ));
@@ -216,7 +231,7 @@ impl<'a> ImportStmt<'a> {
                 consumed += 1;
 
                 let ident = expect!((
-                    Ok(src), TokenKind::Ident(name) => Ident { src, name },
+                    Ok(src), TokenKind::Ident(name) => Ident { src: src.span(file), name: (*name).into() },
                     @else { err!() } => ExpectedKind::ImportRenameIdent,
                 ));
 
@@ -235,7 +250,7 @@ impl<'a> ImportStmt<'a> {
         ));
 
         Ok(ImportStmt {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             source,
             version,
             rename,
@@ -243,7 +258,7 @@ impl<'a> ImportStmt<'a> {
     }
 }
 
-impl<'a> UseStmt<'a> {
+impl UseStmt {
     /// Consumes a `use` statment as a prefix of the given tokens
     ///
     /// The arguments to this function follow the same semantics as [`FnDecl::consume`]. For an
@@ -251,13 +266,14 @@ impl<'a> UseStmt<'a> {
     ///
     /// [`FnDecl::consume`]: ../fndecl/struct.FnDecl.html#method.consume
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<UseStmt<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        vis: Option<Vis>,
+    ) -> Result<UseStmt, ItemParseErr> {
         // Use statements are given by the following BNF:
         //   UseStmt = Vis "use" UsePath ";"
         // where `ident_idx` gives the index in `tokens` at which the `UsePath` starts.
@@ -266,9 +282,9 @@ impl<'a> UseStmt<'a> {
         // is why this function ends up being so simple.
 
         let mut consumed = ident_idx;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
-        let path = UsePath::consume(&tokens[consumed..], ends_early, containing_token, errors)
+        let path = UsePath::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
             .map_err(ItemParseErr::add(consumed))?;
         consumed += path.consumed();
 
@@ -279,14 +295,14 @@ impl<'a> UseStmt<'a> {
         ));
 
         Ok(UseStmt {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             vis,
             path,
         })
     }
 }
 
-impl<'a> UsePath<'a> {
+impl UsePath {
     /// Consumes a `UsePath` as a prefix of the given tokens
     ///
     /// Please note that, unlike many other parsing functions, this always returns the number of
@@ -300,22 +316,23 @@ impl<'a> UsePath<'a> {
     /// [`ItemParseErr`]: ../struct.ItemParseErr.html
     /// [`MultiUse::parse_inner`]: struct.MultiUse.html#method.parse_inner
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<UsePath<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<UsePath, Option<usize>> {
         let mut consumed = 0;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let path = expect!((
             Ok(fst),
             TokenKind::Ident(_) => {
-                UsePath::consume_path(tokens, ends_early, containing_token, errors)?
+                UsePath::consume_path(file, tokens, ends_early, containing_token, errors)?
             },
             // Otherwise, we'll handle the case of
             TokenKind::Keyword(k) if UseKind::try_from(*k).is_ok() => {
-                return SingleUse::consume(tokens, ends_early, containing_token, errors)
+                return SingleUse::consume(file, tokens, ends_early, containing_token, errors)
                     .map(UsePath::Single);
             },
             @else(return None) => ExpectedKind::UsePath,
@@ -329,7 +346,7 @@ impl<'a> UsePath<'a> {
         if consumed >= tokens.len() {
             if !ends_early {
                 errors.push(Error::MissingUseKind {
-                    path: &tokens[..consumed],
+                    path: Source::slice_span(file, &tokens[..consumed]),
                 });
             }
 
@@ -350,16 +367,16 @@ impl<'a> UsePath<'a> {
                     TokenKind::Punctuation(Punc::Star) => {
                         consumed += 1;
                         Ok(UsePath::Glob(GlobUse {
-                            src: &tokens[..consumed],
+                            src: Source::slice_span(file, &tokens[..consumed]),
                             root: path,
-                            star_token: snd,
+                            star_token: snd.span(file),
                         }))
                     },
                     TokenKind::Tree { delim: Delim::Curlies, inner, .. } => {
-                        let (children, poisoned) = MultiUse::parse_inner(snd, inner, errors);
+                        let (children, poisoned) = MultiUse::parse_inner(file, snd, inner, errors);
                         consumed += 1;
                         Ok(UsePath::Multi(MultiUse {
-                            src: &tokens[..consumed],
+                            src: Source::slice_span(file, &tokens[..consumed]),
                             root: path,
                             children,
                             poisoned,
@@ -368,7 +385,7 @@ impl<'a> UsePath<'a> {
 
                     // And some error handling:
                     @err TokenKind::Tree { delim: Delim::Parens, .. } => {
-                        Error::UsePathDotParens { path: &tokens[..consumed], parens: snd }
+                        Error::UsePathDotParens { path: Source::slice_span(file, &tokens[..consumed]), parens: Source::token(file, snd) }
                     },
                     @else(return Some) => ExpectedKind::UsePathPostDot,
                 ))
@@ -377,16 +394,16 @@ impl<'a> UsePath<'a> {
 
             @err TokenKind::Punctuation(Punc::Semi)
             | TokenKind::Punctuation(Punc::Comma) => {
-                Error::MissingUseKind { path: &tokens[..consumed] }
+                Error::MissingUseKind { path: Source::slice_span(file, &tokens[..consumed] )}
             },
             @err TokenKind::Punctuation(Punc::Star) => {
-                Error::MissingGlobUseDot { star_token: fst }
+                Error::MissingGlobUseDot { star_token: Source::token(file, fst) }
             },
             @err TokenKind::Tree { delim: Delim::Curlies, .. } => {
-                Error::MissingMultiUseDot { curly_token: fst }
+                Error::MissingMultiUseDot { curly_token: Source::token(file, fst) }
             },
             @err _ => {
-                Error::MissingUseKind { path: &tokens[..consumed] }
+                Error::MissingUseKind { path: Source::slice_span(file, &tokens[..consumed] )}
             },
             // We can safely not return an error here because we've covered all of the variants of
             // Some(Ok(_)) and None - the latter is taken care of before this expansion of expect!
@@ -403,12 +420,13 @@ impl<'a> UsePath<'a> {
     /// [`Path`]: ../../expr/struct.Path.html
     /// [`Path::consume`]: ../../expr/struct.Path.html#method.consume
     fn consume_path(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Path<'a>, Option<usize>> {
-        let base = PathComponent::consume(tokens, None, ends_early, containing_token, errors)?;
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Path, Option<usize>> {
+        let base = PathComponent::consume(file, tokens, None, ends_early, containing_token, errors)?;
         let mut consumed = base.consumed();
         let mut components = vec![base];
 
@@ -416,6 +434,7 @@ impl<'a> UsePath<'a> {
             consumed += 1;
 
             let next = PathComponent::consume(
+                file,
                 &tokens[consumed..],
                 Some(&tokens[..consumed]),
                 ends_early,
@@ -429,26 +448,27 @@ impl<'a> UsePath<'a> {
         }
 
         Ok(Path {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             components,
         })
     }
 }
 
-impl<'a> MultiUse<'a> {
+impl MultiUse {
     /// Parses the inner portion of a `MultiUse`, returning the list of paths and whether that list
     /// was *directly* poisoned by any failures.
     fn parse_inner(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> (Vec<UsePath<'a>>, bool) {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> (Vec<UsePath>, bool) {
         let mut consumed = 0;
         let mut paths = Vec::new();
         let mut poisoned = false;
 
         let ends_early = false;
-        make_expect!(inner, consumed, ends_early, Some(src), errors);
+        make_expect!(file, inner, consumed, ends_early, Some(src), errors);
 
         macro_rules! stop {
             () => {{
@@ -458,7 +478,7 @@ impl<'a> MultiUse<'a> {
         }
 
         while consumed < inner.len() {
-            let path_res = UsePath::consume(&inner[consumed..], ends_early, Some(src), errors);
+            let path_res = UsePath::consume(file, &inner[consumed..], ends_early, Some(src), errors);
             match path_res {
                 Ok(p) => {
                     consumed += p.consumed();
@@ -481,7 +501,7 @@ impl<'a> MultiUse<'a> {
     }
 }
 
-impl<'a> SingleUse<'a> {
+impl SingleUse {
     /// Consumes a `SingleUse` variant of [`UseKind`] as a prefix of the given tokens
     ///
     /// This function assumes that the first of the provided tokens satisfies
@@ -490,11 +510,12 @@ impl<'a> SingleUse<'a> {
     /// [`UseKind`]: enum.UseKind.html
     /// [`UseKind::can_parse`]: enum.UseKind.html#method.can_parse
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<SingleUse<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<SingleUse, Option<usize>> {
         let (fst_token, kwd) = assert_token!(
             tokens.first() => "keyword token",
             Ok(t) && TokenKind::Keyword(k) => (t, *k),
@@ -502,9 +523,9 @@ impl<'a> SingleUse<'a> {
 
         let kind = UseKind::try_from(kwd).unwrap();
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
-        let path = Path::consume(&tokens[consumed..], ends_early, containing_token, errors)
+        let path = Path::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
             .map_err(p!(Some(c) => Some(c + consumed)))?;
         consumed += path.consumed();
 
@@ -515,7 +536,7 @@ impl<'a> SingleUse<'a> {
 
             let ident = expect!((
                 Ok(src),
-                TokenKind::Ident(name) => Ident { src, name },
+                TokenKind::Ident(name) => Ident { src: src.span(file), name: (*name).into() },
                 @else(return Some) => ExpectedKind::UsePathSingleAsIdent,
             ));
 
@@ -524,8 +545,8 @@ impl<'a> SingleUse<'a> {
         }
 
         Ok(SingleUse {
-            src: &tokens[..consumed],
-            kind_src: fst_token,
+            src: Source::slice_span(file, &tokens[..consumed]),
+            kind_src: fst_token.span(file),
             kind,
             path,
             use_as,

@@ -3,35 +3,32 @@
 use super::{
     BinOp, BinOpExpr, BindingPower, Expr, Fixity, PostfixOp, PostfixOpExpr, PrefixOp, PrefixOpExpr,
 };
-use crate::ast::{Consumed, TokenSlice};
+use crate::files::Span;
 
 /// The stack of previously paresd tokens and operators that may contribute to parsing an
 /// expression
 #[derive(Clone)]
-pub struct Stack<'a> {
-    total_src: TokenSlice<'a>,
-    pub(super) elems: Vec<Element<'a>>,
+pub struct Stack {
+    pub(super) elems: Vec<Element>,
 
     /// A trailing expression, alongside its starting index in `total_src`. This is stored for
     /// additional validation at runtime
-    pub(super) last_expr: Option<(usize, Expr<'a>)>,
+    pub(super) last_expr: Option<Expr>,
 }
 
 /// A helper type for [`Stack`]
 ///
 /// [`Stack`]: struct.Stack.html
 #[derive(Clone)]
-pub(super) enum Element<'a> {
+pub(super) enum Element {
     BinOp {
-        src_offset: usize,
-        lhs: Expr<'a>,
+        lhs: Expr,
         op: BinOp,
-        op_src: TokenSlice<'a>,
+        op_src: Span,
     },
     PrefixOp {
-        src_offset: usize,
-        op: PrefixOp<'a>,
-        op_src: TokenSlice<'a>,
+        op: PrefixOp,
+        op_src: Span,
     },
 }
 
@@ -42,11 +39,10 @@ pub(super) enum Expecting {
     BinOpOrPostfix,
 }
 
-impl<'a> Stack<'a> {
+impl Stack {
     /// Constructs a new `Stack` from the
-    pub const fn new(total_src: TokenSlice<'a>) -> Self {
+    pub const fn new() -> Self {
         Stack {
-            total_src,
             elems: Vec::new(),
             last_expr: None,
         }
@@ -68,10 +64,9 @@ impl<'a> Stack<'a> {
     }
 
     /// Pushes the given prefix operator onto the stack
-    pub fn push_prefix(&mut self, src_offset: usize, op: PrefixOp<'a>, op_src: TokenSlice<'a>) {
+    pub fn push_prefix(&mut self, op: PrefixOp, op_src: Span) {
         assert_eq!(self.expecting(), Expecting::AtomOrPrefix);
         self.elems.push(Element::PrefixOp {
-            src_offset,
             op: op.clone(),
             op_src,
         });
@@ -80,20 +75,17 @@ impl<'a> Stack<'a> {
     /// Pushes the given atomic expression onto the stack
     ///
     /// This will panic if we aren't expecting one (i.e. if `self.expecting() != AtomOrPrefix`).
-    pub fn push_atom(&mut self, src_offset: usize, expr: Expr<'a>) {
+    pub fn push_atom(&mut self, expr: Expr) {
         assert!(self.last_expr.is_none());
-        self.last_expr = Some((src_offset, expr.clone()));
+        self.last_expr = Some(expr.clone());
     }
 
     /// Pushes the given binary operator onto the stack
-    pub fn push_binop(&mut self, src_offset: usize, op: BinOp, op_src: TokenSlice<'a>) {
+    pub fn push_binop(&mut self, op: BinOp, op_src: Span) {
         self.collapse_bp_gt(op.bp(), op.fixity());
-        let (start, lhs) = self.last_expr.take().unwrap();
-
-        assert_eq!(start + lhs.consumed(), src_offset);
+        let lhs = self.last_expr.take().unwrap();
 
         let elem = Element::BinOp {
-            src_offset: start,
             lhs,
             op,
             op_src,
@@ -102,26 +94,24 @@ impl<'a> Stack<'a> {
     }
 
     /// Pushes the given postfix operator onto the stack
-    pub fn push_postfix(&mut self, src_offset: usize, op: PostfixOp<'a>, op_src: TokenSlice<'a>) {
+    pub fn push_postfix(&mut self, op: PostfixOp, op_src: Span) {
         // We use Fixity::Left just as a default here. Right-associative operators with the same
         // binding power as any postfix operators is a bug.
         self.collapse_bp_gt(op.bp(), Fixity::Left);
-        let (start, mut expr) = self.last_expr.take().unwrap();
+        let mut expr = self.last_expr.take().unwrap();
 
-        assert_eq!(start + expr.consumed(), src_offset);
-
-        let src = &self.total_src[start..src_offset + op_src.len()];
+        let src = expr.span().join(op_src);
         expr = Expr::PostfixOp(PostfixOpExpr {
             src,
             expr: Box::new(expr),
             op,
             op_src,
         });
-        self.last_expr = Some((start, expr));
+        self.last_expr = Some(expr);
     }
 
     /// Consumes the stack and produces an expression from it
-    pub fn finish(mut self) -> Expr<'a> {
+    pub fn finish(mut self) -> Expr {
         // Because we're finishing, we'll collapse the entire stack
         self.collapse_bp_gt(BindingPower::ReservedLowest, Fixity::Left);
 
@@ -130,8 +120,7 @@ impl<'a> Stack<'a> {
         assert!(self.elems.is_empty());
         assert!(self.last_expr.is_some());
 
-        let (_, expr) = self.last_expr.unwrap();
-        expr
+        self.last_expr.unwrap()
     }
 
     fn collapse_bp_gt(&mut self, bp: BindingPower, fixity: Fixity) {
@@ -188,14 +177,12 @@ impl<'a> Stack<'a> {
         while let Some(elem) = self.elems.pop() {
             match elem {
                 Element::BinOp {
-                    src_offset,
                     lhs,
                     op,
                     op_src,
                 } => {
                     if !greater_than(&op.bp(), &bp) {
                         self.elems.push(Element::BinOp {
-                            src_offset,
                             lhs,
                             op,
                             op_src,
@@ -203,46 +190,34 @@ impl<'a> Stack<'a> {
                         break;
                     }
 
-                    let (_rhs_offset, mut rhs_expr) = rhs;
-
-                    let size = lhs.consumed() + op_src.len() + rhs_expr.consumed();
-                    let src = &self.total_src[src_offset..src_offset + size];
-
-                    rhs_expr = Expr::BinOp(Box::new(BinOpExpr {
+                    let src = lhs.span().join(rhs.span());
+                    rhs = Expr::BinOp(Box::new(BinOpExpr {
                         src,
                         lhs,
                         op,
                         op_src,
-                        rhs: rhs_expr,
+                        rhs,
                     }));
-                    rhs = (src_offset, rhs_expr);
                 }
                 Element::PrefixOp {
-                    src_offset,
                     op,
                     op_src,
                 } => {
                     if !greater_than(&op.bp(), &bp) {
                         self.elems.push(Element::PrefixOp {
-                            src_offset,
                             op,
                             op_src,
                         });
                         break;
                     }
 
-                    let (_rhs_offset, mut rhs_expr) = rhs;
-
-                    let size = op_src.len() + rhs_expr.consumed();
-                    let src = &self.total_src[src_offset..src_offset + size];
-                    rhs_expr = Expr::PrefixOp(Box::new(PrefixOpExpr {
+                    let src = op_src.join(rhs.span());
+                    rhs = Expr::PrefixOp(Box::new(PrefixOpExpr {
                         src,
                         op,
                         op_src,
-                        expr: Box::new(rhs_expr),
+                        expr: Box::new(rhs),
                     }));
-
-                    rhs = (src_offset, rhs_expr);
                 }
             }
         }

@@ -3,21 +3,22 @@
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
 use super::*;
+use crate::files::{FileInfo, Span};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Types                                                                                          //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// A single concrete type
-#[derive(Debug, Clone)]
-pub enum Type<'a> {
-    Named(NamedType<'a>),
-    Ref(RefType<'a>),
-    Mut(MutType<'a>),
-    Array(ArrayType<'a>),
-    Struct(StructType<'a>),
-    Tuple(TupleType<'a>),
-    Enum(EnumType<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Type {
+    Named(NamedType),
+    Ref(RefType),
+    Mut(MutType),
+    Array(ArrayType),
+    Struct(StructType),
+    Tuple(TupleType),
+    Enum(EnumType),
 }
 
 /// A named type
@@ -38,11 +39,12 @@ pub enum Type<'a> {
 /// this type cannot be used in cases where there might be ambiguity around the generic arguments.
 ///
 /// [`Path`]: ../expr/struct.Path.html
-#[derive(Debug, Clone)]
-pub struct NamedType<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub path: Path<'a>,
-    pub refinements: Option<Refinements<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct NamedType {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub path: Path,
+    pub refinements: Option<Refinements>,
 }
 
 /// A reference type
@@ -53,14 +55,23 @@ pub struct NamedType<'a> {
 /// ```text
 /// RefType = "&" [ Refinements ] Type .
 /// ```
-#[derive(Debug, Clone)]
-pub struct RefType<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub refinements: Option<Refinements<'a>>,
-    pub ty: Box<Type<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RefType {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    pub refinements: Option<Refinements>,
+
+    #[consumed(ty.consumed() + 1)] // +1 for the leading ref token
+    pub ty: Box<Type>,
 }
 
 /// An indication that a type is strictly allowed or disallowed being mutable
+///
+/// This is defined directly by the following BNF:
+/// ```text
+/// MutType = [ "!" ] "mut" Type .
+/// ```
 ///
 /// This is mostly a syntactic helper construct to things like references, though it does have usage
 /// on its own. A couple different use-cases might look like:
@@ -79,11 +90,15 @@ pub struct RefType<'a> {
 /// And finally, it should be noted that while this sort of mutability prefix is *syntactically*
 /// allowed before any type, it's semantically invalid before itself - i.e. `mut mut T` and other
 /// forms like it are disallowed. Validating this is left until later.
-#[derive(Debug, Clone)]
-pub struct MutType<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub has_not: Option<&'a Token<'a>>,
-    pub ty: Box<Type<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MutType {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(if has_not.is_some() { 1 } else { 0 })]
+    pub has_not: Option<Span>,
+    #[consumed(ty.consumed() + 1)] // +1 for the leading "mut"
+    pub ty: Box<Type>,
 }
 
 /// An array type, given by an element type and optionally the length
@@ -103,15 +118,20 @@ pub struct MutType<'a> {
 /// Obviously this is overly complicated - the user probably should have put the bounds on `vals`
 /// in a proof statement instead - but this sort of specification about anonymous array types *is*
 /// necessary, so it's here.
-#[derive(Debug, Clone)]
-pub struct ArrayType<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub ty: Box<Type<'a>>,
-    pub length: Option<Expr<'a>>,
-    pub refinements: Option<Refinements<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ArrayType {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1)]
+    pub ty: Box<Type>,
+    #[consumed(@ignore)]
+    pub length: Option<Expr>,
+
+    pub refinements: Option<Refinements>,
 
     /// Whether there were some kind of unexpected tokens inside the initial token tree containing
     /// this type
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -127,10 +147,14 @@ pub struct ArrayType<'a> {
 /// StructType = "{" [ StructTypeField { "," StructTypeField } [ "," ] ] "}" .
 /// StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
 /// ```
-#[derive(Debug, Clone)]
-pub struct StructType<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub fields: Vec<StructTypeField<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructType {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub fields: Vec<StructTypeField>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -140,13 +164,16 @@ pub struct StructType<'a> {
 /// ```text
 /// StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
 /// ```
-#[derive(Debug, Clone)]
-pub struct StructTypeField<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub vis: Option<Vis<'a>>,
-    pub name: Ident<'a>,
-    pub ty: Type<'a>,
-    pub value: Option<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructTypeField {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub vis: Option<Vis>,
+    #[consumed(name.consumed() + 1)] // +1 for the ":"
+    pub name: Ident,
+    pub ty: Type,
+    #[consumed(value.consumed() + 1)] // +1 for the "="
+    pub value: Option<Expr>,
 }
 
 /// An anonymous tuple type
@@ -159,10 +186,14 @@ pub struct StructTypeField<'a> {
 /// TupleType = "(" [ TupleTypeElement { "," TupleTypeElement } [ "," ] ] ")" .
 /// TupleTypeElement = [ Vis ] Type .
 /// ```
-#[derive(Debug, Clone)]
-pub struct TupleType<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub elems: Vec<TupleTypeElement<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TupleType {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub elems: Vec<TupleTypeElement>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -172,11 +203,12 @@ pub struct TupleType<'a> {
 /// ```text
 /// TupleTypeElement = [ Vis ] Type .
 /// ```
-#[derive(Debug, Clone)]
-pub struct TupleTypeElement<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub vis: Option<Vis<'a>>,
-    pub ty: Type<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TupleTypeElement {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub vis: Option<Vis>,
+    pub ty: Type,
 }
 
 /// An anonymous enum type
@@ -193,10 +225,13 @@ pub struct TupleTypeElement<'a> {
 ///
 /// Note that this description is not complete; the comma after a variant may be omitted when that
 /// variant is assigned a struct type.
-#[derive(Debug, Clone)]
-pub struct EnumType<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub variants: Vec<EnumVariant<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct EnumType {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(2)] // 1 for the "enum", one for the curly braces
+    pub variants: Vec<EnumVariant>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -206,12 +241,13 @@ pub struct EnumType<'a> {
 /// ```text
 /// EnumVariant = [ Vis ] Ident [ Type ] .
 /// ```
-#[derive(Debug, Clone)]
-pub struct EnumVariant<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub vis: Option<Vis<'a>>,
-    pub name: Ident<'a>,
-    pub ty: Option<Type<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct EnumVariant {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub vis: Option<Vis>,
+    pub name: Ident,
+    pub ty: Option<Type>,
 }
 
 /// An abstraction over parsing functions - helper type for [`Type::parse_delimited`]
@@ -224,14 +260,15 @@ pub struct EnumVariant<'a> {
 /// [`TupleTypeElement`]: struct.TupleTypeElement.html
 /// [`EnumVariant`]: struct.EnumVariant.html
 type InnerParserFn<'a, T> = fn(
-    TokenSlice<'a>,
-    TypeContext<'a>,
+    &FileInfo,
+    TokenSlice,
+    TypeContext,
     bool,
-    &'a Token<'a>,
-    &mut Vec<Error<'a>>,
+    &Token,
+    &mut Vec<Error>,
 ) -> Result<T, Option<usize>>;
 
-impl<'a> Type<'a> {
+impl Type {
     /// Consumes a `Type` as a prefix of the given tokens
     ///
     /// Please note that this function should not be used wherever there might be ambiguity about
@@ -246,26 +283,27 @@ impl<'a> Type<'a> {
     ///
     /// [`Restrictions`]: ../expr/restrictions/struct.Restrictions.html
     pub fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Type<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Type, Option<usize>> {
         // This parser is relatively simple; we can just parse based on the type of token that we
         // find. The syntax for each individual type is fairly distinct; we don't need to account
         // for special cases.
 
         macro_rules! consume {
             ($type:ident, $variant:ident $(, $ctx:expr)*) => {{
-                $type::consume(tokens, $($ctx,)? ends_early, containing_token, errors).map(Type::$variant)
+                $type::consume(file, tokens, $($ctx,)? ends_early, containing_token, errors).map(Type::$variant)
             }};
         }
 
         use TokenKind::{Ident, Keyword, Punctuation, Tree};
 
-        make_expect!(tokens, 0, ends_early, containing_token, errors);
+        make_expect!(file, tokens, 0, ends_early, containing_token, errors);
         expect!((
             Ok(fst),
             Ident(_) => consume!(NamedType, Named, restrictions),
@@ -274,9 +312,9 @@ impl<'a> Type<'a> {
             Tree { delim, inner, .. } => {
                 match delim {
                     Delim::Squares => consume!(ArrayType, Array, ctx, restrictions),
-                    Delim::Curlies => StructType::parse(fst, inner, errors, ctx).map(Type::Struct)
+                    Delim::Curlies => StructType::parse(file, fst, inner, errors, ctx).map(Type::Struct)
                         .map_err(|()| Some(1)),
-                    Delim::Parens => TupleType::parse(fst, inner, errors, ctx).map(Type::Tuple)
+                    Delim::Parens => TupleType::parse(file, fst, inner, errors, ctx).map(Type::Tuple)
                         .map_err(|()| Some(1)),
                 }
             },
@@ -308,13 +346,14 @@ impl<'a> Type<'a> {
     /// This function returns the list of inner values parsed, alongside a boolean that's true
     /// whenever there was some error in parsing that significantly poisoned the values produced.
     fn parse_delimited<T: Consumed>(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        consume_inner: InnerParserFn<'a, T>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        consume_inner: InnerParserFn<T>,
+        ctx: TypeContext,
         require_trailing_comma: impl Fn(&T) -> bool,
-        expected_comma: ExpectedKind<'a>,
-        errors: &mut Vec<Error<'a>>,
+        expected_comma: ExpectedKind,
+        errors: &mut Vec<Error>,
     ) -> Result<(Vec<T>, bool), ()> {
         let ends_early = false;
 
@@ -323,7 +362,7 @@ impl<'a> Type<'a> {
         let mut values = Vec::new();
 
         while consumed < inner.len() {
-            let res = consume_inner(&inner[consumed..], ctx, ends_early, src, errors);
+            let res = consume_inner(file, &inner[consumed..], ctx, ends_early, src, errors);
             let mut requires_comma = true;
 
             match res {
@@ -356,7 +395,7 @@ impl<'a> Type<'a> {
                     _ => {
                         errors.push(Error::Expected {
                             kind: expected_comma,
-                            found: Source::TokenResult(Ok(t)),
+                            found: Source::token(file, t),
                         });
 
                         poisoned = true;
@@ -367,7 +406,7 @@ impl<'a> Type<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: expected_comma,
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     poisoned = true;
@@ -411,7 +450,7 @@ impl<'a> Type<'a> {
     }
 }
 
-impl<'a> NamedType<'a> {
+impl NamedType {
     /// Consumes a named type as a prefix of the given tokens
     ///
     /// Please note that this function should not be used wherever there might be ambiguity about
@@ -421,20 +460,23 @@ impl<'a> NamedType<'a> {
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<NamedType<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<NamedType, Option<usize>> {
         // The BNF is duplicated here for a brief explanation:
         //   Path [ GenericsArgs ] [ Refinements ]
         // The rest of the function is pretty short, so this should suffice.
 
-        let path = Path::consume(tokens, ends_early, containing_token, errors).map_err(|_| None)?;
+        let path =
+            Path::consume(file, tokens, ends_early, containing_token, errors).map_err(|_| None)?;
         let mut consumed = path.consumed();
 
         let refinements = Refinements::try_consume(
+            file,
             &tokens[consumed..],
             restrictions,
             ends_early,
@@ -445,26 +487,27 @@ impl<'a> NamedType<'a> {
         consumed += refinements.consumed();
 
         Ok(NamedType {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             path,
             refinements,
         })
     }
 }
 
-impl<'a> RefType<'a> {
+impl RefType {
     /// Consumes a reference type as a prefix of the given tokens
     ///
     /// This function expects the starting token to be an ampersand (`&`) and will panic if this is
     /// not the case.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<RefType<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<RefType, Option<usize>> {
         // We're expecting '&' at the start:
         assert_token!(
             tokens.first() => "ampersand (`&`)",
@@ -474,6 +517,7 @@ impl<'a> RefType<'a> {
         let mut consumed = 1;
 
         let refinements = Refinements::try_consume(
+            file,
             &tokens[consumed..],
             Restrictions::default(),
             ends_early,
@@ -485,6 +529,7 @@ impl<'a> RefType<'a> {
         consumed += refinements.consumed();
 
         let ty = Type::consume(
+            file,
             &tokens[consumed..],
             ctx,
             restrictions,
@@ -497,34 +542,35 @@ impl<'a> RefType<'a> {
         consumed += ty.consumed();
 
         Ok(RefType {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             refinements,
             ty: Box::new(ty),
         })
     }
 }
 
-impl<'a> MutType<'a> {
+impl MutType {
     /// Consumes a "mut" type as a prefix of the given tokens
     ///
     /// This function will assume that the starting token will either be an exclamation mark (`!`)
     /// or the keyword `mut`. If neither of these are true, it will panic.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<MutType<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<MutType, Option<usize>> {
         let has_not = assert_token!(
             tokens.first() => "not (`!`) or keyword `mut`",
             Ok(t) && TokenKind::Keyword(Kwd::Mut) => None,
-                     TokenKind::Punctuation(Punc::Not) => Some(t),
+                     TokenKind::Punctuation(Punc::Not) => Some(t.span(file)),
         );
 
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         if has_not.is_some() {
             expect!((
@@ -535,6 +581,7 @@ impl<'a> MutType<'a> {
         }
 
         Type::consume(
+            file,
             &tokens[consumed..],
             ctx,
             restrictions,
@@ -544,26 +591,27 @@ impl<'a> MutType<'a> {
         )
         .map_err(p!(Some(c) => Some(c + consumed)))
         .map(|ty| MutType {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             has_not,
             ty: Box::new(ty),
         })
     }
 }
 
-impl<'a> ArrayType<'a> {
+impl ArrayType {
     /// Consumes an array type as a prefix of the given tokens
     ///
     /// This function will assume that the first token will be a sqare-bracket delimited token
     /// tree, and will panic if that is not the case.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ArrayType<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<ArrayType, Option<usize>> {
         let (fst_token, inner, inner_ends_early) = assert_token!(
             tokens.first() => "square-bracket token tree",
             Ok(t) && TokenKind::Tree { delim: Delim::Squares, inner, .. } => (t, inner, false),
@@ -573,6 +621,7 @@ impl<'a> ArrayType<'a> {
         //   "[" Type [ ";" Expr ] "]"
         // So we can plainly do the following pieces:
         let ty = Type::consume(
+            file,
             inner,
             ctx,
             Restrictions::default(),
@@ -588,6 +637,7 @@ impl<'a> ArrayType<'a> {
         // After the type, we're expecting either ";" or the end
         if inner.len() > ty.consumed() {
             make_expect!(
+                file,
                 inner,
                 ty.consumed(),
                 inner_ends_early,
@@ -602,6 +652,7 @@ impl<'a> ArrayType<'a> {
 
             let mut consumed = ty.consumed() + 1;
             length = Expr::consume(
+                file,
                 &inner[consumed..],
                 ExprDelim::Nothing,
                 Restrictions::default(),
@@ -625,7 +676,7 @@ impl<'a> ArrayType<'a> {
             if inner.len() > consumed && !poisoned {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::ArrayTypeInnerEnd,
-                    found: Source::from(&inner[consumed]),
+                    found: Source::from(file, &inner[consumed]),
                 });
 
                 // Like above, we'll just continue if there was an error here
@@ -635,6 +686,7 @@ impl<'a> ArrayType<'a> {
 
         // The final thing we need to do is to check for refinements in the outer token tree!
         let refinements = Refinements::try_consume(
+            file,
             &tokens[1..],
             restrictions,
             ends_early,
@@ -646,7 +698,7 @@ impl<'a> ArrayType<'a> {
         let consumed = 1 + refinements.consumed();
 
         Ok(ArrayType {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             ty: Box::new(ty),
             length,
             refinements,
@@ -655,7 +707,7 @@ impl<'a> ArrayType<'a> {
     }
 }
 
-impl<'a> StructType<'a> {
+impl StructType {
     /// Parses an anonymous struct type from the given inner tokens of a curly brace enclosed token
     /// tree
     ///
@@ -663,12 +715,14 @@ impl<'a> StructType<'a> {
     /// curly-brace delimited token tree; this must be ensured by the caller as it is assumed to be
     /// true elsewhere.
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-        ctx: TypeContext<'a>,
-    ) -> Result<StructType<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+        ctx: TypeContext,
+    ) -> Result<StructType, ()> {
         Type::parse_delimited(
+            file,
             src,
             inner,
             StructTypeField::consume,
@@ -678,37 +732,46 @@ impl<'a> StructType<'a> {
             errors,
         )
         .map(|(fields, poisoned)| StructType {
-            src,
+            src: src.span(file),
             fields,
             poisoned,
         })
     }
 }
 
-impl<'a> StructTypeField<'a> {
+impl StructTypeField {
     /// Consumes a single field of a struct type as a prefix of the given tokens
     ///
     /// This function makes no assumptions about the input
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         ends_early: bool,
-        containing_token: &'a Token<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<StructTypeField<'a>, Option<usize>> {
+        containing_token: &Token,
+        errors: &mut Vec<Error>,
+    ) -> Result<StructTypeField, Option<usize>> {
         // Struct type fields aren't too complicated. They're essentially defined by the following
         // BNF:
         //   StructTypeField = [ Vis ] Ident ":" Type [ "=" Expr ] .
-        let vis = Vis::try_consume(tokens);
+        let vis = Vis::try_consume(file, tokens);
 
         let mut consumed = vis.consumed();
-        make_expect!(tokens, consumed, ends_early, Some(containing_token), errors);
+        make_expect!(
+            file,
+            tokens,
+            consumed,
+            ends_early,
+            Some(containing_token),
+            errors
+        );
 
         let ident_ctx = IdentContext::StructTypeField;
         let name = Ident::parse(
+            file,
             tokens.get(consumed),
             ident_ctx,
-            end_source!(Some(containing_token)),
+            end_source!(file, Some(containing_token)),
             errors,
         )
         .map_err(|()| None)?;
@@ -724,6 +787,7 @@ impl<'a> StructTypeField<'a> {
         // If we get Err(Some(_)), we'll keep trying tp consume tokens so that *we* can return
         // Err(Some(_)) with better accuracy to the caller
         let ty_res = Type::consume(
+            file,
             &tokens[consumed..],
             ctx,
             Restrictions::default(),
@@ -749,6 +813,7 @@ impl<'a> StructTypeField<'a> {
         if let Some(TokenKind::Punctuation(Punc::Eq)) = kind!(tokens)(consumed) {
             consumed += 1;
             let expr = Expr::consume(
+                file,
                 &tokens[consumed..],
                 // While not strictly speaking a struct expression, this is pretty close, so we'll
                 // use it.
@@ -770,7 +835,7 @@ impl<'a> StructTypeField<'a> {
             None => Err(Some(consumed)),
             // Otherwise, everything was fine:
             Some(ty) => Ok(StructTypeField {
-                src: &tokens[..consumed],
+                src: Source::slice_span(file, &tokens[..consumed]),
                 vis,
                 name,
                 ty,
@@ -789,19 +854,21 @@ impl<'a> StructTypeField<'a> {
     }
 }
 
-impl<'a> TupleType<'a> {
+impl TupleType {
     /// Parses a tuple type from the given inner tokens of a parentheses-enclosed token tree
     ///
     /// This function *does not* check that the token it is given as the source is actually a
     /// parenthetical token tree; this must be ensured by the caller as it is assumed to be true
     /// elsewhere.
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-        ctx: TypeContext<'a>,
-    ) -> Result<TupleType<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+        ctx: TypeContext,
+    ) -> Result<TupleType, ()> {
         Type::parse_delimited(
+            file,
             src,
             inner,
             TupleTypeElement::consume,
@@ -811,31 +878,33 @@ impl<'a> TupleType<'a> {
             errors,
         )
         .map(|(elems, poisoned)| TupleType {
-            src,
+            src: src.span(file),
             elems,
             poisoned,
         })
     }
 }
 
-impl<'a> TupleTypeElement<'a> {
+impl TupleTypeElement {
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         ends_early: bool,
-        containing_token: &'a Token<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TupleTypeElement<'a>, Option<usize>> {
+        containing_token: &Token,
+        errors: &mut Vec<Error>,
+    ) -> Result<TupleTypeElement, Option<usize>> {
         // Tuple type elements are pretty simple. They're defined by the following BNF:
         //   [ Vis ] Type
         // See!
         //
         // We'll just breeze through this - not too many comments should be necessary
-        let vis = Vis::try_consume(tokens);
+        let vis = Vis::try_consume(file, tokens);
 
         let mut consumed = vis.consumed();
 
         let ty = Type::consume(
+            file,
             &tokens[consumed..],
             ctx,
             Restrictions::default(),
@@ -848,25 +917,26 @@ impl<'a> TupleTypeElement<'a> {
         consumed += ty.consumed();
 
         Ok(TupleTypeElement {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             vis,
             ty,
         })
     }
 }
 
-impl<'a> EnumType<'a> {
+impl EnumType {
     /// Consumes an `enum` type as a prefix of the given tokens
     ///
     /// This function will assume that the first token is the keyword `enum`, and will panic if
     /// this is not the case.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<EnumType<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<EnumType, Option<usize>> {
         assert_token!(
             tokens.first() => "keyword `enum`",
             Ok(t) && TokenKind::Keyword(Kwd::Enum) => (),
@@ -879,6 +949,7 @@ impl<'a> EnumType<'a> {
                     inner,
                     ..
                 } => Type::parse_delimited(
+                    file,
                     t,
                     inner,
                     EnumVariant::consume,
@@ -889,14 +960,14 @@ impl<'a> EnumType<'a> {
                 )
                 .map_err(|()| None)
                 .map(|(variants, poisoned)| EnumType {
-                    src: &tokens[..2],
+                    src: Source::slice_span(file, &tokens[..2]),
                     variants,
                     poisoned,
                 }),
                 _ => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::EnumTypeCurlies,
-                        found: Source::TokenResult(Ok(t)),
+                        found: Source::token(file, t),
                     });
 
                     Err(None)
@@ -906,7 +977,7 @@ impl<'a> EnumType<'a> {
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::EnumTypeCurlies,
-                    found: Source::TokenResult(Err(*e)),
+                    found: Source::err(file, e),
                 });
 
                 Err(None)
@@ -915,7 +986,7 @@ impl<'a> EnumType<'a> {
                 if ends_early {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::EnumTypeCurlies,
-                        found: end_source!(containing_token),
+                        found: end_source!(file, containing_token),
                     });
                 }
 
@@ -925,28 +996,29 @@ impl<'a> EnumType<'a> {
     }
 }
 
-impl<'a> EnumVariant<'a> {
+impl EnumVariant {
     /// Consumes a single enum variant as a prefix of the given tokens
     ///
     /// This function makes no assumptions about the inputs.
     fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: TypeContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: TypeContext,
         ends_early: bool,
-        containing_token: &'a Token<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<EnumVariant<'a>, Option<usize>> {
+        containing_token: &Token,
+        errors: &mut Vec<Error>,
+    ) -> Result<EnumVariant, Option<usize>> {
         // The BNF for enum variants makes the rest of this function clear:
         //   EnumVariant = [ Vis ] Ident [ Type ] .
 
-        let vis = Vis::try_consume(tokens);
+        let vis = Vis::try_consume(file, tokens);
         let mut consumed = vis.consumed();
 
-        let ident_ctx = IdentContext::EnumVariant;
         let name = Ident::parse(
+            file,
             tokens.get(consumed),
-            ident_ctx,
-            end_source!(Some(containing_token)),
+            IdentContext::EnumVariant,
+            end_source!(file, Some(containing_token)),
             errors,
         )
         .map_err(|()| None)?;
@@ -959,6 +1031,7 @@ impl<'a> EnumVariant<'a> {
         if let Some(Ok(next)) = tokens.get(consumed) {
             if Type::is_starting_token(next) {
                 let t = Type::consume(
+                    file,
                     &tokens[consumed..],
                     ctx,
                     Restrictions::default(),
@@ -974,7 +1047,7 @@ impl<'a> EnumVariant<'a> {
         }
 
         Ok(EnumVariant {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             vis,
             name,
             ty,
@@ -1016,19 +1089,25 @@ impl<'a> EnumVariant<'a> {
 ///            | [ "!" | "?" ] "init"
 ///            | Expr .
 /// ```
-#[derive(Debug, Clone)]
-pub struct Refinements<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub refs: Vec<Refinement<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct Refinements {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub refs: Vec<Refinement>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
+
+    #[consumed(consumed)]
+    consumed: usize,
 }
 
 /// A single refinement; a helper type for [`Refinements`](struct.Refinements.html)
-#[derive(Debug, Clone)]
-pub enum Refinement<'a> {
-    Ref(RefRefinement<'a>),
-    Init(InitRefinement<'a>),
-    Expr(Expr<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Refinement {
+    Ref(RefRefinement),
+    Init(InitRefinement),
+    Expr(Expr),
 }
 
 /// A reference refinement, indicating the value that a reference borrows
@@ -1037,10 +1116,12 @@ pub enum Refinement<'a> {
 /// ```text
 /// RefRefinement = "ref" Expr .
 /// ```
-#[derive(Debug, Clone)]
-pub struct RefRefinement<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RefRefinement {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(expr.consumed() + 1)] // +1 for the "ref" keyword
+    pub expr: Expr,
 }
 
 /// A refinement indicating the initialization status of a value
@@ -1052,11 +1133,14 @@ pub struct RefRefinement<'a> {
 /// Note that, in line with the construction above, either one of `not` or `maybe` may be true, but
 /// never both. For clarification, `maybe` gives the token source of the question mark, if it is
 /// there.
-#[derive(Debug, Clone)]
-pub struct InitRefinement<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub not: Option<&'a Token<'a>>,
-    pub maybe: Option<&'a Token<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct InitRefinement {
+    #[consumed(1)] // We have 1 here to account for "init"
+    pub(super) src: Span,
+    #[consumed(if not.is_some() { 1 } else { 0 })]
+    pub not: Option<Span>,
+    #[consumed(if maybe.is_some() { 1 } else { 0 })]
+    pub maybe: Option<Span>,
 }
 
 /// A collection of generics arguments
@@ -1080,11 +1164,17 @@ pub struct InitRefinement<'a> {
 ///
 /// [`GenericsArg`]: enum.GenericsArg.html
 /// [`try_consume`]: #method.try_consume
-#[derive(Debug, Clone)]
-pub struct GenericsArgs<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub args: Vec<GenericsArg<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GenericsArgs {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub args: Vec<GenericsArg>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
+
+    #[consumed(consumed)]
+    pub(super) consumed: usize,
 }
 
 /// A single generics argument
@@ -1107,12 +1197,12 @@ pub struct GenericsArgs<'a> {
 ///
 /// [`GenericsArgs`]: struct.GenericsArgs.html
 /// [`type_or_expr`]: ../type_or_expr/index.html
-#[derive(Debug, Clone)]
-pub enum GenericsArg<'a> {
-    Type(TypeGenericsArg<'a>),
-    Const(ConstGenericsArg<'a>),
-    Ref(RefGenericsArg<'a>),
-    Ambiguous(AmbiguousGenericsArg<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum GenericsArg {
+    Type(TypeGenericsArg),
+    Const(ConstGenericsArg),
+    Ref(RefGenericsArg),
+    Ambiguous(AmbiguousGenericsArg),
 }
 
 /// A typed generics argument
@@ -1121,11 +1211,13 @@ pub enum GenericsArg<'a> {
 /// ```text
 /// TypeGenericsArg = [ Ident ":" ] Type .
 /// ```
-#[derive(Debug, Clone)]
-pub struct TypeGenericsArg<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Option<Ident<'a>>,
-    pub type_arg: Type<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TypeGenericsArg {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(name.as_ref().map(|id| id.consumed() + 1).unwrap_or(0))] // +1 for ":"
+    pub name: Option<Ident>,
+    pub type_arg: Type,
 }
 
 /// A constant generics argument, using a compile-time-evaluated expression
@@ -1134,11 +1226,13 @@ pub struct TypeGenericsArg<'a> {
 /// ```text
 /// ConstGenericsArg = [ Ident ":" ] Expr .
 /// ```
-#[derive(Debug, Clone)]
-pub struct ConstGenericsArg<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Option<Ident<'a>>,
-    pub value: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ConstGenericsArg {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(name.as_ref().map(|id| id.consumed() + 1).unwrap_or(0))] // +1 for ":"
+    pub name: Option<Ident>,
+    pub value: Expr,
 }
 
 /// A "reference" generics argument
@@ -1147,36 +1241,41 @@ pub struct ConstGenericsArg<'a> {
 /// ```text
 /// RefGenericsArg = "ref" Expr .
 /// ```
-#[derive(Debug, Clone)]
-pub struct RefGenericsArg<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RefGenericsArg {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(expr.consumed() + 1)] // +1 for "ref" keyword
+    pub expr: Expr,
 }
 
 /// A generics argument that may either be a [type] or [const]
 ///
 /// [type]: TypeGenericsArg.html
 /// [const]: ConstGenericsArg.html
-#[derive(Debug, Clone)]
-pub struct AmbiguousGenericsArg<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Option<Ident<'a>>,
-    pub value: TypeOrExpr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct AmbiguousGenericsArg {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(name.as_ref().map(|id| id.consumed() + 1).unwrap_or(0))] // +1 for ":"
+    pub name: Option<Ident>,
+    pub value: TypeOrExpr,
 }
 
-impl<'a> Refinements<'a> {
+impl Refinements {
     /// Attempts to consume refinements as part of a type, additionally given the expression
     /// restrictions it is subject to
     ///
     /// Please note that this function does not handle any ambiguity that may be present when types
     /// are being parsed inside an expression context.
     pub fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<Refinements<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<Refinements>, Option<usize>> {
         match kind!(tokens)(0) {
             Some(TokenKind::Punctuation(Punc::Or)) => (),
             _ => return Ok(None),
@@ -1187,7 +1286,7 @@ impl<'a> Refinements<'a> {
         let mut poisoned = false;
         let mut refs = Vec::new();
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         // NOTE: When this loop breaks, we have set `consumed` without the trailing pipe, even
         // though we *have* asserted that it's there. It makes the loop slightly cleaner
@@ -1200,6 +1299,7 @@ impl<'a> Refinements<'a> {
             }
 
             let res = Refinement::consume(
+                file,
                 &tokens[consumed..],
                 restrictions,
                 ends_early,
@@ -1227,9 +1327,10 @@ impl<'a> Refinements<'a> {
         }
 
         Ok(Some(Refinements {
-            src: &tokens[..consumed + 1],
+            src: Source::slice_span(file, &tokens[..consumed + 1]),
             refs,
             poisoned,
+            consumed,
         }))
     }
 
@@ -1238,13 +1339,14 @@ impl<'a> Refinements<'a> {
     ///
     /// This function will panic if the first token is not a pipe.
     pub fn consume_if_not_expr(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         expr_delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<Refinements<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<Refinements>, Option<usize>> {
         assert_token!(
             tokens.first() => "pipe token (`|`)",
             Ok(t) && TokenKind::Punctuation(Punc::Or) => t,
@@ -1262,6 +1364,7 @@ impl<'a> Refinements<'a> {
         macro_rules! return_refinements {
             () => {{
                 return Refinements::try_consume(
+                    file,
                     tokens,
                     restrictions,
                     ends_early,
@@ -1284,6 +1387,7 @@ impl<'a> Refinements<'a> {
         // being tokens remaining in the input.
         loop {
             let refinement = Refinement::consume(
+                file,
                 &tokens[consumed..],
                 restrictions,
                 ends_early,
@@ -1339,7 +1443,7 @@ impl<'a> Refinements<'a> {
 
         // Otherwise, we'll check if the next token can start or continue an expression
         let can_start = Expr::is_starting_token(next_token);
-        let can_cont = Expr::can_continue_with(&tokens[consumed..], restrictions);
+        let can_cont = Expr::can_continue_with(file, &tokens[consumed..], restrictions);
 
         match (can_start, can_cont) {
             // If the next token can't start an expression, then the trailing pipe couldn't have
@@ -1355,8 +1459,8 @@ impl<'a> Refinements<'a> {
             // ambiguous!
             (true, true) => {
                 errors.push(Error::AmbiguousExprAfterRefinements {
-                    refinements_src: &tokens[..=end_pipe_idx],
-                    ambiguous_token: next_token,
+                    refinements_src: Source::slice_span(file, &tokens[..=end_pipe_idx]),
+                    ambiguous_token: Source::token(file, next_token),
                 });
 
                 return Err(Some(consumed + 1));
@@ -1365,17 +1469,18 @@ impl<'a> Refinements<'a> {
     }
 }
 
-impl<'a> Refinement<'a> {
+impl Refinement {
     /// Consumes a single refinement as a prefix of the tokens
     ///
     /// This function makes no assumptions about its input.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Refinement<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Refinement, Option<usize>> {
         // There are a few types of refinements available:
         //   Refinement = "ref" Expr
         //              | [ "!" | "?" ] "init"
@@ -1386,12 +1491,12 @@ impl<'a> Refinement<'a> {
 
         let make_init = |has_not, has_maybe| {
             let not = match has_not {
-                true => Some(tokens[0].as_ref().unwrap()),
+                true => Some(Source::from(file, &tokens[0]).span),
                 false => None,
             };
 
             let maybe = match has_maybe {
-                true => Some(tokens[0].as_ref().unwrap()),
+                true => Some(Source::from(file, &tokens[0]).span),
                 false => None,
             };
 
@@ -1399,6 +1504,7 @@ impl<'a> Refinement<'a> {
                 true => &tokens[..2],
                 false => &tokens[..1],
             };
+            let src = Source::slice_span(file, src);
 
             Ok(Refinement::Init(InitRefinement { src, not, maybe }))
         };
@@ -1416,6 +1522,7 @@ impl<'a> Refinement<'a> {
             (Some(TokenKind::Keyword(Kwd::Init)), _) => make_init(false, false),
             // Expecting a "ref" refinement - *with* a leading "mut"
             (Some(TokenKind::Keyword(Kwd::Ref)), _) => Expr::consume(
+                file,
                 &tokens[1..],
                 ExprDelim::Comma,
                 restrictions.no_pipe(),
@@ -1425,11 +1532,12 @@ impl<'a> Refinement<'a> {
             )
             .map_err(p!(Some(c) => Some(c + 1)))
             .map(|expr| {
-                let src = &tokens[..expr.consumed() + 1];
+                let src = Source::slice_span(file, &tokens[..expr.consumed() + 1]);
                 Refinement::Ref(RefRefinement { src, expr })
             }),
             // Otherwise, we'll simply expect an expression as our
             _ => Expr::consume(
+                file,
                 tokens,
                 ExprDelim::Comma,
                 restrictions.no_pipe(),
@@ -1442,7 +1550,7 @@ impl<'a> Refinement<'a> {
     }
 }
 
-impl<'a> GenericsArgs<'a> {
+impl GenericsArgs {
     /// Attempts to consume generics arguments as a prefix of the given tokens, failing with
     /// `Ok(None)` if the tokens clearly do not start with generics arguments.
     ///
@@ -1457,15 +1565,16 @@ impl<'a> GenericsArgs<'a> {
     /// Please additionally note that this function should not be used wherever there might be
     /// ambiguity due to these generic arguments.
     pub fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<GenericsArgs<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<GenericsArgs>, Option<usize>> {
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         let leading_angle = match tokens.first() {
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Punctuation(Punc::Lt) => t,
+                TokenKind::Punctuation(Punc::Lt) => Source::token(file, t),
                 _ => return Ok(None),
             },
             _ => return Ok(None),
@@ -1474,7 +1583,7 @@ impl<'a> GenericsArgs<'a> {
         // Otherwise, we'll expect the "inner" portion of generics arguments afterwards
 
         let (args, poisoned, cs) =
-            GenericsArgs::consume_inner(&tokens[1..], ends_early, containing_token, errors)
+            GenericsArgs::consume_inner(file, &tokens[1..], ends_early, containing_token, errors)
                 .map_err(p!(Some(c) => Some(1 + c)))?;
 
         let mut consumed = cs + 1;
@@ -1483,9 +1592,9 @@ impl<'a> GenericsArgs<'a> {
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::GenericsArgCloseAngleBracket {
-                        args_tokens: &tokens[1..consumed],
+                        args_tokens: Source::slice_span(file, &tokens[1..consumed]),
                     },
-                    found: Source::TokenResult(Err(*e)),
+                    found: Source::err(file, e),
                 });
 
                 return Err(None);
@@ -1494,9 +1603,9 @@ impl<'a> GenericsArgs<'a> {
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::GenericsArgCloseAngleBracket {
-                        args_tokens: &tokens[1..consumed],
+                        args_tokens: Source::slice_span(file, &tokens[1..consumed]),
                     },
-                    found: end_source!(containing_token),
+                    found: end_source!(file, containing_token),
                 });
 
                 return Err(None);
@@ -1509,8 +1618,8 @@ impl<'a> GenericsArgs<'a> {
                 {
                     errors.push(Error::GenericsArgsNotEnclosed {
                         leading_angle,
-                        arg: &tokens[1..consumed],
-                        comma: t,
+                        arg: Source::slice_span(file, &tokens[1..consumed]),
+                        comma: Source::token(file, t),
                     });
 
                     return Err(None);
@@ -1518,9 +1627,9 @@ impl<'a> GenericsArgs<'a> {
                 _ => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::GenericsArgCloseAngleBracket {
-                            args_tokens: &tokens[1..consumed],
+                            args_tokens: Source::slice_span(file, &tokens[1..consumed]),
                         },
-                        found: Source::TokenResult(Ok(t)),
+                        found: Source::token(file, t),
                     });
 
                     return Err(None);
@@ -1529,9 +1638,10 @@ impl<'a> GenericsArgs<'a> {
         }
 
         Ok(Some(GenericsArgs {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             args,
             poisoned,
+            consumed,
         }))
     }
 
@@ -1540,11 +1650,12 @@ impl<'a> GenericsArgs<'a> {
     ///
     /// This function makes no expectations of the input.
     pub fn consume_inner(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<(Vec<GenericsArg<'a>>, bool, usize), Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<(Vec<GenericsArg>, bool, usize), Option<usize>> {
         // This function isn't completely trivial (and a lot of it is taken up by various kinds of
         // error handling), so we'll go through the general structure here.
         //
@@ -1556,10 +1667,12 @@ impl<'a> GenericsArgs<'a> {
         // arguments inside. Otherwise, we'll just assume that there's a single generics argument
         // there to parse.
         let mut do_single = || {
-            GenericsArg::consume(tokens, &[], ends_early, containing_token, errors).map(|arg| {
-                let consumed = arg.consumed();
-                (vec![arg], false, consumed)
-            })
+            GenericsArg::consume(file, tokens, &[], ends_early, containing_token, errors).map(
+                |arg| {
+                    let consumed = arg.consumed();
+                    (vec![arg], false, consumed)
+                },
+            )
         };
 
         let (src, inner, inner_ends_early) = match tokens.first() {
@@ -1582,10 +1695,10 @@ impl<'a> GenericsArgs<'a> {
         // a type or an expression.
         if inner.is_empty() {
             let arg = GenericsArg::Ambiguous(AmbiguousGenericsArg {
-                src: &tokens[..1],
+                src: Source::slice_span(file, &tokens[..1]),
                 name: None,
                 value: TypeOrExpr::Tuple(TupleTypeOrExpr {
-                    src,
+                    src: src.span(file),
                     elements: vec![],
                     poisoned: false,
                 }),
@@ -1603,6 +1716,7 @@ impl<'a> GenericsArgs<'a> {
 
         while consumed < inner.len() {
             let res = GenericsArg::consume(
+                file,
                 &inner[consumed..],
                 &inner[..consumed],
                 inner_ends_early,
@@ -1639,7 +1753,7 @@ impl<'a> GenericsArgs<'a> {
                     _ => {
                         errors.push(Error::Expected {
                             kind: ExpectedKind::GenericsArgDelim,
-                            found: Source::TokenResult(Ok(t)),
+                            found: Source::token(file, t),
                         });
 
                         poisoned = true;
@@ -1649,7 +1763,7 @@ impl<'a> GenericsArgs<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::GenericsArgDelim,
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     poisoned = true;
@@ -1739,7 +1853,7 @@ fn might_be_generics_arg(_tokens: TokenSlice) -> bool {
     true
 }
 
-impl<'a> GenericsArg<'a> {
+impl GenericsArg {
     /// Consumes a single generics argument as a prefix of the tokens given
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
@@ -1751,12 +1865,13 @@ impl<'a> GenericsArg<'a> {
     ///
     /// [`GenericsArgs::consume`]: struct.GenericsArgs.html#consume
     fn consume(
-        tokens: TokenSlice<'a>,
-        prev_tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        prev_tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericsArg<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<GenericsArg, Option<usize>> {
         let mut consumed = 0;
 
         // Some of generics args (i.e. consts and types) may be labeled with a name.
@@ -1765,44 +1880,50 @@ impl<'a> GenericsArg<'a> {
                 consumed += 2;
 
                 Some(Ident {
-                    src: &tokens[0].as_ref().unwrap(),
-                    name,
+                    src: Source::from(file, &tokens[0]).span,
+                    name: (*name).into(),
                 })
             }
             _ => None,
         };
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let res = expect!((
             Ok(_),
             // Reference generics args can't be named
             TokenKind::Keyword(Kwd::Ref) if name.is_some() => {
                 errors.push(Error::NamedReferenceGenericsArg {
-                    name: name.unwrap(),
-                    ref_kwd: &tokens[consumed].as_ref().unwrap(),
+                    name: name.as_ref().unwrap().src,
+                    ref_kwd: Source::from(file, &tokens[consumed]),
                 });
 
                 Err(None)
             },
             TokenKind::Keyword(Kwd::Ref) => {
-                return RefGenericsArg::consume(tokens, ends_early, containing_token, errors)
+                return RefGenericsArg::consume(file, tokens, ends_early, containing_token, errors)
                     .map_err(|_| None)
                     .map(GenericsArg::Ref);
             },
             _ => TypeOrExpr::consume(
+                file,
                 &tokens[consumed..],
                 ExprDelim::FnArgs,
                 Restrictions::default().no_angle_bracket(),
                 TypeContext::GenericsArg {
-                    prev_tokens: &tokens[..consumed],
-                    name: name.map(|n| n.src),
+                    prev_tokens: match consumed {
+                        0 => None,
+                        _ => Some(Source::slice_span(file, &tokens[..consumed])),
+                    },
+                    name: name.as_ref().map(|n| n.src),
                 },
                 ends_early,
                 containing_token,
                 errors
             ),
-            @else(return None) => ExpectedKind::GenericsArg { prev_tokens },
+            @else(return None) => ExpectedKind::GenericsArg {
+                prev_tokens: Source::slice_span(file, prev_tokens),
+            },
         ));
 
         match res {
@@ -1813,18 +1934,18 @@ impl<'a> GenericsArg<'a> {
 
                 Ok(match type_or_expr {
                     MaybeTypeOrExpr::Type(ty) => GenericsArg::Type(TypeGenericsArg {
-                        src: &tokens[..consumed],
+                        src: Source::slice_span(file, &tokens[..consumed]),
                         name,
                         type_arg: ty,
                     }),
                     MaybeTypeOrExpr::Expr(ex) => GenericsArg::Const(ConstGenericsArg {
-                        src: &tokens[..consumed],
+                        src: Source::slice_span(file, &tokens[..consumed]),
                         name,
                         value: ex,
                     }),
                     MaybeTypeOrExpr::Ambiguous(value) => {
                         GenericsArg::Ambiguous(AmbiguousGenericsArg {
-                            src: &tokens[..consumed],
+                            src: Source::slice_span(file, &tokens[..consumed]),
                             name,
                             value,
                         })
@@ -1834,20 +1955,18 @@ impl<'a> GenericsArg<'a> {
         }
     }
 
-    /// Returns the source of the generics argument; used for generating error messages
-    pub(super) fn src(&self) -> TokenSlice<'a> {
-        use GenericsArg::*;
-
+    /// Returns the source `Span` corresponding to the generics argument
+    pub fn span(&self) -> Span {
         match self {
-            Type(t) => t.src,
-            Const(c) => c.src,
-            Ref(r) => r.src,
-            Ambiguous(a) => a.src,
+            GenericsArg::Type(arg) => arg.src,
+            GenericsArg::Const(arg) => arg.src,
+            GenericsArg::Ref(arg) => arg.src,
+            GenericsArg::Ambiguous(arg) => arg.src,
         }
     }
 }
 
-impl<'a> RefGenericsArg<'a> {
+impl RefGenericsArg {
     /// Consumes a single `ref` generics argument as a prefix of the input
     ///
     /// Because this function is only ever called as a helper to [`GenericsArg::consume`], this
@@ -1858,11 +1977,12 @@ impl<'a> RefGenericsArg<'a> {
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<RefGenericsArg<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<RefGenericsArg, Option<usize>> {
         // We'll just assert that it *was* the `ref` keyword here.
         assert_token!(
             tokens.first() => "keyword `ref`",
@@ -1870,6 +1990,7 @@ impl<'a> RefGenericsArg<'a> {
         );
 
         let expr = Expr::consume(
+            file,
             &tokens[1..],
             // We use `FnArgs` as the delimiter here because it (roughly) has the same properties
             // as function arguments, and that's all that we really need for the context of
@@ -1884,7 +2005,7 @@ impl<'a> RefGenericsArg<'a> {
         let consumed = expr.consumed() + 1;
 
         Ok(RefGenericsArg {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             expr,
         })
     }

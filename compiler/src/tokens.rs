@@ -511,6 +511,8 @@ impl SimpleToken<'_> {
     ///
     /// This function does not provide any failsafes if the source file does not actually contain
     /// the given token.
+    ///
+    /// [`Span`]: ../files/struct.Span.html
     pub fn span_in(&self, src_file: &FileInfo) -> Span {
         let file_byte_addr = &src_file.content as &str as *const str as *const u8 as usize;
         let start_byte_addr = self.src as *const str as *const u8 as usize;

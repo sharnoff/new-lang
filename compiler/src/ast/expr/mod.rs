@@ -4,6 +4,7 @@
 // this module.
 use super::*;
 use crate::tokens::LiteralKind;
+use crate::files::{Span, FileInfo};
 
 mod stack;
 use stack::Stack;
@@ -14,25 +15,25 @@ pub use restrictions::Restrictions;
 // `Expr` variants                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, Clone)]
-pub enum Expr<'a> {
-    Literal(Literal<'a>),
-    Named(PathComponent<'a>),
-    PrefixOp(Box<PrefixOpExpr<'a>>),
-    BinOp(Box<BinOpExpr<'a>>),
-    PostfixOp(PostfixOpExpr<'a>),
-    Struct(StructExpr<'a>),
-    Array(ArrayExpr<'a>),
-    Tuple(TupleExpr<'a>),
-    Block(BlockExpr<'a>),
-    AmbiguousBlock(AmbiguousBlockExpr<'a>),
-    For(ForExpr<'a>),
-    While(WhileExpr<'a>),
-    DoWhile(DoWhileExpr<'a>),
-    Loop(LoopExpr<'a>),
-    If(IfExpr<'a>),
-    Match(MatchExpr<'a>),
-    Continue(ContinueExpr<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Expr {
+    Literal(Literal),
+    Named(PathComponent),
+    PrefixOp(Box<PrefixOpExpr>),
+    BinOp(Box<BinOpExpr>),
+    PostfixOp(PostfixOpExpr),
+    Struct(StructExpr),
+    Array(ArrayExpr),
+    Tuple(TupleExpr),
+    Block(BlockExpr),
+    AmbiguousBlock(AmbiguousBlockExpr),
+    For(ForExpr),
+    While(WhileExpr),
+    DoWhile(DoWhileExpr),
+    Loop(LoopExpr),
+    If(IfExpr),
+    Match(MatchExpr),
+    Continue(ContinueExpr),
 }
 
 /// The types of delimeters that may occur around expression parsing
@@ -76,10 +77,13 @@ pub enum ExprDelim {
 ///
 /// [`Expr::consume_delimited`]: enum.Expr.html#method.consume_delimited
 /// [`ExprDelim`]: enum.ExprDelim.html
-pub struct Delimited<'a> {
-    pub(super) src: TokenSlice<'a>,
-    name: Option<Ident<'a>>,
-    value: Option<Expr<'a>>,
+#[derive(Consumed)]
+pub struct Delimited {
+    // The middle ":"
+    #[consumed(if name.is_some() && value.is_some() { 1 } else { 0 })]
+    pub(super) src: Span,
+    name: Option<Ident>,
+    value: Option<Expr>,
 }
 
 /// A prefix-operator expression, given by the operator and the right-hand-side expression
@@ -97,12 +101,14 @@ pub struct Delimited<'a> {
 ///
 /// [`PrefixOp`]: enum.PrefixOp.html
 /// [`Expr`]: enum.Expr.html
-#[derive(Debug, Clone)]
-pub struct PrefixOpExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub op_src: TokenSlice<'a>,
-    pub op: PrefixOp<'a>,
-    pub expr: Box<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct PrefixOpExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub op_src: Span,
+    pub op: PrefixOp,
+    pub expr: Box<Expr>,
 }
 
 /// The different prefix operators available for expressions
@@ -113,21 +119,28 @@ pub struct PrefixOpExpr<'a> {
 /// ```
 ///
 /// For more information, see [`PrefixOpExpr`](struct.PrefixOpExpr.html).
-#[derive(Debug, Clone)]
-pub enum PrefixOp<'a> {
+#[derive(Debug, Clone, Consumed)]
+pub enum PrefixOp {
     /// `"!"`
+    #[consumed(1)]
     Not,
     /// `"-"`
+    #[consumed(1)]
     Minus,
     /// `"&" [ "mut" ]`
+    #[consumed(if *is_mut { 2 } else { 1 })]
     Ref { is_mut: bool },
     /// `"*"`
+    #[consumed(1)]
     Deref,
     /// "let" Pattern [ ":" Type ] "="
-    Let(Pattern<'a>, Option<Type<'a>>),
+    #[consumed(1 + _0.consumed() + _1.as_ref().map(|t| t.consumed() + 1).unwrap_or(0) + 1)]
+    Let(Pattern, Option<Type>),
     /// `"break"`
+    #[consumed(1)]
     Break,
     /// `"return"`
+    #[consumed(1)]
     Return,
 }
 
@@ -153,13 +166,15 @@ pub enum PrefixOp<'a> {
 /// [`BinOp`]: enum.BinOp.html
 /// [`BindingPower`]: enum.BindingPower.html
 /// [`Expr`]: enum.Expr.html
-#[derive(Debug, Clone)]
-pub struct BinOpExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub lhs: Expr<'a>,
-    pub op_src: TokenSlice<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct BinOpExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub lhs: Expr,
+    #[consumed(@ignore)]
+    pub op_src: Span,
     pub op: BinOp,
-    pub rhs: Expr<'a>,
+    pub rhs: Expr,
 }
 
 /// The different binary operators available for expressions
@@ -170,7 +185,7 @@ pub struct BinOpExpr<'a> {
 ///       | "&" | "|" | "^" | "<<" | ">>" | "&&" | "||"
 ///       | "<" | ">" | "<=" | ">=" | "==" | "!=" .
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum BinOp {
     /// `+`
     Add,
@@ -254,12 +269,14 @@ pub enum BinOp {
 ///
 /// [`PostfixOp`]: enum.PostfixOp.html
 /// [`Expr`]: enum.Expr.html
-#[derive(Debug, Clone)]
-pub struct PostfixOpExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Box<Expr<'a>>,
-    pub op: PostfixOp<'a>,
-    pub op_src: TokenSlice<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct PostfixOpExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub expr: Box<Expr>,
+    pub op: PostfixOp,
+    #[consumed(@ignore)]
+    pub op_src: Span,
 }
 
 /// The different types of postfix operators available
@@ -268,27 +285,35 @@ pub struct PostfixOpExpr<'a> {
 /// [`PostfixOpExpr`].
 ///
 /// [`PostfixOpExpr`]: struct.PostfixOpExpr.html
-#[derive(Debug, Clone)]
-pub enum PostfixOp<'a> {
+#[derive(Debug, Clone, Consumed)]
+pub enum PostfixOp {
     /// `"[" Expr "]"`
     ///
     /// The boolean indicates whether the expression may have been poisoned
-    Index(Box<Expr<'a>>, bool),
+    #[consumed(1)]
+    Index(Box<Expr>, bool),
     /// `"." Ident [ GenericsArgs ]`
-    Access(PathComponent<'a>),
+    #[consumed(_0.consumed() + 1)]
+    Access(PathComponent),
     /// `"." IntLiteral`
-    TupleIndex(IntLiteral<'a>),
+    #[consumed(_0.consumed() + 1)]
+    TupleIndex(IntLiteral),
     /// `"(" [ FnArg { "," FnArg } [ "," ] ] ")"`
     ///
     /// The boolean indicates whether the values have been poisoned
-    FnCall(Vec<FnArg<'a>>, bool),
+    #[consumed(1)]
+    FnCall(Vec<FnArg>, bool),
     /// `StructExpr`
-    NamedStruct(StructExpr<'a>),
+    #[consumed(1)]
+    NamedStruct(StructExpr),
     /// `"~" Type`
-    TypeBinding(Box<Type<'a>>),
+    #[consumed(_0.consumed() + 1)]
+    TypeBinding(Box<Type>),
     /// `"is" Pattern`
-    IsPattern(Pattern<'a>),
+    #[consumed(_0.consumed() + 1)]
+    IsPattern(Pattern),
     /// `"?"`
+    #[consumed(1)]
     Try,
 }
 
@@ -303,11 +328,13 @@ pub enum PostfixOp<'a> {
 /// complex to be described here.
 ///
 /// [`PostfixOp::FnCall`]: enum.PostfixOp.html#variant.FnCall
-#[derive(Debug, Clone)]
-pub struct FnArg<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Option<Ident<'a>>,
-    pub value: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct FnArg {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(name.as_ref().map(|i| i.consumed() + 1).unwrap_or(0))] // +1 for trailing ":"
+    pub name: Option<Ident>,
+    pub value: Expr,
 }
 
 /// An anonymous struct expression, given on its own as an atom or available as a postfix operator
@@ -330,10 +357,13 @@ pub struct FnArg<'a> {
 /// construct may already be either a struct type or expression.
 ///
 /// [`StructFieldExpr`]: struct.StructFieldExpr.html
-#[derive(Debug, Clone)]
-pub struct StructExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub fields: Vec<StructFieldExpr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub fields: Vec<StructFieldExpr>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -345,26 +375,31 @@ pub struct StructExpr<'a> {
 /// ```
 ///
 /// For more information, see [`StructExpr`](#struct.StructExpr.html).
-#[derive(Debug, Clone)]
-pub struct StructFieldExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub value: Option<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructFieldExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub name: Ident,
+    #[consumed(value.as_ref().map(|i| i.consumed() + 1).unwrap_or(0))] // +1 for leading ":"
+    pub value: Option<Expr>,
 }
 
 /// An array literal, given by a comma-separated list of the elements
 ///
 /// The BNF definition for these is:
 /// ```text
-/// ArrayExpr = "[" [ Expr { "," Expr } [ "," ] ] "]
+/// ArrayExpr = "[" [ Expr { "," Expr } [ "," ] ] "]" .
 /// ```
 ///
 /// Like tuple literals, possible syntax ambiguities here mean that we might not know exactly how
 /// many elements are represented here before type checking.
-#[derive(Debug, Clone)]
-pub struct ArrayExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub values: Vec<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ArrayExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub values: Vec<Expr>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -379,10 +414,13 @@ pub struct ArrayExpr<'a> {
 /// many elements are represented here before type checking.
 ///
 /// [array literals]: struct.ArrayExpr.html
-#[derive(Debug, Clone)]
-pub struct TupleExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub values: Vec<Expr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TupleExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub values: Vec<Expr>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -393,11 +431,15 @@ pub struct TupleExpr<'a> {
 /// ```text
 /// BlockExpr = "{" { Stmt } [ Expr ] "}" .
 /// ```
-#[derive(Debug, Clone)]
-pub struct BlockExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub stmts: Vec<Stmt<'a>>,
-    pub tail: Option<Box<Expr<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct BlockExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub stmts: Vec<Stmt>,
+    #[consumed(@ignore)]
+    pub tail: Option<Box<Expr>>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -409,12 +451,13 @@ pub struct BlockExpr<'a> {
 ///      | Expr ";"
 ///      | Item
 /// ```
-#[derive(Debug, Clone)]
-pub enum Stmt<'a> {
-    BigExpr(Expr<'a>),
-    Little(LittleExpr<'a>),
-    Item(Item<'a>),
-    UnnecessarySemi(&'a Token<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Stmt {
+    BigExpr(Expr),
+    Little(LittleExpr),
+    Item(Item),
+    #[consumed(1)]
+    UnnecessarySemi(Span),
 }
 
 /// This is a thin wrapper type around a semicolon-terminated expression used as a statement so
@@ -422,12 +465,14 @@ pub enum Stmt<'a> {
 ///
 /// Please note that in certain conditions, the semicolon may *not* be included - this may occur
 /// with missing semicolons where we still want to produce the expression that we parsed.
-#[derive(Debug, Clone)]
-pub struct LittleExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct LittleExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub expr: Expr,
     /// A marker to indicate whether the expression may have been poisoned by lacking a trailing
     /// semicolon where one was expected
+    #[consumed(if *poisoned { 0 } else { 1 })]
     pub poisoned: bool,
 }
 
@@ -438,10 +483,12 @@ pub struct LittleExpr<'a> {
 /// name abbreviation OR a block expression where the tail expression is the single identifier.
 ///
 /// It is represented by the containing token.
-#[derive(Debug, Clone)]
-pub struct AmbiguousBlockExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub name: Option<Ident<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct AmbiguousBlockExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+    #[consumed(@ignore)]
+    pub name: Option<Ident>,
 }
 
 /// A single `for` expression for loops with iterators
@@ -455,13 +502,15 @@ pub struct AmbiguousBlockExpr<'a> {
 ///
 /// Note that `for` expressions are part of the `BigExpr` group, which allows expressions in
 /// certain places - e.g. inside an `else` branch or as a statement (without a trailing `;`).
-#[derive(Debug, Clone)]
-pub struct ForExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub pat: Pattern<'a>,
-    pub iter: Box<Expr<'a>>,
-    pub body: BlockExpr<'a>,
-    pub else_branch: Option<Box<ElseBranch<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ForExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1 + pat.consumed() + 1)] // "for" pat "in"
+    pub pat: Pattern,
+    pub iter: Box<Expr>,
+    pub body: BlockExpr,
+    pub else_branch: Option<Box<ElseBranch>>,
 }
 
 /// Conditional loops
@@ -476,12 +525,14 @@ pub struct ForExpr<'a> {
 /// breaking out of it), then the `else` branch will not be executed.
 ///
 /// Note that `while` expressions are part of the `BigExpr` group.
-#[derive(Debug, Clone)]
-pub struct WhileExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub condition: Box<Expr<'a>>,
-    pub body: BlockExpr<'a>,
-    pub else_branch: Option<Box<ElseBranch<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct WhileExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1 + condition.consumed())] // +1 for leading "while" keyword
+    pub condition: Box<Expr>,
+    pub body: BlockExpr,
+    pub else_branch: Option<Box<ElseBranch>>,
 }
 
 /// "Do-while" loops
@@ -494,12 +545,14 @@ pub struct WhileExpr<'a> {
 /// ```
 ///
 /// [else branch]: struct.ElseBranch.html
-#[derive(Debug, Clone)]
-pub struct DoWhileExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub body: BlockExpr<'a>,
-    pub pred: Box<Expr<'a>>,
-    pub else_branch: Option<Box<ElseBranch<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct DoWhileExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1 + body.consumed() + 1)] // "do" body "while"
+    pub body: BlockExpr,
+    pub pred: Box<Expr>,
+    pub else_branch: Option<Box<ElseBranch>>,
 }
 
 /// Infinite loops
@@ -512,10 +565,12 @@ pub struct DoWhileExpr<'a> {
 ///
 /// Because there cannot be a condition for these loops, there is also no corresponding else branch
 /// permitted.
-#[derive(Debug, Clone)]
-pub struct LoopExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub body: BlockExpr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct LoopExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(body.consumed() + 1)]
+    pub body: BlockExpr,
 }
 
 /// Conditional `if` expressions
@@ -527,12 +582,14 @@ pub struct LoopExpr<'a> {
 /// ```text
 /// IfExpr = "if" Expr* BlockExpr [ "else" BigExpr ] .
 /// ```
-#[derive(Debug, Clone)]
-pub struct IfExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub condition: Box<Expr<'a>>,
-    pub body: BlockExpr<'a>,
-    pub else_branch: Option<Box<ElseBranch<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct IfExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1 + condition.consumed())] // +1 for leading "if" keyword
+    pub condition: Box<Expr>,
+    pub body: BlockExpr,
+    pub else_branch: Option<Box<ElseBranch>>,
 }
 
 /// `match` expressions
@@ -544,30 +601,38 @@ pub struct IfExpr<'a> {
 /// MatchExpr = "match" Expr "{" { MatchArm } "}" .
 /// MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr "," | BigExpr ) .
 /// ```
-#[derive(Debug, Clone)]
-pub struct MatchExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Box<Expr<'a>>,
-    pub arms: Vec<MatchArm<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MatchExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(1 + expr.consumed())] // +1 for leading "match" keyword
+    pub expr: Box<Expr>,
+    #[consumed(1)]
+    pub arms: Vec<MatchArm>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
 /// A single `match` arm; a helper type for [`MatchExpr`](#struct.MatchExpr.html)
-#[derive(Debug, Clone)]
-pub struct MatchArm<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub pat: Pattern<'a>,
-    pub cond: Option<Expr<'a>>,
-    pub eval: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MatchArm {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(pat.consumed() + 1)] // +1 for trailing "=>"
+    pub pat: Pattern,
+    #[consumed(cond.as_ref().map(|e| 1 + e.consumed()).unwrap_or(0))] // +1 for "if"
+    pub cond: Option<Expr>,
+    pub eval: Expr,
 }
 
 /// A `continue` expression, to go to the next iteration of a loop
 ///
 /// This is essentially a wrapper type for the single-token source (the keyword `continue`), as a
 /// placeholder for more complex syntax that may be added later.
-#[derive(Debug, Clone)]
-pub struct ContinueExpr<'a> {
-    pub(super) src: &'a Token<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ContinueExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
 }
 
 binding_power! {
@@ -682,20 +747,22 @@ enum Fixity {
     Right,
 }
 
-impl<'a> Expr<'a> {
+impl Expr {
     /// Consumes a single expression, within the given delimited context for the expression
     ///
     /// The additional boolean flag `allow_angle_bracket` is for disallowing comparison (and
     /// bitshifts) in single-expression generics arguments.
     pub fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Expr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Expr, Option<usize>> {
         Expr::consume_until(
+            file,
             tokens,
             |_| false,
             delim,
@@ -710,18 +777,19 @@ impl<'a> Expr<'a> {
     ///
     /// Note that this does not affect the behavior on ending parsing due to
     fn consume_until(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         is_done: impl Fn(&Stack) -> bool,
         delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Expr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Expr, Option<usize>> {
         let is_done = |stack: &Stack| {
             if is_done(stack) {
                 return true;
-            } else if let Some((_, ex)) = stack.last_expr.as_ref() {
+            } else if let Some(ex) = stack.last_expr.as_ref() {
                 return match ex {
                     Expr::DoWhile(_) => true,
                     _ => false,
@@ -731,7 +799,7 @@ impl<'a> Expr<'a> {
             false
         };
 
-        let mut stack = Stack::new(tokens);
+        let mut stack = Stack::new();
         let mut consumed = 0;
 
         loop {
@@ -744,6 +812,7 @@ impl<'a> Expr<'a> {
             let res = match stack.expecting() {
                 stack::Expecting::AtomOrPrefix => Expr::try_consume_atom_or_prefix(
                     &mut stack,
+                    file,
                     src,
                     consumed,
                     delim,
@@ -756,6 +825,7 @@ impl<'a> Expr<'a> {
                     debug_assert!(!stack.is_empty());
                     Expr::try_consume_binop_or_postfix(
                         &mut stack,
+                        file,
                         src,
                         consumed,
                         delim,
@@ -772,10 +842,10 @@ impl<'a> Expr<'a> {
                 Ok(None) if stack.is_empty() => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::ExprLhs,
-                        found: tokens
-                            .get(consumed)
-                            .map(Source::from)
-                            .unwrap_or_else(|| end_source!(containing_token)),
+                        found: match tokens.get(consumed) {
+                            Some(res) => Source::from(file, res),
+                            None => end_source!(file, containing_token),
+                        }
                     });
 
                     return Err(None);
@@ -801,25 +871,26 @@ impl<'a> Expr<'a> {
     /// that were consumed in the event of an error; a return of `Err(None)` indicates that parsing
     /// within the current token tree should immediately stop.
     fn try_consume_atom_or_prefix(
-        stack: &mut Stack<'a>,
-        tokens: TokenSlice<'a>,
+        stack: &mut Stack,
+        file: &FileInfo,
+        tokens: TokenSlice,
         already_consumed: usize,
         delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
     ) -> Result<Option<usize>, Option<usize>> {
         match tokens.first() {
             Some(Err(_)) | None => Ok(None),
             Some(Ok(_)) => {
                 // First, we'll see if we can parse a prefix operator here
-                let res = PrefixOp::try_consume(tokens, ends_early, containing_token, errors);
+                let res = PrefixOp::try_consume(file, tokens, ends_early, containing_token, errors);
                 match res {
                     Ok(None) => (),
                     Ok(Some((op, op_src))) => {
-                        let consumed = op_src.len();
-                        stack.push_prefix(already_consumed, op, op_src);
+                        let consumed = op.consumed();
+                        stack.push_prefix(op, op_src);
                         return Ok(Some(consumed));
                     }
                     Err(e) => return Err(e),
@@ -828,6 +899,7 @@ impl<'a> Expr<'a> {
                 // If we can't, we'll try to parse an "atomic" expression - these can be loosely
                 // defined as all of the expression types that don't involve operators.
                 let res = Expr::try_consume_atom(
+                    file,
                     tokens,
                     restrictions.with_do_while(DoWhileExpr::is_allowed(stack)),
                     delim,
@@ -839,7 +911,7 @@ impl<'a> Expr<'a> {
                     Ok(None) => (),
                     Ok(Some(atom)) => {
                         let consumed = atom.consumed();
-                        stack.push_atom(already_consumed, atom);
+                        stack.push_atom(atom);
                         return Ok(Some(consumed));
                     }
                     Err(e) => return Err(e),
@@ -858,13 +930,14 @@ impl<'a> Expr<'a> {
     /// `already_consumed` indicates the place in the original consumed expression `tokens` starts,
     /// in order for us to pass it along to the stack values.
     fn try_consume_atom(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
         delim: ExprDelim,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<Expr<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<Expr>, Option<usize>> {
         // Atomic expressions are defined as any of:
         //   AtomicExpr = Literal | PathComponent | StructExpr | ArrayExpr | TupleExpr | BlockExpr
         //              | ForExpr | WhileExpr | LoopExpr | IfExpr | MatchExpr | DoWhileExpr
@@ -881,7 +954,7 @@ impl<'a> Expr<'a> {
         // A helper macro for some of the repetetive cases near the bottom of the match expression
         macro_rules! consume {
             ($ty:ident, $var:ident) => {{
-                $ty::consume(tokens, ends_early, containing_token, errors)
+                $ty::consume(file, tokens, ends_early, containing_token, errors)
                     .map(|e| Some(Expr::$var(e)))
             }};
         }
@@ -892,11 +965,12 @@ impl<'a> Expr<'a> {
             Some(Ok(fst_token)) => match &fst_token.kind {
                 // Literal
                 TokenKind::Literal(_, _) => {
-                    Literal::consume(tokens).map(|e| Some(Expr::Literal(e)))
+                    Literal::consume(file, tokens).map(|e| Some(Expr::Literal(e)))
                 }
 
                 // Named
                 TokenKind::Ident(_) => Expr::consume_path_component(
+                    file,
                     tokens,
                     delim,
                     ends_early,
@@ -910,7 +984,7 @@ impl<'a> Expr<'a> {
                     delim: Curlies,
                     inner,
                     ..
-                } => Expr::parse_curly_block(fst_token, inner, errors, tokens)
+                } => Expr::parse_curly_block(file, fst_token, inner, errors, tokens)
                     .map(Some)
                     .map_err(|()| Some(1)),
 
@@ -919,7 +993,7 @@ impl<'a> Expr<'a> {
                     delim: Squares,
                     inner,
                     ..
-                } => ArrayExpr::parse(fst_token, inner, errors)
+                } => ArrayExpr::parse(file, fst_token, inner, errors)
                     .map(|e| Some(Expr::Array(e)))
                     .map_err(|()| Some(1)),
 
@@ -928,7 +1002,7 @@ impl<'a> Expr<'a> {
                     delim: Parens,
                     inner,
                     ..
-                } => TupleExpr::parse(fst_token, inner, errors)
+                } => TupleExpr::parse(file, fst_token, inner, errors)
                     .map(|e| Some(Expr::Tuple(e)))
                     .map_err(|()| Some(1)),
 
@@ -941,7 +1015,7 @@ impl<'a> Expr<'a> {
                     if !restrictions.allows_else_branch() =>
                 {
                     errors.push(Error::PotentialElseDisallowed {
-                        src: fst_token,
+                        src: Source::token(file, fst_token),
                         kwd: *kwd,
                     });
 
@@ -957,7 +1031,7 @@ impl<'a> Expr<'a> {
 
                 TokenKind::Keyword(Kwd::Do) if !restrictions.allow_do_while => {
                     errors.push(Error::DoWhileDisallowed {
-                        do_token: fst_token,
+                        do_token: Source::token(file, fst_token),
                     });
 
                     Err(None)
@@ -976,11 +1050,12 @@ impl<'a> Expr<'a> {
     /// depending on the content of the block. In ambiguous cases (e.g. when we have the input
     /// `{ x }`), `Expr::AmbiguousBlock` is returned instead.
     fn parse_curly_block(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-        outer_src: TokenSlice<'a>,
-    ) -> Result<Expr<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+        outer_src: TokenSlice,
+    ) -> Result<Expr, ()> {
         let kinds = inner
             .iter()
             .take_while(|res| res.is_ok())
@@ -993,28 +1068,28 @@ impl<'a> Expr<'a> {
         match &kinds as &[_] {
             // There's two fully ambiguous cases. The first is when there's nothing inside of the
             // block...
-            [] => Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src, name: None })),
+            [] => Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src: src.span(file), name: None })),
             // ... and the second is when there's just a single identifier inside
             [&TokenKind::Ident(name)] => {
                 let name = Some(Ident {
-                    src: inner[0].as_ref().unwrap(),
-                    name,
+                    src: Source::from(file, &inner[0]).span,
+                    name: (*name).into(),
                 });
 
-                Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src, name }))
+                Ok(Expr::AmbiguousBlock(AmbiguousBlockExpr { src: src.span(file), name }))
             }
 
             // If the second token is either a colon or a comma, it must be a struct instantiation
             // that we're parsing. We'll use `StructFieldsExpr::parse` to do so.
             [TokenKind::Ident(_), Punctuation(Punc::Colon)]
             | [TokenKind::Ident(_), Punctuation(Punc::Comma)] => {
-                StructExpr::parse(src, inner, errors).map(Expr::Struct)
+                StructExpr::parse(file, src, inner, errors).map(Expr::Struct)
             }
 
             // Otherwise, this is *most likely* a block expression (if not, it's invalid).
             // We'll give EOF as the source because it's only used in cases where the token source
             // is None, which we can clearly see is not the case here.
-            _ => BlockExpr::parse(outer_src.first(), false, Source::EOF, errors).map(Expr::Block),
+            _ => BlockExpr::parse(file, outer_src.first(), false, Source::eof(file), errors).map(Expr::Block),
         }
     }
 
@@ -1026,15 +1101,16 @@ impl<'a> Expr<'a> {
     /// The delimited context here is provided so that better error messages can be given on
     /// failure. (NOTE: Currently unimplemented)
     pub(super) fn consume_path_component(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         _delim: ExprDelim,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<PathComponent<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<PathComponent, Option<usize>> {
         let name = assert_token!(
             tokens.first() => "identifier",
-            Ok(t) && TokenKind::Ident(name) => Ident { src: t, name },
+            Ok(t) && TokenKind::Ident(name) => Ident { src: t.span(file), name: (*name).into() },
         );
 
         // We'll only attempt to consume generics arguments if we have an angle bracket after the
@@ -1045,7 +1121,7 @@ impl<'a> Expr<'a> {
         macro_rules! return_name {
             () => {{
                 return Ok(PathComponent {
-                    src: &tokens[..1],
+                    src: Source::slice_span(file, &tokens[..1]),
                     name,
                     generics_args: None,
                 });
@@ -1059,7 +1135,7 @@ impl<'a> Expr<'a> {
         // Essentially: We'll only continue (and try to parse generics args) if we find the
         // less-than binary operator. Other operators, like "<=" or "<<" cannot be used because the
         // trailing "<" or "=" can't start an expression.
-        match BinOp::try_consume(&tokens[1..], Restrictions::default()) {
+        match BinOp::try_consume(file, &tokens[1..], Restrictions::default()) {
             Some((BinOp::Lt, _)) => (),
             _ => return_name!(),
         }
@@ -1079,6 +1155,7 @@ impl<'a> Expr<'a> {
         // To do this, we'll create `local_errors` so that we only add errors to the main list if
         // we use the output of `GenericsArgs::consume_inner`.
         let generics_args_res = GenericsArgs::consume_inner(
+            file,
             &tokens[consumed..],
             ends_early,
             containing_token,
@@ -1111,7 +1188,7 @@ impl<'a> Expr<'a> {
         // a binary operator that *starts* with a closing angle-bracket but isn't exactly ">", the
         // syntax is ambiguous.
 
-        match BinOp::try_consume(&tokens[consumed..], Restrictions::default()) {
+        match BinOp::try_consume(file, &tokens[consumed..], Restrictions::default()) {
             // ">>"
             Some((BinOp::Shr, op_src))
             // ">="
@@ -1126,7 +1203,7 @@ impl<'a> Expr<'a> {
                 // generics arguments as consumed when we return.
                 errors.extend(local_errors);
                 errors.push(Error::AmbiguousCloseGenerics {
-                    path: &tokens[..consumed],
+                    path: Source::slice_span(file, &tokens[..consumed]),
                     op_src,
                 });
 
@@ -1143,12 +1220,13 @@ impl<'a> Expr<'a> {
                 consumed += 1;
 
                 return Ok(PathComponent {
-                    src: &tokens[..consumed],
+                    src: Source::slice_span(file, &tokens[..consumed]),
                     name,
                     generics_args: Some(GenericsArgs {
-                        src: &tokens[generics_start..consumed],
+                        src: Source::slice_span(file, &tokens[generics_start..consumed]),
                         args,
                         poisoned,
+                        consumed: consumed - generics_start,
                     }),
                 });
             }
@@ -1179,7 +1257,7 @@ impl<'a> Expr<'a> {
             errors.extend(local_errors);
             errors.push(Error::UnexpectedGenericsArgsComma {
                 ident: name.src,
-                args: args.iter().map(GenericsArg::src).collect(),
+                args: args.iter().map(|a| a.span()).collect(),
             });
 
             Err(None)
@@ -1200,27 +1278,29 @@ impl<'a> Expr<'a> {
     /// that were consumed in the event of an error; a return of `Err(None)` indicates that parsing
     /// within the current token tree should immediately stop.
     fn try_consume_binop_or_postfix(
-        stack: &mut Stack<'a>,
-        tokens: TokenSlice<'a>,
+        stack: &mut Stack,
+        file: &FileInfo,
+        tokens: TokenSlice,
         already_consumed: usize,
         delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
     ) -> Result<Option<usize>, Option<usize>> {
         // This function only serves to dispatch between the two different functions for binary and
         // postfix operators
         //
         // We just call them in sequence, starting with binary operators
-        if let Some((op, src)) = BinOp::try_consume(tokens, restrictions) {
-            stack.push_binop(already_consumed, op, src);
-            return Ok(Some(src.len()));
+        if let Some((op, src)) = BinOp::try_consume(file, tokens, restrictions) {
+            stack.push_binop(op, src);
+            return Ok(Some(op.consumed()));
         }
 
         // If we didn't have a binary operator here, we'll attempt to consume a postfix operator
         // instead
         let res = PostfixOp::try_consume(
+            file,
             tokens,
             delim,
             restrictions,
@@ -1232,8 +1312,9 @@ impl<'a> Expr<'a> {
             Err(e) => Err(e),
             Ok(None) => Ok(None),
             Ok(Some((op, src))) => {
-                stack.push_postfix(already_consumed, op, src);
-                Ok(Some(src.len()))
+                let consumed = op.consumed();
+                stack.push_postfix(op, src);
+                Ok(Some(consumed))
             }
         }
     }
@@ -1260,17 +1341,18 @@ impl<'a> Expr<'a> {
     ///
     /// [`Expr::is_big`]: #method.is_big
     fn consume_big(
-        tokens: TokenSlice<'a>,
-        ctx: BigExprContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: BigExprContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Expr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Expr, Option<usize>> {
         // We'll define a helper macro here for passing along the information needed for consuming
         // the actual expression we find.
         macro_rules! pass {
             ($ty:ident, $variant:ident) => {
-                $ty::consume(tokens, ends_early, containing_token, errors).map(Expr::$variant)
+                $ty::consume(file, tokens, ends_early, containing_token, errors).map(Expr::$variant)
             };
         }
 
@@ -1280,7 +1362,7 @@ impl<'a> Expr<'a> {
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::BigExpr(ctx),
-                    found: end_source!(containing_token),
+                    found: end_source!(file, containing_token),
                 });
 
                 Err(None)
@@ -1292,7 +1374,7 @@ impl<'a> Expr<'a> {
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::BigExpr(ctx),
-                    found: Source::TokenResult(Err(*e)),
+                    found: Source::err(file, e),
                 });
 
                 Err(None)
@@ -1318,15 +1400,16 @@ impl<'a> Expr<'a> {
                     // find that the user mistakenly gave a struct expression, we'll produce a
                     // separate error for that.
                     if is_definitely_struct(inner) {
-                        errors.push(Error::StructAsBigExpr { outer: t, ctx });
+                        errors.push(Error::StructAsBigExpr { outer: t.span(file), ctx });
                         return Err(Some(1));
                     }
 
                     let ends_early = false;
                     BlockExpr::parse(
+                        file,
                         tokens.first(),
                         ends_early,
-                        end_source!(containing_token),
+                        end_source!(file, containing_token),
                         errors,
                     )
                     .map_err(|()| Some(1))
@@ -1336,7 +1419,7 @@ impl<'a> Expr<'a> {
                 _ => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::BigExpr(ctx),
-                        found: Source::TokenResult(Ok(t)),
+                        found: Source::token(file, t),
                     });
 
                     Err(None)
@@ -1349,24 +1432,25 @@ impl<'a> Expr<'a> {
     ///
     /// This is essentially a helper function for extracting the common parts of a few of the
     /// parsing methods for the tokens inside token trees - e.g. `TupleExpr` and `StructExpr`.
-    fn consume_all_delimited<T: From<Delimited<'a>>>(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
+    fn consume_all_delimited<T: From<Delimited>>(
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
         restrictions: Restrictions,
         delim: ExprDelim,
-        check_post_expr: Option<fn(TokenSlice<'a>) -> Result<(), Error<'a>>>,
-        delim_err: fn(&'a Token<'a>) -> ExpectedKind<'a>,
-        errors: &mut Vec<Error<'a>>,
+        check_post_expr: Option<fn(&FileInfo, TokenSlice) -> Result<(), Error>>,
+        delim_err: fn(Source) -> ExpectedKind,
+        errors: &mut Vec<Error>,
     ) -> Result<(Vec<T>, bool), ()> {
         let mut consumed = 0;
         let ends_early = false;
         let mut poisoned = false;
         let mut fields = Vec::new();
 
-        make_expect!(inner, consumed, ends_early, Some(src), errors);
+        make_expect!(file, inner, consumed, ends_early, Some(src), errors);
 
         while consumed < inner.len() {
-            let res = Expr::consume_delimited(&inner[consumed..], restrictions, delim, ends_early, src, errors);
+            let res = Expr::consume_delimited(file, &inner[consumed..], restrictions, delim, ends_early, src, errors);
             match res {
                 Err(None) => {
                     poisoned = true;
@@ -1383,7 +1467,7 @@ impl<'a> Expr<'a> {
             }
 
             if let Some(check) = check_post_expr.as_ref() {
-                if let Err(e) = check(&inner[consumed..]) {
+                if let Err(e) = check(file, &inner[consumed..]) {
                     errors.push(e);
                     poisoned = true;
                     break;
@@ -1396,7 +1480,7 @@ impl<'a> Expr<'a> {
                     Ok(_),
                     TokenKind::Punctuation(Punc::Comma) => consumed += 1,
                     _ if poisoned => break,
-                    @else { poisoned = true; break } => delim_err(src),
+                    @else { poisoned = true; break } => delim_err(Source::token(file, src)),
                 ));
             }
         }
@@ -1411,13 +1495,14 @@ impl<'a> Expr<'a> {
     /// This function always expects that there are at least *some* input tokens, and will panic if
     /// this is not the case.
     fn consume_delimited(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
         delim: ExprDelim,
         ends_early: bool,
-        containing_token: &'a Token<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Delimited<'a>, Option<usize>> {
+        containing_token: &Token,
+        errors: &mut Vec<Error>,
+    ) -> Result<Delimited, Option<usize>> {
         // This function has a fair amount of complexity to manage.
 
         // There's a little bit of validation that we wat to do on the delimiter passed in, just
@@ -1439,11 +1524,11 @@ impl<'a> Expr<'a> {
         macro_rules! only_name {
             ($name:expr) => {{
                 let ident = Ident {
-                    src: fst_token,
+                    src: fst_token.span(file),
                     name: $name,
                 };
 
-                let src = &tokens[..1];
+                let src = Source::slice_span(file, &tokens[..1]);
 
                 if delim.requires_name() {
                     return Ok(Delimited {
@@ -1498,20 +1583,20 @@ impl<'a> Expr<'a> {
             match tokens.get(1) {
                 Some(Err(_)) => return Err(None),
 
-                None => only_name!(n),
+                None => only_name!((*n).into()),
                 Some(Ok(t)) => match &t.kind {
-                    TokenKind::Punctuation(Punc::Comma) => only_name!(n),
+                    TokenKind::Punctuation(Punc::Comma) => only_name!((*n).into()),
                     TokenKind::Punctuation(Punc::Colon) => {
                         if delim.allows_name() {
                             name = Some(Ident {
-                                src: fst_token,
-                                name: n,
+                                src: fst_token.span(file),
+                                name: (*n).into(),
                             });
                             consumed += 2;
                         } else {
                             errors.push(Error::UnexpectedExprColon {
                                 delim,
-                                src: &tokens[..2],
+                                src: Source::slice_span(file, &tokens[..2]),
                             });
 
                             return Err(None);
@@ -1522,10 +1607,10 @@ impl<'a> Expr<'a> {
                         assert!(delim == ExprDelim::StructFields);
                         errors.push(Error::Expected {
                             kind: ExpectedKind::StructFieldExprColonOrComma {
-                                name: &fst_token,
-                                containing_token,
+                                name: Source::token(file, fst_token),
+                                containing_token: containing_token.span(file),
                             },
-                            found: Source::TokenResult(Ok(t)),
+                            found: Source::token(file, t),
                         });
 
                         return Err(None);
@@ -1538,10 +1623,10 @@ impl<'a> Expr<'a> {
             assert!(delim == ExprDelim::StructFields);
             errors.push(Error::Expected {
                 kind: ExpectedKind::StructFieldExprName,
-                found: tokens
-                    .first()
-                    .map(Into::into)
-                    .unwrap_or_else(|| end_source!(Some(containing_token))),
+                found: match tokens.first() {
+                    Some(res) => Source::from(file, res),
+                    None => end_source!(file, Some(containing_token)),
+                },
             });
 
             return Err(None);
@@ -1549,6 +1634,7 @@ impl<'a> Expr<'a> {
 
         // After (possibly) consuming the name, we'll get the expression
         let value_res = Expr::consume(
+            file,
             &tokens[consumed..],
             delim,
             restrictions,
@@ -1561,7 +1647,7 @@ impl<'a> Expr<'a> {
             Err(Some(c)) => Err(Some(consumed + c)),
             Err(None) => Err(None),
             Ok(value) => Ok(Delimited {
-                src: &tokens[..consumed + value.consumed()],
+                src: Source::slice_span(file, &tokens[..consumed + value.consumed()]),
                 name,
                 value: Some(value),
             }),
@@ -1607,7 +1693,7 @@ impl<'a> Expr<'a> {
     ///
     /// This essentially returns whether the tokens start with a permitted binary or postfix
     /// operator.
-    pub(super) fn can_continue_with(tokens: TokenSlice, restrictions: Restrictions) -> bool {
+    pub(super) fn can_continue_with(file: &FileInfo, tokens: TokenSlice, restrictions: Restrictions) -> bool {
         // A helper function to indicate whether a token can start a postfix operator
         let starts_postfix = |kind: &TokenKind| -> bool {
             match kind {
@@ -1630,16 +1716,33 @@ impl<'a> Expr<'a> {
         };
 
         let is_postfix = kind!(tokens)(0).map(starts_postfix).unwrap_or(false);
-        is_postfix || BinOp::try_consume(tokens, restrictions).is_some()
+        is_postfix || BinOp::try_consume(file, tokens, restrictions).is_some()
     }
 
     /// Returns whether the given set of tokens may continue an expression after an identifier
     /// (notably including generics arguments)
-    pub(super) fn can_follow_ident(tokens: TokenSlice) -> bool {
+    pub(super) fn can_follow_ident(file: &FileInfo, tokens: TokenSlice) -> bool {
         // Because generics arguments would instead be recognized as the less-than (`<`) operator
         // by `Expr::can_continue_with`, we actually don't need to separately account for them.
         // This function becomes rather simple:
-        Expr::can_continue_with(tokens, Restrictions::default())
+        Expr::can_continue_with(file, tokens, Restrictions::default())
+    }
+
+    /// Returns the `Span` corresponding to the source of the expr
+    pub(super) fn span(&self) -> Span {
+        macro_rules! spans {
+            ( $($pat:pat => $arm:expr),+; $($variant:ident),* ) => {
+                match self {
+                    $($pat => $arm,)+
+                    $( Expr::$variant(v) => v.src, )*
+                }
+            }
+        }
+
+        spans!(
+            Expr::Literal(lit) => lit.span();
+            Named, PrefixOp, BinOp, PostfixOp, Struct, Array, Tuple, Block, AmbiguousBlock, For, While, DoWhile, If, Match, Continue, Loop
+        )
     }
 }
 
@@ -1704,9 +1807,10 @@ impl ExprDelim {
     pub fn has_comma(&self) -> bool {
         !self.is_nothing()
     }
+
 }
 
-impl<'a> PrefixOp<'a> {
+impl PrefixOp {
     /// Returns the binding power of the prefix operator
     pub(super) fn bp(&self) -> BindingPower {
         use BindingPower::*;
@@ -1729,11 +1833,12 @@ impl<'a> PrefixOp<'a> {
     /// recoverable errors and `Err(None)` when parsing within the current token tree should
     /// immediately stop.
     fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<(PrefixOp<'a>, TokenSlice<'a>)>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<(PrefixOp, Span)>, Option<usize>> {
         // Because the set of prefix operators is so limited, we'll just go through all of the
         // cases here.
         //
@@ -1741,7 +1846,7 @@ impl<'a> PrefixOp<'a> {
         // cleaner.
         macro_rules! op {
             ($kind:ident) => {{
-                Ok(Some((PrefixOp::$kind, &tokens[..1])))
+                Ok(Some((PrefixOp::$kind, Source::slice_span(file, &tokens[..1]))))
             }};
         }
 
@@ -1769,12 +1874,12 @@ impl<'a> PrefixOp<'a> {
                         _ => false,
                     };
 
-                    Ok(Some((PrefixOp::Ref { is_mut }, &tokens[..1])))
+                    Ok(Some((PrefixOp::Ref { is_mut }, Source::slice_span(file, &tokens[..1]))))
                 }
 
                 // There's a dedicated function for let expressions, so we'll use that:
                 TokenKind::Keyword(Kwd::Let) => {
-                    PrefixOp::consume_let(tokens, ends_early, containing_token, errors).map(Some)
+                    PrefixOp::consume_let(file, tokens, ends_early, containing_token, errors).map(Some)
                 }
 
                 // Anything else isn't a prefix operator
@@ -1788,11 +1893,12 @@ impl<'a> PrefixOp<'a> {
     /// This function assumes that the first token is the keyword `let`, and will panic if it is
     /// not.
     fn consume_let(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<(PrefixOp<'a>, TokenSlice<'a>), Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<(PrefixOp, Span), Option<usize>> {
         // Let prefixes aren't *too* bad to parse - the BNF is simply:
         //   "let" Pattern [ ":" Type ] "="
         //
@@ -1800,14 +1906,15 @@ impl<'a> PrefixOp<'a> {
         // not the case.
         let let_kwd = assert_token!(
             tokens.first() => "keyword `let`",
-            Ok(t) && TokenKind::Keyword(Kwd::Let) => t,
+            Ok(t) && TokenKind::Keyword(Kwd::Let) => Source::token(file, t),
         );
 
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let pat_ctx = PatternContext::Let(let_kwd);
         let pat = Pattern::consume(
+            file,
             &tokens[consumed..],
             pat_ctx,
             ends_early,
@@ -1817,7 +1924,7 @@ impl<'a> PrefixOp<'a> {
         .map_err(p!(Some(c) => Some(consumed + c)))?;
 
         consumed += pat.consumed();
-        let pat_src = &tokens[1..consumed];
+        let pat_src = Source::slice_span(file, &tokens[1..consumed]);
 
         // If we have a ":" token following the pattern, we'll expect a type
         let ty = expect!((
@@ -1827,6 +1934,7 @@ impl<'a> PrefixOp<'a> {
             TokenKind::Punctuation(Punc::Colon) => {
                 consumed += 1;
                 let ty_res = Type::consume(
+                    file,
                     &tokens[consumed..],
                     TypeContext::LetHint(LetContext {
                         let_kwd,
@@ -1849,7 +1957,7 @@ impl<'a> PrefixOp<'a> {
             },
             @else(return None) => ExpectedKind::LetColonOrEq(LetContext {
                 let_kwd,
-                pat: &tokens[1..consumed],
+                pat: Source::slice_span(file, &tokens[1..consumed]),
             })
         ));
 
@@ -1865,7 +1973,7 @@ impl<'a> PrefixOp<'a> {
         ));
 
         // And with that all done, we'll return the prefix operator
-        Ok((PrefixOp::Let(pat, ty), &tokens[..consumed]))
+        Ok((PrefixOp::Let(pat, ty), Source::slice_span(file, &tokens[..consumed])))
     }
 }
 
@@ -1901,10 +2009,11 @@ impl BinOp {
     }
 
     /// Attempts to consume a binary operator as a prefix of the given tokens
-    fn try_consume<'a>(
-        tokens: TokenSlice<'a>,
+    fn try_consume(
+        file: &FileInfo,
+        tokens: TokenSlice,
         restrictions: Restrictions,
-    ) -> Option<(BinOp, TokenSlice<'a>)> {
+    ) -> Option<(BinOp, Span)> {
         // Broadly, this function matches on the `kind` field of the first two tokens, assuming
         // they are both successful. We use the folowing pair of macros to make this easier.
         //
@@ -1924,7 +2033,7 @@ impl BinOp {
 
             // But some use more, so we provide the second variant here to allow that
             ($kind:ident, $len:expr) => {{
-                Some((BinOp::$kind, &tokens[..$len]))
+                Some((BinOp::$kind, Source::slice_span(file, &tokens[..$len])))
             }};
         }
 
@@ -2001,7 +2110,19 @@ impl BinOp {
     }
 }
 
-impl<'a> PostfixOp<'a> {
+impl Consumed for BinOp {
+    fn consumed(&self) -> usize {
+        use BinOp::*;
+
+        match self {
+            AddAssign | SubAssign | MulAssign | DivAssign | ModAssign | BitAndAssign | BitOrAssign | Shl | Shr | LogicalAnd => 2,
+            ShrAssign | ShlAssign => 3,
+            Add | Sub | Mul | Div | Mod | LogicalOr | BitAnd | BitOr | Lt | Gt | Le | Ge | Eq | Ne | BitXor | Assign => 1,
+        }
+    }
+}
+
+impl PostfixOp {
     /// Returns the binding power of the postfix operator
     pub(super) fn bp(&self) -> BindingPower {
         use BindingPower::*;
@@ -2028,13 +2149,14 @@ impl<'a> PostfixOp<'a> {
     /// occurs, we'll additionally handle the pieces of the expression resulting from that
     /// ambiguity.
     fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<(PostfixOp<'a>, TokenSlice<'a>)>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<(PostfixOp, Span)>, Option<usize>> {
         // The large majority of this function is spent producing the various operators that we
         // might use.
 
@@ -2069,33 +2191,36 @@ impl<'a> PostfixOp<'a> {
                                 if is_definitely_struct(inner) {
                                     errors.push(Error::CurliesDisallowed {
                                         ctx,
-                                        source: Source::TokenResult(Ok(fst_token)),
+                                        src: Source::token(file, fst_token),
                                     });
 
                                     return Err(None);
                                 }
                             }
 
-                            StructExpr::parse(fst_token, inner, errors).map(PostfixOp::NamedStruct)
+                            StructExpr::parse(file, fst_token, inner, errors).map(PostfixOp::NamedStruct)
                         }
-                        Delim::Parens => PostfixOp::parse_fn_args(fst_token, inner, errors),
-                        Delim::Squares => PostfixOp::parse_index(fst_token, inner, errors),
+                        Delim::Parens => PostfixOp::parse_fn_args(file, fst_token, inner, errors),
+                        Delim::Squares => PostfixOp::parse_index(file, fst_token, inner, errors),
                     };
 
-                    res.map_err(|()| Some(1)).map(|op| Some((op, &tokens[..1])))
+                    res.map_err(|()| Some(1)).map(|op| Some((op, Source::slice_span(file, &tokens[..1]))))
                 }
 
                 // We'll follow with the only two other "simple" cases
                 //
                 // The "try" operator is *really* simple:
-                TokenKind::Punctuation(Punc::Question) => Ok(Some((PostfixOp::Try, &tokens[..1]))),
+                TokenKind::Punctuation(Punc::Question) => {
+                    Ok(Some((PostfixOp::Try, Source::slice_span(file, &tokens[..1]))))
+                }
 
                 // "is" patterns are also relatively simple, so we don't both with a separate
                 // function here either.
                 TokenKind::Keyword(Kwd::Is) => {
                     let res = Pattern::consume(
+                        file,
                         &tokens[1..],
-                        PatternContext::Is(fst_token),
+                        PatternContext::Is(Source::token(file, fst_token)),
                         ends_early,
                         containing_token,
                         errors,
@@ -2105,7 +2230,7 @@ impl<'a> PostfixOp<'a> {
                         Err(Some(c)) => Err(Some(c + 1)),
                         Err(None) => Err(None),
                         Ok(pat) => {
-                            let src = &tokens[..1 + pat.consumed()];
+                            let src = Source::slice_span(file, &tokens[..1 + pat.consumed()]);
                             Ok(Some((PostfixOp::IsPattern(pat), src)))
                         }
                     }
@@ -2113,14 +2238,15 @@ impl<'a> PostfixOp<'a> {
 
                 TokenKind::Punctuation(Punc::Tilde) if !restrictions.allows_pipe() => {
                     errors.push(Error::TypeHintDisallowed {
-                        tilde_token: fst_token,
+                        tilde_token: Source::token(file, fst_token),
                     });
                     return Err(None);
                 }
                 TokenKind::Punctuation(Punc::Tilde) => {
                     let res = Type::consume(
+                        file,
                         &tokens[1..],
-                        TypeContext::TypeBinding { tilde: fst_token },
+                        TypeContext::TypeBinding { tilde: Source::token(file, fst_token) },
                         restrictions,
                         ends_early,
                         containing_token,
@@ -2131,7 +2257,7 @@ impl<'a> PostfixOp<'a> {
                         Err(Some(c)) => Err(Some(c + 1)),
                         Err(None) => Err(None),
                         Ok(ty) => {
-                            let src = &tokens[..1 + ty.consumed()];
+                            let src = Source::slice_span(file, &tokens[..1 + ty.consumed()]);
                             Ok(Some((PostfixOp::TypeBinding(Box::new(ty)), src)))
                         }
                     }
@@ -2140,7 +2266,7 @@ impl<'a> PostfixOp<'a> {
                 // The only other postfix operators both start with a dot, so we'll use a separate
                 // function to handle those.
                 TokenKind::Punctuation(Punc::Dot) => {
-                    PostfixOp::consume_dot(tokens, delim, ends_early, containing_token, errors)
+                    PostfixOp::consume_dot(file, tokens, delim, ends_early, containing_token, errors)
                         .map(Some)
                 }
 
@@ -2154,11 +2280,13 @@ impl<'a> PostfixOp<'a> {
     /// Parses the contents of a parenthetically-delimited token tree as a list of function
     /// arguments
     fn parse_fn_args(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Result<PostfixOp, ()> {
         let (values, poisoned) = Expr::consume_all_delimited(
+            file,
             src,
             inner,
             Restrictions::default(),
@@ -2174,11 +2302,13 @@ impl<'a> PostfixOp<'a> {
     /// Parses the contents of a square-bracket-delimited token tree as a single expression for
     /// indexing
     fn parse_index(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<PostfixOp<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Result<PostfixOp, ()> {
         Expr::consume(
+            file,
             inner,
             ExprDelim::Nothing,
             Restrictions::default(),
@@ -2192,7 +2322,7 @@ impl<'a> PostfixOp<'a> {
             if expr.consumed() != inner.len() {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::EndOfIndexPostfix,
-                    found: (&inner[expr.consumed()]).into(),
+                    found: Source::from(file, &inner[expr.consumed()]),
                 });
 
                 poisoned = true;
@@ -2208,28 +2338,29 @@ impl<'a> PostfixOp<'a> {
     /// This function will assume that the first token in the supplied list is a dot (`.`) token,
     /// and will panic if that is not the case.
     fn consume_dot(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         delim: ExprDelim,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<(PostfixOp<'a>, TokenSlice<'a>), Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<(PostfixOp, Span), Option<usize>> {
         // We'll assert that the first token is a dot ('.'), just to verify that we've been given
         // what we were promised
         let dot_token = assert_token!(
             tokens.first() => "dot (`.`)",
-            Ok(t) && TokenKind::Punctuation(Punc::Dot) => t,
+            Ok(t) && TokenKind::Punctuation(Punc::Dot) => Source::token(file, t),
         );
 
-        make_expect!(tokens, 1, ends_early, containing_token, errors);
+        make_expect!(file, tokens, 1, ends_early, containing_token, errors);
 
         expect!((
             Ok(_),
             TokenKind::Literal(value, LiteralKind::Int) => {
-                let op_src = &tokens[..2];
+                let op_src = Source::slice_span(file, &tokens[..2]);
                 let op = PostfixOp::TupleIndex(IntLiteral {
-                    src: &tokens[1..2],
-                    content: value,
+                    src: Source::slice_span(file, &tokens[1..2]),
+                    content: (*value).into(),
                     suffix: None,
                 });
 
@@ -2237,6 +2368,7 @@ impl<'a> PostfixOp<'a> {
             },
             TokenKind::Ident(_) => {
                 let path_res = Expr::consume_path_component(
+                    file,
                     &tokens[1..],
                     delim,
                     ends_early,
@@ -2246,7 +2378,7 @@ impl<'a> PostfixOp<'a> {
 
                 match path_res {
                     Ok(path) => {
-                        let src = &tokens[..path.consumed() + 1];
+                        let src = Source::slice_span(file, &tokens[..path.consumed() + 1]);
                         Ok((PostfixOp::Access(path), src))
                     }
                     Err(None) => Err(None),
@@ -2258,8 +2390,8 @@ impl<'a> PostfixOp<'a> {
     }
 }
 
-impl<'a> From<Delimited<'a>> for FnArg<'a> {
-    fn from(delim: Delimited<'a>) -> Self {
+impl From<Delimited> for FnArg {
+    fn from(delim: Delimited) -> Self {
         FnArg {
             src: delim.src,
             name: delim.name,
@@ -2268,15 +2400,16 @@ impl<'a> From<Delimited<'a>> for FnArg<'a> {
     }
 }
 
-impl<'a> StructExpr<'a> {
+impl StructExpr {
     /// Parses a `StructExpr` from the entire set of input tokens
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<StructExpr<'a>, ()> {
-        fn starts_assignment<'b>(tokens: TokenSlice<'b>) -> Result<(), Error<'b>> {
-            let (op, op_src) = match BinOp::try_consume(tokens, Restrictions::default()) {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Result<StructExpr, ()> {
+        fn starts_assignment(file: &FileInfo, tokens: TokenSlice) -> Result<(), Error> {
+            let (op, op_src) = match BinOp::try_consume(file, tokens, Restrictions::default()) {
                 None => return Ok(()),
                 Some((op, src)) => (op, src),
             };
@@ -2290,6 +2423,7 @@ impl<'a> StructExpr<'a> {
         }
 
         let (fields, poisoned) = Expr::consume_all_delimited(
+            file,
             src,
             inner,
             Restrictions::default().no_assignment(),
@@ -2300,15 +2434,15 @@ impl<'a> StructExpr<'a> {
         )?;
 
         Ok(StructExpr {
-            src,
+            src: src.span(file),
             fields,
             poisoned,
         })
     }
 }
 
-impl<'a> From<Delimited<'a>> for StructFieldExpr<'a> {
-    fn from(delim: Delimited<'a>) -> Self {
+impl From<Delimited> for StructFieldExpr {
+    fn from(delim: Delimited) -> Self {
         assert!(delim.name.is_some());
 
         StructFieldExpr {
@@ -2319,13 +2453,15 @@ impl<'a> From<Delimited<'a>> for StructFieldExpr<'a> {
     }
 }
 
-impl<'a> ArrayExpr<'a> {
+impl ArrayExpr {
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ArrayExpr<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Result<ArrayExpr, ()> {
         let (values, poisoned) = Expr::consume_all_delimited(
+            file,
             src,
             inner,
             Restrictions::default(),
@@ -2336,20 +2472,22 @@ impl<'a> ArrayExpr<'a> {
         )?;
 
         Ok(ArrayExpr {
-            src,
+            src: src.span(file),
             values,
             poisoned,
         })
     }
 }
 
-impl<'a> TupleExpr<'a> {
+impl TupleExpr {
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<TupleExpr<'a>, ()> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Result<TupleExpr, ()> {
         let (values, poisoned) = Expr::consume_all_delimited(
+            file,
             src,
             inner,
             Restrictions::default(),
@@ -2360,22 +2498,22 @@ impl<'a> TupleExpr<'a> {
         )?;
 
         Ok(TupleExpr {
-            src,
+            src: src.span(file),
             values,
             poisoned,
         })
     }
 }
 
-impl<'a> From<Delimited<'a>> for Expr<'a> {
-    fn from(delim: Delimited<'a>) -> Expr<'a> {
+impl From<Delimited> for Expr {
+    fn from(delim: Delimited) -> Expr {
         assert!(delim.name.is_none());
 
         delim.value.unwrap()
     }
 }
 
-impl<'a> BlockExpr<'a> {
+impl BlockExpr {
     /// Parses a block expression from the given token
     ///
     /// Because block expressions are always given by the curly braces they're enclosed by, the
@@ -2384,11 +2522,12 @@ impl<'a> BlockExpr<'a> {
     /// `none_source` indicates the value to use as the source if the token is `None` - this
     /// typically corresponds to the source used for running out of tokens within a token tree.
     pub fn parse(
-        token: Option<&'a TokenResult<'a>>,
+        file: &FileInfo,
+        token: Option<&TokenResult>,
         ends_early: bool,
-        none_source: Source<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<BlockExpr<'a>, ()> {
+        none_source: Source,
+        errors: &mut Vec<Error>,
+    ) -> Result<BlockExpr, ()> {
         // Parsing a block expression is fairly simple. Essentially, we repeatedly consume input,
         // using `Item::consume` for anything that looks like an item, and doing a kind of dynamic
         // expression parsing for everything else. We'll get more into that later.
@@ -2417,7 +2556,7 @@ impl<'a> BlockExpr<'a> {
                     inner,
                     ..
                 } => (t, inner, false),
-                _ => return err!(Source::TokenResult(Ok(t))),
+                _ => return err!(Source::token(file, t)),
             },
             Some(Err(_)) => return Err(()),
             None if ends_early => return Err(()),
@@ -2454,13 +2593,13 @@ impl<'a> BlockExpr<'a> {
             };
 
             if let TokenKind::Punctuation(Punc::Semi) = next_token.kind {
-                stmts.push(Stmt::UnnecessarySemi(next_token));
+                stmts.push(Stmt::UnnecessarySemi(next_token.span(file)));
                 consumed += 1;
                 continue;
             }
 
             if Item::is_starting_token(next_token) {
-                let item_res = Item::consume(&inner[consumed..], ends_early, Some(src), errors);
+                let item_res = Item::consume(file, &inner[consumed..], ends_early, Some(src), errors);
                 match item_res {
                     Ok(item) => {
                         consumed += item.consumed();
@@ -2482,6 +2621,7 @@ impl<'a> BlockExpr<'a> {
             // If we didn't find an item, we'll parse an expression, which may have a trailing
             // semicolon if it isn't the final expression in the block.
             let expr_res = Expr::consume_until(
+                file,
                 &inner[consumed..],
                 BlockExpr::expr_stack_done,
                 ExprDelim::Nothing,
@@ -2505,7 +2645,7 @@ impl<'a> BlockExpr<'a> {
                 },
             });
 
-            let expr_src = &inner[expr_start..consumed];
+            let expr_src = Source::slice_span(file, &inner[expr_start..consumed]);
 
             // At this point, we're either expecting a semicolon or the end of the input tokens
             match inner.get(consumed) {
@@ -2518,7 +2658,7 @@ impl<'a> BlockExpr<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::TrailingSemi { expr_src },
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     stmts.push(Stmt::Little(LittleExpr {
@@ -2535,7 +2675,7 @@ impl<'a> BlockExpr<'a> {
                     TokenKind::Punctuation(Punc::Semi) => {
                         consumed += 1;
                         stmts.push(Stmt::Little(LittleExpr {
-                            src: &inner[expr_start..consumed],
+                            src: Source::slice_span(file, &inner[expr_start..consumed]),
                             expr,
                             poisoned: false,
                         }));
@@ -2543,7 +2683,7 @@ impl<'a> BlockExpr<'a> {
                     _ => {
                         errors.push(Error::Expected {
                             kind: ExpectedKind::TrailingSemi { expr_src },
-                            found: Source::TokenResult(Ok(t)),
+                            found: Source::token(file, t),
                         });
 
                         stmts.push(Stmt::Little(LittleExpr {
@@ -2560,7 +2700,7 @@ impl<'a> BlockExpr<'a> {
         };
 
         Ok(BlockExpr {
-            src,
+            src: src.span(file),
             stmts,
             tail: tail_expr.map(Box::new),
             poisoned,
@@ -2589,7 +2729,7 @@ impl<'a> BlockExpr<'a> {
     fn expr_stack_done(stack: &Stack) -> bool {
         let expr = match stack.last_expr.as_ref() {
             None => return false,
-            Some((_, ex)) => ex,
+            Some(ex) => ex,
         };
 
         match &stack.elems[..] {
@@ -2606,7 +2746,7 @@ impl<'a> BlockExpr<'a> {
     }
 }
 
-impl<'a> ForExpr<'a> {
+impl ForExpr {
     /// Consumes a "for" loop expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword "for", and will panic if this
@@ -2616,11 +2756,12 @@ impl<'a> ForExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ForExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<ForExpr, Option<usize>> {
         // For loops are fairly simple - the BNF is exactly:
         //   "for" Pattern "in" Expr* BlockExpr [ "else" BigExpr ]
         // * excluding structs
@@ -2631,14 +2772,15 @@ impl<'a> ForExpr<'a> {
         // start with the `for` keyword.
         let for_kwd = assert_token!(
             tokens.first() => "keyword `for`",
-            Ok(t) && TokenKind::Keyword(Kwd::For) => t,
+            Ok(t) && TokenKind::Keyword(Kwd::For) => Source::token(file, t),
         );
 
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let pat_ctx = PatternContext::For(for_kwd);
         let pat = Pattern::consume(
+            file,
             &tokens[consumed..],
             pat_ctx,
             ends_early,
@@ -2652,12 +2794,13 @@ impl<'a> ForExpr<'a> {
         expect!((
             Ok(_),
             TokenKind::Keyword(Kwd::In) => consumed += 1,
-            @else(return None) => ExpectedKind::ForLoopInKwd(&tokens[..consumed])
+            @else(return None) => ExpectedKind::ForLoopInKwd(Source::slice_span(file, &tokens[..consumed]))
         ));
 
         // And then we expect an expression. This expression can't include curly braces (in certain
         // places) because they would be ambiguous with the following block.
         let iter = Expr::consume(
+            file,
             &tokens[consumed..],
             ExprDelim::Nothing,
             Restrictions::default().no_struct_postfix(NoCurlyContext::ForIter),
@@ -2670,9 +2813,10 @@ impl<'a> ForExpr<'a> {
 
         // And this is followed by a block expression
         let body = BlockExpr::parse(
+            file,
             tokens.get(consumed),
             ends_early,
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| Some(consumed))?;
@@ -2680,13 +2824,13 @@ impl<'a> ForExpr<'a> {
 
         // For loops may be optionally followed by an 'else' branch
         let else_branch =
-            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            ElseBranch::try_consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(|cs| cs.map(|c| c + consumed))?
                 .map(Box::new);
         consumed += else_branch.consumed();
 
         Ok(ForExpr {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             pat,
             iter: Box::new(iter),
             body,
@@ -2695,7 +2839,7 @@ impl<'a> ForExpr<'a> {
     }
 }
 
-impl<'a> WhileExpr<'a> {
+impl WhileExpr {
     /// Consumes a `while` loop expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword "while", and will panic if
@@ -2705,11 +2849,12 @@ impl<'a> WhileExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<WhileExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<WhileExpr, Option<usize>> {
         // More simple than `for` loops, while loops have the following BNF:
         //   "while" Expr* BlockExpr [ "else" BigExpr ]
         // * excluding structs
@@ -2720,6 +2865,7 @@ impl<'a> WhileExpr<'a> {
 
         let mut consumed = 1;
         let condition = Expr::consume(
+            file,
             &tokens[..consumed],
             ExprDelim::Nothing,
             Restrictions::default().no_struct_postfix(NoCurlyContext::WhileCondition),
@@ -2731,9 +2877,10 @@ impl<'a> WhileExpr<'a> {
         consumed += condition.consumed();
 
         let body = BlockExpr::parse(
+            file,
             tokens.get(consumed),
             ends_early,
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| Some(consumed))?;
@@ -2741,13 +2888,13 @@ impl<'a> WhileExpr<'a> {
 
         // While loops may be optionally followed by an 'else' branch:
         let else_branch =
-            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            ElseBranch::try_consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(p!(Some(c) => Some(consumed + c)))?
                 .map(Box::new);
         consumed += else_branch.consumed();
 
         Ok(WhileExpr {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             condition: Box::new(condition),
             body,
             else_branch,
@@ -2755,7 +2902,7 @@ impl<'a> WhileExpr<'a> {
     }
 }
 
-impl<'a> DoWhileExpr<'a> {
+impl DoWhileExpr {
     /// Consumes a `do..while` expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword "do', and will panic if this
@@ -2765,11 +2912,12 @@ impl<'a> DoWhileExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<DoWhileExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<DoWhileExpr, Option<usize>> {
         // Do..while expressions are moderately complex; the BNF is defined as:
         //   "do" BlockExpr "while" Expr [ "else" BigExpr ] .
         // With the addition that we cannot allow expressions that might have else branches inside
@@ -2789,9 +2937,10 @@ impl<'a> DoWhileExpr<'a> {
 
         // After the initial "do", we're expecting a block expression
         let body = BlockExpr::parse(
+            file,
             tokens.get(1),
             ends_early,
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| Some(1))?;
@@ -2799,7 +2948,7 @@ impl<'a> DoWhileExpr<'a> {
         let mut consumed = 2;
 
         // And then "while"
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
         expect!((
             Ok(_),
             TokenKind::Keyword(Kwd::While) => (),
@@ -2809,6 +2958,7 @@ impl<'a> DoWhileExpr<'a> {
         consumed += 1;
 
         let pred = Expr::consume(
+            file,
             &tokens[consumed..],
             ExprDelim::Nothing,
             Restrictions::default().no_else_branch(),
@@ -2821,14 +2971,14 @@ impl<'a> DoWhileExpr<'a> {
         consumed += pred.consumed();
 
         let else_branch =
-            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            ElseBranch::try_consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(p!(Some(c) => Some(consumed + c)))?
                 .map(Box::new);
 
         consumed += else_branch.consumed();
 
         Ok(DoWhileExpr {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             body,
             pred: Box::new(pred),
             else_branch,
@@ -2854,7 +3004,7 @@ impl<'a> DoWhileExpr<'a> {
     }
 }
 
-impl<'a> LoopExpr<'a> {
+impl LoopExpr {
     /// Consumes a `loop` expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword "loop", and will panic if this
@@ -2864,11 +3014,12 @@ impl<'a> LoopExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<LoopExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<LoopExpr, Option<usize>> {
         // Loop expressions are very simple; the BNF is just:
         //   "loop" BlockExpr
         assert_token!(
@@ -2883,20 +3034,21 @@ impl<'a> LoopExpr<'a> {
         }
 
         BlockExpr::parse(
+            file,
             tokens.get(1),
             ends_early,
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map(|body| LoopExpr {
-            src: &tokens[..2],
+            src: Source::slice_span(file, &tokens[..2]),
             body,
         })
         .map_err(|()| None)
     }
 }
 
-impl<'a> IfExpr<'a> {
+impl IfExpr {
     /// Consumes an "if" conditional expression
     ///
     /// This function assumes that the starting token is the keyword `if`, and will panic if this
@@ -2906,11 +3058,12 @@ impl<'a> IfExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<IfExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<IfExpr, Option<usize>> {
         // If conditions are fairly simple - they are defined with the following BNF:
         //   "if" Expr* BlockExpr [ "else" BigExpr ]
         // * excluding structs
@@ -2921,6 +3074,7 @@ impl<'a> IfExpr<'a> {
 
         let mut consumed = 1;
         let condition = Expr::consume(
+            file,
             &tokens[consumed..],
             ExprDelim::Nothing,
             Restrictions::default().no_struct_postfix(NoCurlyContext::IfCondition),
@@ -2932,22 +3086,23 @@ impl<'a> IfExpr<'a> {
         consumed += condition.consumed();
 
         let body = BlockExpr::parse(
+            file,
             tokens.get(consumed),
             ends_early,
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| Some(consumed))?;
         consumed += 1;
 
         let else_branch =
-            ElseBranch::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            ElseBranch::try_consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(p!(Some(c) => Some(consumed + c)))?
                 .map(Box::new);
         consumed += else_branch.consumed();
 
         Ok(IfExpr {
-            src: &tokens[consumed..],
+            src: Source::slice_span(file, &tokens[consumed..]),
             condition: Box::new(condition),
             body,
             else_branch,
@@ -2955,7 +3110,7 @@ impl<'a> IfExpr<'a> {
     }
 }
 
-impl<'a> MatchExpr<'a> {
+impl MatchExpr {
     /// Consumes a "match" expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword `match`, and will panic if
@@ -2965,21 +3120,23 @@ impl<'a> MatchExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<MatchExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<MatchExpr, Option<usize>> {
         // Match expressions are defined by the following BNF:
         //   "match" Expr* "{" { MatchArm } "}"
         // * excluding structs
         let match_kwd = assert_token!(
             tokens.first() => "keyword `match`",
-            Ok(t) && TokenKind::Keyword(Kwd::Match) => t,
+            Ok(t) && TokenKind::Keyword(Kwd::Match) => Source::token(file, t),
         );
 
         let mut consumed = 1;
         let expr = Expr::consume(
+            file,
             &tokens[consumed..],
             ExprDelim::Nothing,
             Restrictions::default().no_struct_postfix(NoCurlyContext::MatchExpr),
@@ -2994,7 +3151,7 @@ impl<'a> MatchExpr<'a> {
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::MatchBody(match_kwd),
-                    found: end_source!(containing_token),
+                    found: end_source!(file, containing_token),
                 });
 
                 return Err(None);
@@ -3003,7 +3160,7 @@ impl<'a> MatchExpr<'a> {
             Some(Err(e)) => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::MatchBody(match_kwd),
-                    found: Source::TokenResult(Err(*e)),
+                    found: Source::err(file, e),
                 });
 
                 return Err(Some(consumed));
@@ -3015,12 +3172,12 @@ impl<'a> MatchExpr<'a> {
                     ..
                 } => {
                     consumed += 1;
-                    MatchArm::parse_all(match_kwd, t, inner, errors)
+                    MatchArm::parse_all(file, match_kwd, t, inner, errors)
                 }
                 _ => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::MatchBody(match_kwd),
-                        found: Source::TokenResult(Ok(t)),
+                        found: Source::token(file, t),
                     });
 
                     return Err(Some(consumed));
@@ -3029,7 +3186,7 @@ impl<'a> MatchExpr<'a> {
         };
 
         Ok(MatchExpr {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             expr: Box::new(expr),
             arms,
             poisoned,
@@ -3037,17 +3194,18 @@ impl<'a> MatchExpr<'a> {
     }
 }
 
-impl<'a> MatchArm<'a> {
+impl MatchArm {
     /// A helper function for [`MatchExpr::consume`](struct.MatchExpr.html#method.consume)
     ///
     /// This function parses the entire contents of a curly-brace enclosed block as the body of a
     /// match expression, returning the match arms and whether that list is poisoned.
     fn parse_all(
-        match_kwd: &'a Token<'a>,
-        curly_src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> (Vec<MatchArm<'a>>, bool) {
+        file: &FileInfo,
+        match_kwd: Source,
+        curly_src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> (Vec<MatchArm>, bool) {
         let mut consumed = 0;
         let mut poisoned = false;
         let mut arms = Vec::new();
@@ -3056,6 +3214,7 @@ impl<'a> MatchArm<'a> {
         let pat_ctx = PatternContext::Match(match_kwd);
         while consumed < inner.len() {
             let arm_res = MatchArm::consume(
+                file,
                 &inner[consumed..],
                 pat_ctx,
                 ends_early,
@@ -3070,12 +3229,12 @@ impl<'a> MatchArm<'a> {
                     break;
                 }
                 Err(Some(c)) => {
-                    arm_src = &inner[consumed..consumed + c];
+                    arm_src = Source::slice_span(file, &inner[consumed..consumed + c]);
                     consumed += c;
                     poisoned = true;
                 }
                 Ok(arm) => {
-                    arm_src = &inner[consumed..consumed + arm.consumed()];
+                    arm_src = Source::slice_span(file, &inner[consumed..consumed + arm.consumed()]);
                     consumed += arm.consumed();
                     let requires_delim = arm.requires_delim();
                     arms.push(arm);
@@ -3103,7 +3262,7 @@ impl<'a> MatchArm<'a> {
                 Some(Err(e)) => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::MatchArmDelim(arm_src),
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
 
                     poisoned = true;
@@ -3114,7 +3273,7 @@ impl<'a> MatchArm<'a> {
                     _ => {
                         errors.push(Error::Expected {
                             kind: ExpectedKind::MatchArmDelim(arm_src),
-                            found: Source::TokenResult(Ok(t)),
+                            found: Source::token(file, t),
                         });
 
                         poisoned = true;
@@ -3133,16 +3292,17 @@ impl<'a> MatchArm<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
-        pat_ctx: PatternContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        pat_ctx: PatternContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<MatchArm<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<MatchArm, Option<usize>> {
         // Match arms are essentially defined by the following BNF:
         //   Pattern [ "if" Expr ] "=>" Expr
 
-        let pat = Pattern::consume(tokens, pat_ctx, ends_early, containing_token, errors)?;
+        let pat = Pattern::consume(file, tokens, pat_ctx, ends_early, containing_token, errors)?;
         let mut consumed = pat.consumed();
 
         let mut cond: Option<Expr> = None;
@@ -3156,6 +3316,7 @@ impl<'a> MatchArm<'a> {
 
             // If we found "if", we'll expect an expression
             cond = Expr::consume(
+                file,
                 &tokens[consumed..],
                 ExprDelim::Nothing,
                 Restrictions::default(),
@@ -3170,7 +3331,7 @@ impl<'a> MatchArm<'a> {
         }
 
         // And then we'll expect the `"=>" Expr`:
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
         expect!((
             Ok(_),
             TokenKind::Punctuation(Punc::ThickArrow) => consumed += 1,
@@ -3178,6 +3339,7 @@ impl<'a> MatchArm<'a> {
         ));
 
         let eval = Expr::consume(
+            file,
             &tokens[consumed..],
             // Strictly speaking, we aren't consuming a bunch of expressions delimited by commas.
             // But this expression *is* followed by a comma, so there are certain types of errors
@@ -3193,7 +3355,7 @@ impl<'a> MatchArm<'a> {
         consumed += eval.consumed();
 
         Ok(MatchArm {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             pat,
             cond,
             eval,
@@ -3207,7 +3369,7 @@ impl<'a> MatchArm<'a> {
     }
 }
 
-impl<'a> ContinueExpr<'a> {
+impl ContinueExpr {
     /// Consumes a `continue` expression as a prefix of the given tokens
     ///
     /// This function assumes that the starting token is the keyword `continue`, and will panic if
@@ -3217,11 +3379,12 @@ impl<'a> ContinueExpr<'a> {
     /// indicate the number of tokens consumed, or `Err(None)` if no more parsing should be done
     /// inside the current token tree.
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         _ends_early: bool,
-        _containing_token: Option<&'a Token<'a>>,
-        _errors: &mut Vec<Error<'a>>,
-    ) -> Result<ContinueExpr<'a>, Option<usize>> {
+        _containing_token: Option<&Token>,
+        _errors: &mut Vec<Error>,
+    ) -> Result<ContinueExpr, Option<usize>> {
         // Currently, this function is simple; we don't have labels, so continue expressions are
         // only the keyword.
         //
@@ -3233,7 +3396,7 @@ impl<'a> ContinueExpr<'a> {
             Ok(t) && TokenKind::Keyword(Kwd::Continue) => t,
         );
 
-        Ok(ContinueExpr { src })
+        Ok(ContinueExpr { src: src.span(file) })
     }
 }
 
@@ -3265,20 +3428,23 @@ impl<'a> ContinueExpr<'a> {
 /// ```
 ///
 /// [`PathComponent`]: struct.PathComponent.html
-#[derive(Debug, Clone)]
-pub struct Path<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub components: Vec<PathComponent<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct Path {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(components.consumed() + components.len() - 1)]
+    pub components: Vec<PathComponent>,
 }
 
 /// A single component of a type
 ///
 /// For more information, refer to the documentation of [`Path`](struct.Path.html).
-#[derive(Debug, Clone)]
-pub struct PathComponent<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub generics_args: Option<GenericsArgs<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct PathComponent {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    pub name: Ident,
+    pub generics_args: Option<GenericsArgs>,
 }
 
 /// An `else` branch, for use after `if` conditions and various loops
@@ -3293,13 +3459,15 @@ pub struct PathComponent<'a> {
 /// ElseBranch = "else" BigExpr .
 /// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr | StructExpr .
 /// ```
-#[derive(Debug, Clone)]
-pub struct ElseBranch<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub expr: Expr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ElseBranch {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+    #[consumed(expr.consumed() + 1)] // +1 for "else" keyword
+    pub expr: Expr,
 }
 
-impl<'a> Path<'a> {
+impl Path {
     /// Consumes a `Path` as a prefix of the given tokens
     ///
     /// Note that this function should not be used where there may be ambiguity with generics
@@ -3311,13 +3479,14 @@ impl<'a> Path<'a> {
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     pub fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Path<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Path, Option<usize>> {
         // We always require a first element in the path
-        let fst = PathComponent::consume(tokens, None, ends_early, containing_token, errors)
+        let fst = PathComponent::consume(file, tokens, None, ends_early, containing_token, errors)
             .map_err(|_| None)?;
         let mut consumed = fst.consumed();
 
@@ -3334,6 +3503,7 @@ impl<'a> Path<'a> {
             };
 
             let next = PathComponent::consume(
+                file,
                 &tokens[consumed..],
                 Some(&tokens[..consumed]),
                 ends_early,
@@ -3346,33 +3516,37 @@ impl<'a> Path<'a> {
         }
 
         Ok(Path {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             components,
         })
     }
 }
 
-impl<'a> PathComponent<'a> {
+impl PathComponent {
     /// Consumes a single `PathComponent` as a prefix of the given tokens
     ///
     /// This exists solely as a helper function for [`Path::consume`].
     ///
     /// [`Path::consume`]: struct.Path.html#method.consume
     pub fn consume(
-        tokens: TokenSlice<'a>,
-        prev_tokens: Option<TokenSlice<'a>>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        prev_tokens: Option<TokenSlice>,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<PathComponent<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<PathComponent, Option<usize>> {
         // Path components are composed of - at most - two pieces: an identifier and optional
         // generic arguments.
-        let ctx = PathComponentContext { prev_tokens };
+        let ctx = PathComponentContext {
+            prev_tokens: prev_tokens.map(|ts| Source::slice_span(file, ts)),
+        };
 
         let name = Ident::parse(
+            file,
             tokens.first(),
             IdentContext::PathComponent(ctx),
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|_| None)?;
@@ -3380,43 +3554,44 @@ impl<'a> PathComponent<'a> {
         let mut consumed = name.consumed();
 
         let generics_args =
-            GenericsArgs::try_consume(&tokens[consumed..], ends_early, containing_token, errors)
+            GenericsArgs::try_consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(|_| None)?;
 
         consumed += generics_args.consumed();
 
         Ok(PathComponent {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             name,
             generics_args,
         })
     }
 }
 
-impl<'a> ElseBranch<'a> {
+impl ElseBranch {
     /// Attempts to consume an "else branch" as a prefix of the given tokens, returning `Ok(None)`
     /// only if they do not start with the keyword `else`
     fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<ElseBranch<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<ElseBranch>, Option<usize>> {
         let else_token = match tokens.first() {
             Some(Err(_)) | None => return Ok(None),
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Keyword(Kwd::Else) => t,
+                TokenKind::Keyword(Kwd::Else) => Source::token(file, t),
                 _ => return Ok(None),
             },
         };
 
         let ctx = BigExprContext::Else(else_token);
-        Expr::consume_big(&tokens[1..], ctx, ends_early, containing_token, errors)
+        Expr::consume_big(file, &tokens[1..], ctx, ends_early, containing_token, errors)
             .map_err(p!(Some(c) => Some(c + 1)))
             .map(|expr| {
                 let consumed = expr.consumed() + 1;
                 Some(ElseBranch {
-                    src: &tokens[consumed..],
+                    src: Source::slice_span(file, &tokens[consumed..]),
                     expr,
                 })
             })

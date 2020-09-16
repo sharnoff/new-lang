@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A collection of generics parameters, given as part of a type or function declarations
 ///
@@ -13,11 +14,17 @@ use super::*;
 ///
 /// [`Vec<GenericsParam>`]: struct.GenericsParam.html
 /// [`GenericsParam`]: struct.GenericsParam.html
-#[derive(Debug, Clone)]
-pub struct GenericsParams<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub params: Vec<GenericsParam<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GenericsParams {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    #[consumed(@ignore)]
+    pub params: Vec<GenericsParam>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
+
+    #[consumed(consumed)]
+    consumed: usize,
 }
 
 /// A single generic parameter, given as part of a type or function declaration
@@ -38,11 +45,11 @@ pub struct GenericsParams<'a> {
 /// [`GenericTypeParam`]: struct.GenericTypeParam.html
 /// [`GenericConstParam`]: struct.GenericConstParam.html
 /// [`GenericRefParam`]: struct.GenericRefParam.html
-#[derive(Debug, Clone)]
-pub enum GenericsParam<'a> {
-    Type(GenericTypeParam<'a>),
-    Const(GenericConstParam<'a>),
-    Ref(GenericRefParam<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum GenericsParam {
+    Type(GenericTypeParam),
+    Const(GenericConstParam),
+    Ref(GenericRefParam),
 }
 
 /// A generic type parameter, given as part of a type or function declaration
@@ -61,12 +68,15 @@ pub enum GenericsParam<'a> {
 /// [`GenericsParam`]: struct.GenericsParam.html
 /// [type bound]: ../struct.TypeBound.html
 /// [`"=" Type`]: ../../types/enum.Type.html
-#[derive(Debug, Clone)]
-pub struct GenericTypeParam<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub bound: Option<TypeBound<'a>>,
-    pub default_type: Option<Type<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GenericTypeParam {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub name: Ident,
+    #[consumed(bound.as_ref().map(|b| b.consumed() + 1).unwrap_or(0))]
+    pub bound: Option<TypeBound>,
+    #[consumed(default_type.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))]
+    pub default_type: Option<Type>,
 }
 
 /// A generic constant parameter, given as part of a type or function declaration
@@ -86,10 +96,12 @@ pub struct GenericTypeParam<'a> {
 ///
 /// [`GenericsParam`]: enum.GenericsParam.html
 /// [`Field`]: ../struct.Field.html
-#[derive(Debug, Clone)]
-pub struct GenericConstParam<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub field: Field<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GenericConstParam {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    #[consumed(field.consumed() + 1)] // +1 for "const" keyword
+    pub field: Field,
 }
 
 /// A generic "ref" parameter, given as part of a type or function declaration
@@ -104,13 +116,15 @@ pub struct GenericConstParam<'a> {
 /// ```
 ///
 /// [`GenericsParam`]: enum.GenericsParam.html
-#[derive(Debug, Clone)]
-pub struct GenericRefParam<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub ref_name: Ident<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct GenericRefParam {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    #[consumed(ref_name.consumed() + 1)]
+    pub ref_name: Ident,
 }
 
-impl<'a> GenericsParams<'a> {
+impl GenericsParams {
     /// Attempts to consume generics parameters as a prefix of the given tokens, failing with
     /// `Ok(None)` if the tokens clearly do not start with generics parameters.
     ///
@@ -123,13 +137,14 @@ impl<'a> GenericsParams<'a> {
     /// wouldn't be the case, but allows better error messages if this function takes that
     /// responsibility.
     pub(super) fn try_consume(
-        tokens: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: GenericsParamsContext,
         allow_start_err: impl Fn(&token_tree::Error) -> bool,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<GenericsParams<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<GenericsParams>, Option<usize>> {
         // First, we'll check for whether there's a "<". If there isn't, we'll just return.
         match tokens.first() {
             Some(Ok(token)) => match &token.kind {
@@ -140,7 +155,7 @@ impl<'a> GenericsParams<'a> {
                 if allow_start_err(e) {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::GenericsParams(ctx),
-                        found: Source::TokenResult(Err(*e)),
+                        found: Source::err(file, e),
                     });
                 }
 
@@ -149,7 +164,7 @@ impl<'a> GenericsParams<'a> {
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::GenericsParams(ctx),
-                    found: end_source!(containing_token),
+                    found: end_source!(file, containing_token),
                 });
 
                 return Err(None);
@@ -160,10 +175,11 @@ impl<'a> GenericsParams<'a> {
         let mut poisoned = false;
         let mut params = Vec::new();
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         loop {
             let param_res = GenericsParam::consume(
+                file,
                 &tokens[consumed..],
                 ctx,
                 &tokens[..consumed],
@@ -197,20 +213,21 @@ impl<'a> GenericsParams<'a> {
                 },
                 @else(return None) => ExpectedKind::GenericsParamDelim {
                     ctx,
-                    prev_tokens: &tokens[..consumed],
+                    prev_tokens: Source::slice_span(file, &tokens[..consumed]),
                 },
             ));
         }
 
         Ok(Some(GenericsParams {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             params,
             poisoned,
+            consumed,
         }))
     }
 }
 
-impl<'a> GenericsParam<'a> {
+impl GenericsParam {
     /// Consumes a single generics parameter as a prefix of the given tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
@@ -220,13 +237,14 @@ impl<'a> GenericsParam<'a> {
     /// The value of `prev_tokens` gives the tokens already used in the greater scope of consuming
     /// a set of generics parameters, so that error messages may mention it explicitly.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: GenericsParamsContext,
+        prev_tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericsParam<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<GenericsParam, Option<usize>> {
         // Let's have a brief look at the first tokens of the BNF for a generics parameter:
         //   GenericsParam = Ident  ...
         //                | "const" ...
@@ -263,7 +281,7 @@ impl<'a> GenericsParam<'a> {
         //   +-----> "ref"   --> Full errors (RefParam)
 
         let mut consumed = 0;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         expect!((
             Ok(_),
@@ -272,14 +290,14 @@ impl<'a> GenericsParam<'a> {
             TokenKind::Ident(_) => (),
             // We'll delegate to other functions for everything else.
             TokenKind::Keyword(Kwd::Const) => {
-                return GenericConstParam::consume(tokens, ends_early, containing_token, errors)
+                return GenericConstParam::consume(file, tokens, ends_early, containing_token, errors)
                     .map(GenericsParam::Const);
             },
             TokenKind::Keyword(Kwd::Ref) => {
-                return GenericRefParam::consume(tokens, ends_early, containing_token, errors)
+                return GenericRefParam::consume(file, tokens, ends_early, containing_token, errors)
                     .map(GenericsParam::Ref)
             },
-            @else(return Some) => ExpectedKind::GenericsParam { ctx, prev_tokens },
+            @else(return Some) => ExpectedKind::GenericsParam { ctx, prev_tokens: Source::slice_span(file, prev_tokens )},
         ));
 
         consumed += 1;
@@ -290,6 +308,7 @@ impl<'a> GenericsParam<'a> {
             TokenKind::Punctuation(Punc::Colon) => snd,
             TokenKind::Punctuation(Punc::DoubleColon) => {
                 return GenericTypeParam::consume(
+                    file,
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -304,6 +323,7 @@ impl<'a> GenericsParam<'a> {
             // error message
             _ => {
                 return GenericTypeParam::consume(
+                    file,
                     tokens,
                     ctx,
                     &tokens[..consumed],
@@ -313,7 +333,7 @@ impl<'a> GenericsParam<'a> {
                 )
                 .map(GenericsParam::Type)
             },
-            @else(return Some) => ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
+            @else(return Some) => ExpectedKind::GenericTypeParamColons { ctx, prev_tokens: Source::slice_span(file, prev_tokens )},
         ));
 
         consumed += 1;
@@ -338,6 +358,7 @@ impl<'a> GenericsParam<'a> {
 
         let mut type_bound_errors = Vec::new();
         let type_bound_res = TypeBound::consume(
+            file,
             &tokens[consumed..],
             ends_early,
             containing_token,
@@ -353,6 +374,7 @@ impl<'a> GenericsParam<'a> {
         // actually be a type.
         if type_bound_errors.is_empty() && type_bound_res.is_ok() {
             return GenericTypeParam::consume(
+                file,
                 tokens,
                 ctx,
                 &tokens[..consumed],
@@ -366,9 +388,10 @@ impl<'a> GenericsParam<'a> {
         // Otherwise, we'll see if this can be successfully parsed as as a type
         let mut type_errors = Vec::new();
         let type_res = Type::consume(
+            file,
             &tokens[consumed..],
             TypeContext::GenericConstParam {
-                param: &tokens[..consumed],
+                param: Source::slice_span(file, &tokens[..consumed]),
                 ctx,
             },
             Restrictions::default(),
@@ -385,8 +408,8 @@ impl<'a> GenericsParam<'a> {
 
             // FIXME: If we find `"=" Expr` here, add that length to the full source.
             errors.push(Error::GenericConstParamMissingConst {
-                full_src: &tokens[..consumed + type_res_consumed],
-                type_src: &tokens[consumed..consumed + type_res_consumed],
+                full_src: Source::slice_span(file, &tokens[..consumed + type_res_consumed]),
+                type_src: Source::slice_span(file, &tokens[consumed..consumed + type_res_consumed]),
             });
 
             return Err(Some(consumed + type_res_consumed));
@@ -395,38 +418,42 @@ impl<'a> GenericsParam<'a> {
         // If neither of these worked, we'll go back to assuming it's a `GenericTypeParam`, and
         // produce the error from finding ":" instead of "::".
         errors.push(Error::Expected {
-            kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens },
-            found: Source::TokenResult(Ok(snd_token)),
+            kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens: Source::slice_span(file, prev_tokens )},
+            found: Source::token(file, snd_token),
         });
 
         Err(Some(consumed))
     }
 }
 
-impl<'a> GenericTypeParam<'a> {
+impl GenericTypeParam {
     /// Consumes a single generic type parameter as a prefix of the given tokens
     ///
     /// In the event of an error, the returned `Option` will be `None` if parsing within the
     /// current token tree should immediately stop, and `Some` if parsing may continue, indicating
     /// the number of tokens that were marked as invalid here.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
+        ctx: GenericsParamsContext,
+        prev_tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericTypeParam<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<GenericTypeParam, Option<usize>> {
+        let prev_tokens = Source::slice_span(file, prev_tokens);
+
         // Generics type parameters have the following form:
         //   Ident [ "::" TypeBound ] [ "=" Type ]
         // The rest of this function is fairly simple, following from this.
         let mut consumed = 0;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let name = Ident::parse(
+            file,
             tokens.get(consumed),
             IdentContext::TypeParam(ctx, prev_tokens),
-            end_source!(containing_token),
+            end_source!(file, containing_token),
             errors,
         )
         // TODO: Recover after failure here
@@ -443,7 +470,7 @@ impl<'a> GenericTypeParam<'a> {
                 after_type_bound,
                 ctx,
                 prev_tokens,
-                param: &tokens[..consumed],
+                param: Source::slice_span(file, &tokens[..consumed]),
             };
 
             expect!((
@@ -453,6 +480,7 @@ impl<'a> GenericTypeParam<'a> {
                     consumed += 1;
                     bound = Some(
                         TypeBound::consume(
+                            file,
                             &tokens[consumed..],
                             ends_early,
                             containing_token,
@@ -466,9 +494,10 @@ impl<'a> GenericTypeParam<'a> {
                     consumed += 1;
                     default_type = Some(
                         Type::consume(
+                            file,
                             &tokens[consumed..],
                             TypeContext::GenericTypeParam {
-                                param: &tokens[..consumed],
+                                param: Source::slice_span(file, &tokens[..consumed]),
                                 ctx,
                             },
                             Restrictions::default(),
@@ -491,7 +520,7 @@ impl<'a> GenericTypeParam<'a> {
         }
 
         Ok(GenericTypeParam {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             name,
             bound,
             default_type,
@@ -499,17 +528,18 @@ impl<'a> GenericTypeParam<'a> {
     }
 }
 
-impl<'a> GenericConstParam<'a> {
+impl GenericConstParam {
     /// Consumes a single generic `const` parameter as a prefix of the given tokens
     ///
     /// This function assumes that the first token it is given is the keyword `const`, and will
     /// panic if this is not the case.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericConstParam<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<GenericConstParam, Option<usize>> {
         // The BNF for constant parameters is fairly simple - most of the work is done by the
         // `Field` parser, so the BNF ends up simply being:
         //   GenericConstParam = "const" Field .
@@ -523,6 +553,7 @@ impl<'a> GenericConstParam<'a> {
 
         // We offset by 1 on each piece here because we've already consumed the "const" token
         let field = Field::consume(
+            file,
             &tokens[1..],
             FieldContext::GenericConstParam,
             ends_early,
@@ -534,35 +565,36 @@ impl<'a> GenericConstParam<'a> {
         let consumed = field.consumed() + 1;
 
         Ok(GenericConstParam {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             field,
         })
     }
 }
 
-impl<'a> GenericRefParam<'a> {
+impl GenericRefParam {
     /// Consumes a generic "ref" parameter as a prefix of the given tokens
     ///
     /// This function assumes that the first token in the list is the keyword `ref`, and will panic
     /// if this is not the case.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<GenericRefParam<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<GenericRefParam, Option<usize>> {
         assert_token!(
             tokens.first() => "keyword `const`",
             Ok(t) && TokenKind::Keyword(Kwd::Ref) => (),
         );
 
-        make_expect!(tokens, 1, ends_early, containing_token, errors);
+        make_expect!(file, tokens, 1, ends_early, containing_token, errors);
         expect!((
             Ok(t),
             TokenKind::Ident(name) => {
                 Ok(GenericRefParam {
-                    src: &tokens[..2],
-                    ref_name: Ident { src: t, name },
+                    src: Source::slice_span(file, &tokens[..2]),
+                    ref_name: Ident { src: t.span(file), name: (*name).into() },
                 })
             },
             @else(return None) => ExpectedKind::Ident(IdentContext::GenericRefParam),

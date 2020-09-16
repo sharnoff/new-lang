@@ -87,6 +87,24 @@ pub enum TokenKind<'a> {
     Ident(&'a str),
 }
 
+/// A marker version [`TokenKind`], so that the type of a token can be given independently of what
+/// it references
+///
+/// This type is returned from the [`kind`] method on a [`Token`].
+///
+/// [`TokenKind`]: enum.TokenKind.html
+/// [`Token`]: struct.Token.html
+/// [`kind`]: struct.Token.html#method.kind
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TokenKindMarker {
+    Punctuation(Punc),
+    Tree(Delim),
+    ProofLines,
+    Keyword(Kwd),
+    Literal(LiteralKind),
+    Ident,
+}
+
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
 pub enum Error<'a> {
@@ -98,6 +116,14 @@ pub enum Error<'a> {
     },
     UnclosedDelim(Delim, &'a [SimpleToken<'a>], Option<ProofSrc<'a>>),
     NestedProofLines(SimpleToken<'a>, SimpleToken<'a>),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ErrorKind {
+    UnexpectedCloseDelim(Delim),
+    MismatchedCloseDelim(Delim),
+    UnclosedDelim,
+    NestedProofLines,
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -567,6 +593,43 @@ impl<'a> Token<'a> {
             });
         }
     }
+
+    /// Returns the [`TokenKindMarker`] corresponding to this token's `kind` field
+    ///
+    /// Please note that this is *distinct* from the field, though related.
+    pub fn kind(&self) -> TokenKindMarker {
+        use TokenKind::*;
+        use TokenKindMarker as Tkm;
+
+        match &self.kind {
+            Punctuation(p) => Tkm::Punctuation(*p),
+            Tree { delim, .. } => Tkm::Tree(*delim),
+            ProofLines(_) => Tkm::ProofLines,
+            Keyword(k) => Tkm::Keyword(*k),
+            Literal(_, kind) => Tkm::Literal(*kind),
+            Ident(_) => Tkm::Ident,
+        }
+    }
+
+    /// Returns the [`Span`] corresponding to the token's place in the provided file
+    ///
+    /// This function does not provide any failsafes if the source file does not actually contain
+    /// the given token.
+    ///
+    /// [`Span`]: ../files/struct.Span.html
+    pub fn span(&self, file: &FileInfo) -> Span {
+        self.src[0]
+            .span_in(file)
+            .join(self.src.last().unwrap().span_in(file))
+    }
+
+    /// Returns the [`Span`] of the last [`SimpleToken`] comprising this token
+    ///
+    /// This is typically used for producing the end token for a delimited token (e.g. a closing
+    /// parenthesis).
+    pub fn end_span(&self, file: &FileInfo) -> Span {
+        self.src.last().unwrap().span_in(file)
+    }
 }
 
 impl<'a> FileTokenTree<'a> {
@@ -578,6 +641,43 @@ impl<'a> FileTokenTree<'a> {
         });
 
         errors
+    }
+}
+
+impl Error<'_> {
+    /// Given the source file that this error occured in, returns the span of the error
+    pub fn span(&self, file: &FileInfo) -> Span {
+        use Error::*;
+
+        match self {
+            UnexpectedCloseDelim(t)
+            | MismatchedCloseDelim { end: t, .. }
+            | UnclosedDelim(_, [t, ..], _)
+            | NestedProofLines(_, t) => t.span_in(file),
+            UnclosedDelim(_, [], _) => unreachable!(),
+        }
+    }
+
+    /// Returns the type of error
+    pub fn kind(&self) -> ErrorKind {
+        use tokens::TokenKind::{CloseCurly, CloseParen, CloseSquare};
+        use Error::*;
+
+        match self {
+            UnexpectedCloseDelim(token) => {
+                let delim = match token.kind {
+                    CloseParen => Delim::Parens,
+                    CloseCurly => Delim::Curlies,
+                    CloseSquare => Delim::Squares,
+                    _ => panic!("unexpected `UnexpectedCloseDelim` token {:?}", token),
+                };
+
+                ErrorKind::UnexpectedCloseDelim(delim)
+            }
+            MismatchedCloseDelim { delim, .. } => ErrorKind::MismatchedCloseDelim(*delim),
+            UnclosedDelim(_, _, _) => ErrorKind::UnclosedDelim,
+            NestedProofLines(_, _) => ErrorKind::NestedProofLines,
+        }
     }
 }
 

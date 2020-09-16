@@ -135,7 +135,7 @@ Type = NamedType
 
 NamedType = Path [ Refinements ] .
 RefType = "&" [ Refinements ] Type [ Refinements ] .
-MutType = [ "!" | "?" ] "mut" Type .
+MutType = [ "!" ] "mut" Type .
 ArrayType = "[" Type [ ";" Expr ] "]" .
 StructType = "{" [ StructTypeField { "," StructTypeField } [ "," ] ] "}" .
 TupleType = "(" [ TupleTypeElement { "," TupleTypeElement } [ "," ] ] ")" .

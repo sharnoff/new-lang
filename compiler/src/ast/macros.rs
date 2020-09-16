@@ -20,10 +20,10 @@ macro_rules! p {
 }
 
 macro_rules! end_source {
-    ($containing_token:expr) => {{
+    ($file:expr, $containing_token:expr) => {{
         match $containing_token {
-            Some(tt) => Source::EndDelim(tt),
-            None => Source::EOF,
+            Some(tt) => Source::end_delim($file, tt),
+            None => Source::eof($file),
         }
     }};
 }
@@ -117,15 +117,16 @@ macro_rules! first {
 // run
 #[rustfmt::skip]
 macro_rules! make_expect {
-    ($tokens:expr, $consumed:expr, $ends_early:expr, $containing_token:expr, $errors:expr) => {
+    ($file:expr, $tokens:expr, $consumed:expr, $ends_early:expr, $containing_token:expr, $errors:expr) => {
         macro_rules! expect {
             ($all:tt) => {
-                make_expect!(@inner: $tokens, $consumed, $ends_early, $containing_token, $errors, $all)
+                make_expect!(@inner: $file, $tokens, $consumed, $ends_early, $containing_token, $errors, $all)
             }
         }
     };
     (
         @inner:
+        $file:expr,
         $tokens:expr,
         $consumed:expr,
         $ends_early:expr,
@@ -140,7 +141,7 @@ macro_rules! make_expect {
     ) => {
         make_expect!(
             @inner:
-            $tokens, $consumed, $ends_early, $containing_token, $errors,
+            $file, $tokens, $consumed, $ends_early, $containing_token, $errors,
             (
                 Ok(_t),
                 $($($token_kind)|+ $(if $cond)? => $arm,)+
@@ -151,6 +152,7 @@ macro_rules! make_expect {
     };
     (
         @inner:
+        $file:expr,
         $tokens:expr,
         $consumed:expr,
         $ends_early:expr,
@@ -170,13 +172,13 @@ macro_rules! make_expect {
             None if $ends_early => make_expect!(@do_else: $else_tt, $consumed),
             // Otherwise, we *were* expecting the given token kind!
             None => {
-                make_expect!(@push: $errors, end_source!($containing_token), $($expected)+);
+                make_expect!(@push: $errors, end_source!($file, $containing_token), $($expected)+);
                 make_expect!(@do_else: $else_tt, $consumed);
             }
 
             Some(Err(_e)) => {
                 // Commented out because we probably don't want to *normally* generate double errors
-                // make_expect!(@push: $errors, Source::TokenResult(Err(*_e)), $($expected)+);
+                // make_expect!(@push: $errors, Source::from($file, Err(_e)), $($expected)+);
                 make_expect!(@do_else: $else_tt, $consumed);
             }
 
@@ -188,12 +190,13 @@ macro_rules! make_expect {
                 })*
                 #[allow(unreachable_patterns)]
                 _ => {
-                    make_expect!(@push: $errors, Source::TokenResult(Ok($token)), $($expected)+);
+                    make_expect!(@push: $errors, Source::token($file, $token), $($expected)+);
                     make_expect!(@do_else: $else_tt, $consumed);
                 }
             }
         }
     }};
+    // The helpers responsible for reporting an error:
     (@push: $errors:expr, $source:expr, @no_error $(,)?) => {};
     (@push: $errors:expr, $source:expr, $expected_kind:expr $(,)?) => {{
         $errors.push(Error::Expected {
@@ -201,6 +204,7 @@ macro_rules! make_expect {
             found: $source,
         });
     }};
+    // The control-flow related action taken in the case of an error
     (@do_else: (return Some), $consumed:expr) => {{ return Err(Some($consumed)) }};
     (@do_else: (return None), $consumed:expr) => {{ return Err(None) }};
     (@do_else: { $($exec:tt)* }, $consumed:expr) => {{ $($exec)* }};

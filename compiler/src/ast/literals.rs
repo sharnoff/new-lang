@@ -3,59 +3,79 @@
 // We'll just blanket import everything, just as the parent module blanket imports everything from
 // this module.
 use super::*;
+use crate::files::{FileInfo, Span};
 use crate::tokens::LiteralKind;
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
-#[derive(Debug, Copy, Clone)]
-pub struct Ident<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub name: &'a str,
+#[derive(Debug, Clone, Consumed)]
+pub struct Ident {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(1)]
+    pub name: String,
 }
 
-#[derive(Debug, Clone)]
-pub enum Literal<'a> {
-    Char(CharLiteral<'a>),
-    String(StringLiteral<'a>),
-    Int(IntLiteral<'a>),
-    Float(FloatLiteral<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum Literal {
+    Char(CharLiteral),
+    String(StringLiteral),
+    Int(IntLiteral),
+    Float(FloatLiteral),
 }
 
 /// Character literals
-#[derive(Debug, Clone)]
-pub struct CharLiteral<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub content: &'a str,
+#[derive(Debug, Clone, Consumed)]
+pub struct CharLiteral {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(1)]
+    pub content: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct StringLiteral<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub content: &'a str,
+#[derive(Debug, Clone, Consumed)]
+pub struct StringLiteral {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(1)]
+    pub content: String,
 }
 
 /// Integer literals
-#[derive(Debug, Clone)]
-pub struct IntLiteral<'a> {
-    pub(super) src: TokenSlice<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct IntLiteral {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
     /// The content of the literal
-    pub content: &'a str,
+    #[consumed(1)]
+    pub content: String,
+
     /// An optional type suffix - we use an `Ident` to pair it with the source
-    pub suffix: Option<Ident<'a>>,
+    pub suffix: Option<Ident>,
 }
 
 /// Floating-point literals, represented by two integer literals glued to a dot (`.`) between them
-#[derive(Debug, Clone)]
-pub struct FloatLiteral<'a> {
-    pub(super) src: TokenSlice<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct FloatLiteral {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
     /// The value before the decimal point
-    pub pre: &'a str,
+    #[consumed(1)]
+    pub pre: String,
+
     /// The value after the decimal point
-    pub post: &'a str,
+    #[consumed(1)]
+    pub post: String,
+
     /// An optional type suffix - we use an `Ident` to pair it with the source
-    pub suffix: Option<Ident<'a>>,
+    pub suffix: Option<Ident>,
 }
 
-impl<'a> Ident<'a> {
+impl Ident {
     /// Parses an identifier from the given token
     ///
     /// If the value of `token` is anything other than `Some(Ok(t))` where `t.kind` is an
@@ -65,21 +85,15 @@ impl<'a> Ident<'a> {
     /// `none_source` indicates the value to use as the source if the token is `None` - this
     /// typically corresponds to the source used for running out of tokens within a token tree.
     pub fn parse(
-        token: Option<&'a TokenResult<'a>>,
-        ctx: IdentContext<'a>,
-        none_source: Source<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Ident<'a>, ()> {
+        file: &FileInfo,
+        token: Option<&TokenResult>,
+        ctx: IdentContext,
+        none_source: Source,
+        errors: &mut Vec<Error>,
+    ) -> Result<Ident, ()> {
         let token = match token.map(|res| res.as_ref()) {
             Some(Ok(t)) => t,
-            Some(Err(e)) => {
-                errors.push(Error::Expected {
-                    kind: ExpectedKind::Ident(ctx),
-                    found: Source::TokenResult(Err(*e)),
-                });
-
-                return Err(());
-            }
+            Some(Err(_)) => return Err(()),
             None => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::Ident(ctx),
@@ -95,23 +109,26 @@ impl<'a> Ident<'a> {
             _ => {
                 errors.push(Error::Expected {
                     kind: ExpectedKind::Ident(ctx),
-                    found: Source::TokenResult(Ok(token)),
+                    found: Source::token(file, token),
                 });
 
                 return Err(());
             }
         };
 
-        Ok(Ident { name, src: token })
+        Ok(Ident {
+            name: String::from(*name),
+            src: token.span(file),
+        })
     }
 }
 
-impl<'a> Literal<'a> {
+impl Literal {
     /// Consumes a literal as a prefix of the given tokens
     ///
     /// This function expects the first token to be a literal (note: distinct from the syntax
     /// element), and will panic if this is not the case.
-    pub fn consume(tokens: TokenSlice<'a>) -> Result<Literal<'a>, Option<usize>> {
+    pub fn consume(file: &FileInfo, tokens: TokenSlice) -> Result<Literal, Option<usize>> {
         // There's a few different literals that we can have here. They all start with a "literal"
         // token, and some continue on to use further tokens afterwards.
         //
@@ -125,7 +142,8 @@ impl<'a> Literal<'a> {
 
         let (fst_token, value, kind) = assert_token!(
             tokens.first() => "literal",
-            Ok(t) && TokenKind::Literal(value, kind) => (t, value, kind),
+            // `value` is converted from &&str -> String
+            Ok(t) && TokenKind::Literal(value, kind) => (t, (*value).into(), kind),
         );
 
         // For character and string literals, we can simply return the values because they
@@ -136,13 +154,13 @@ impl<'a> Literal<'a> {
         match kind {
             LiteralKind::Char => {
                 return Ok(Literal::Char(CharLiteral {
-                    src: fst_token,
+                    src: fst_token.span(file),
                     content: value,
                 }));
             }
             LiteralKind::String => {
                 return Ok(Literal::String(StringLiteral {
-                    src: fst_token,
+                    src: fst_token.span(file),
                     content: value,
                 }));
             }
@@ -153,7 +171,7 @@ impl<'a> Literal<'a> {
         macro_rules! simple_int_literal {
             () => {{
                 Ok(Literal::Int(IntLiteral {
-                    src: &tokens[..1],
+                    src: fst_token.span(file),
                     content: value,
                     suffix: None,
                 }))
@@ -180,11 +198,11 @@ impl<'a> Literal<'a> {
                 // return it
                 TokenKind::Ident(suffix) => {
                     return Ok(Literal::Int(IntLiteral {
-                        src: &tokens[..2],
+                        src: fst_token.span(file).join(t.span(file)),
                         content: value,
                         suffix: Some(Ident {
-                            src: t,
-                            name: suffix,
+                            src: t.span(file),
+                            name: (*suffix).into(),
                         }),
                     }));
                 }
@@ -202,7 +220,7 @@ impl<'a> Literal<'a> {
         let (snd_token, post_value) = match tokens.get(2) {
             Some(Err(_)) | None => return simple_int_literal!(),
             Some(Ok(t)) => match &t.kind {
-                TokenKind::Literal(value, LiteralKind::Int) => (t, value),
+                TokenKind::Literal(value, LiteralKind::Int) => (t, (*value).into()),
                 _ => return simple_int_literal!(),
             },
         };
@@ -215,12 +233,12 @@ impl<'a> Literal<'a> {
                 Some(Ok(t)) => match &t.kind {
                     TokenKind::Ident(suffix) => {
                         return Ok(Literal::Float(FloatLiteral {
-                            src: &tokens[..4],
+                            src: fst_token.span(file).join(t.span(file)),
                             pre: value,
                             post: post_value,
                             suffix: Some(Ident {
-                                src: t,
-                                name: suffix,
+                                src: t.span(file),
+                                name: (*suffix).into(),
                             }),
                         }));
                     }
@@ -231,10 +249,20 @@ impl<'a> Literal<'a> {
 
         // Finally, we return a plain float literal
         Ok(Literal::Float(FloatLiteral {
-            src: &tokens[..3],
+            src: fst_token.span(file).join(snd_token.span(file)),
             pre: value,
             post: post_value,
             suffix: None,
         }))
+    }
+
+    /// Returns the `Span` corresponding to the source of the literal
+    pub fn span(&self) -> Span {
+        match self {
+            Literal::Char(lit) => lit.src,
+            Literal::String(lit) => lit.src,
+            Literal::Int(lit) => lit.src,
+            Literal::Float(lit) => lit.src,
+        }
     }
 }

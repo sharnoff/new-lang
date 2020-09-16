@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// An "impl" block - either as a standalone type or for implementing a trait
 ///
@@ -23,39 +24,46 @@ use super::*;
 /// [`Vis`]: enum.Vis.html
 /// [`ProofStmtsDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.ProofStmtsDisallowedBeforeItem
 /// [`VisDisallowedBeforeItem`]: ../errors/enum.Error.html#variant.VisDisallowedBeforeItem
-#[derive(Debug, Clone)]
-pub struct ImplBlock<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub trait_impl: Option<Path<'a>>,
-    pub impl_ty: Type<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ImplBlock {
+    #[consumed(1)] // 1 for leading "impl" keyword
+    pub(in crate::ast) src: Span,
+    // +1 for trailing "for" keyword
+    #[consumed(trait_impl.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))]
+    pub trait_impl: Option<Path>,
+    pub impl_ty: Type,
 
     /// The body of the `impl` block, if it is present. This type will be `None` if there was no
     /// body (i.e. if the item had a trailing semicolon).
-    pub body: Option<ImplBody<'a>>,
+    #[consumed(1)]
+    pub body: Option<ImplBody>,
 }
 
 /// A helper type for [`ImplBlock`](struct.ImplBlock.html)
 ///
 /// The source for this type is the single curly-brace enclosed token tree. For more general
 /// information, please refer to the documentation for `ImplBlock`.
-#[derive(Debug, Clone)]
-pub struct ImplBody<'a> {
-    pub(in crate::ast) src: &'a Token<'a>,
-    pub items: Vec<Item<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ImplBody {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub items: Vec<Item>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
-impl<'a> ImplBlock<'a> {
+impl ImplBlock {
     /// Consumes an `impl` block as a prefix of the given tokens
     ///
     /// This function assumes that the first token it is given is the keyword `impl`, and will
     /// panic if this is not the case.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<ImplBlock<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<ImplBlock, ItemParseErr> {
         assert_token!(
             tokens.first() => "keyword `impl`",
             Ok(t) && TokenKind::Keyword(Kwd::Impl) => (),
@@ -84,7 +92,7 @@ impl<'a> ImplBlock<'a> {
         // If we can't find either, then we'll produce a suitable error (there's some special cases
         // we'd like to be nice about).
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         // We'll define our own macro for sipmlifying error returns, just so that the `expect!`
         // calls aren't so messy.
@@ -104,7 +112,7 @@ impl<'a> ImplBlock<'a> {
             Ok(fst),
             TokenKind::Ident(_) => (),
             _ if Type::is_starting_token(fst) => jump_to_type = true,
-            @err TokenKind::Punctuation(Punc::Lt) => Error::GenericParamsOnImplBlock { src: fst },
+            @err TokenKind::Punctuation(Punc::Lt) => Error::GenericParamsOnImplBlock { src: Source::token(file, fst) },
             @else { return_err!() } => ExpectedKind::ImplTraitOrType,
         ));
 
@@ -114,7 +122,7 @@ impl<'a> ImplBlock<'a> {
         // If we aren't jumping to the type, we're parsing a path as our trait, then interpreting
         // it based on what comes next.
         if !jump_to_type {
-            let path = Path::consume(&tokens[consumed..], ends_early, containing_token, errors)
+            let path = Path::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
                 .map_err(ItemParseErr::add(consumed))?;
             consumed += path.consumed();
 
@@ -126,6 +134,7 @@ impl<'a> ImplBlock<'a> {
                 // was part of a type.
                 TokenKind::Punctuation(Punc::Or) => {
                     let refinements = Refinements::try_consume(
+                        file,
                         &tokens[consumed..],
                         Restrictions::default(),
                         ends_early,
@@ -137,7 +146,7 @@ impl<'a> ImplBlock<'a> {
                     consumed += refinements.consumed();
 
                     impl_ty = Some(Type::Named(NamedType {
-                        src: &tokens[path_start_idx..consumed],
+                        src: Source::slice_span(file, &tokens[path_start_idx..consumed]),
                         path,
                         refinements,
                     }));
@@ -149,7 +158,7 @@ impl<'a> ImplBlock<'a> {
                 TokenKind::Tree { delim: Delim::Curlies, .. }
                 | TokenKind::Punctuation(Punc::Semi) => {
                     impl_ty = Some(Type::Named(NamedType {
-                        src: &tokens[path_start_idx..consumed],
+                        src: Source::slice_span(file, &tokens[path_start_idx..consumed]),
                         path,
                         refinements: None,
                     }));
@@ -172,9 +181,10 @@ impl<'a> ImplBlock<'a> {
         // between a leading trait or type. If we haven't, we'll parse the type now.
         if impl_ty.is_none() {
             let ty = Type::consume(
+                file,
                 &tokens[consumed..],
                 TypeContext::ImplBlockType {
-                    prev_tokens: &tokens[..consumed],
+                    prev_tokens: Source::slice_span(file, &tokens[..consumed]),
                 },
                 Restrictions::default(),
                 ends_early,
@@ -197,10 +207,10 @@ impl<'a> ImplBlock<'a> {
                 let ends_early = false;
 
                 let (items, poisoned) =
-                    Item::parse_all(inner, ends_early, Some(body_token), errors);
+                    Item::parse_all(file, inner, ends_early, Some(body_token), errors);
 
                 body = Some(ImplBody {
-                    src: body_token,
+                    src: body_token.span(file),
                     items,
                     poisoned,
                 });
@@ -209,7 +219,7 @@ impl<'a> ImplBlock<'a> {
         ));
 
         Ok(ImplBlock {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             trait_impl,
             // We're safe to unwrap here becaues the value is always set by the time we get to this
             // point.

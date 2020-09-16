@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A `const` statment
 ///
@@ -32,11 +33,13 @@ use super::*;
 /// implementations) as the scoping is given instead by the visibility of the trait.
 ///
 /// [`TypeBound`]: struct.TypeBound.html
-#[derive(Debug, Clone)]
-pub struct ConstStmt<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub vis: Option<Vis<'a>>,
-    pub field: Field<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ConstStmt {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub vis: Option<Vis>,
+    #[consumed(field.consumed() + 1)] // +1 to account for leading "const"
+    pub field: Field,
 }
 
 /// A `static` statement
@@ -48,15 +51,17 @@ pub struct ConstStmt<'a> {
 /// For further information, refer to the documentation for [`const` statements].
 ///
 /// [`const` statements]: struct.ConstStmt.html
-#[derive(Debug, Clone)]
-pub struct StaticStmt<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub proof_stmts: Option<ProofStmts<'a>>,
-    pub vis: Option<Vis<'a>>,
-    pub field: Field<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StaticStmt {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub proof_stmts: Option<ProofStmts>,
+    pub vis: Option<Vis>,
+    #[consumed(field.consumed() + 1)] // +1 to account for leading "static"
+    pub field: Field,
 }
 
-impl<'a> ConstStmt<'a> {
+impl ConstStmt {
     /// Consumes a `const` item as a prefix of the given tokens
     ///
     /// Some of the pieces common to many items are passed into this function - namely `ident_idx`
@@ -69,17 +74,19 @@ impl<'a> ConstStmt<'a> {
     ///
     /// [`Item::consume`]: ../enum.Item.html#method.consume
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<ConstStmt<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        vis: Option<Vis>,
+    ) -> Result<ConstStmt, ItemParseErr> {
         let mut consumed = ident_idx;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let field = Field::consume(
+            file,
             &tokens[consumed..],
             FieldContext::ConstStmt,
             ends_early,
@@ -98,14 +105,14 @@ impl<'a> ConstStmt<'a> {
         ));
 
         Ok(ConstStmt {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             vis,
             field,
         })
     }
 }
 
-impl<'a> StaticStmt<'a> {
+impl StaticStmt {
     /// Consumes a `static` item as a prefix of the given tokens
     ///
     /// The arguments to this function serve the same purpose as those to [`FnDecl::consume`]; for
@@ -113,20 +120,22 @@ impl<'a> StaticStmt<'a> {
     ///
     /// [`FnDecl::consume`]: ../fndecl/struct.FnDecl.html#method.consume
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        proof_stmts: Option<ProofStmts<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<StaticStmt<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        proof_stmts: Option<ProofStmts>,
+        vis: Option<Vis>,
+    ) -> Result<StaticStmt, ItemParseErr> {
         // The portion of static statements that we need to parse isn't actually that much. This is
         // basically copied from `ConstStmt::consume` above.
         let mut consumed = ident_idx;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let field = Field::consume(
+            file,
             &tokens[consumed..],
             FieldContext::StaticStmt,
             ends_early,
@@ -145,7 +154,7 @@ impl<'a> StaticStmt<'a> {
         ));
 
         Ok(StaticStmt {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             proof_stmts,
             vis,
             field,

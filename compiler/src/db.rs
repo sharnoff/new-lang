@@ -31,16 +31,11 @@ hydra::make_database! {
     }
 }
 
-/// A wrapper around the simple tokens, token tree, and AST parsed from a file
-//
-// This type implements `Drop` carefully so that we're allowed to have the self-referential fields
-// following `tokens`
+/// A wrapper around a file and the [AST](../ast/index.html) parsed from it
 #[derive(Debug)]
 pub struct AstGroup {
     file: Arc<FileInfo>,
-    tokens: Vec<SimpleToken<'static>>,
-    tt: FileTokenTree<'static>,
-    items: Vec<crate::ast::Item<'static>>,
+    items: Vec<crate::ast::Item>,
 }
 
 #[hydra::query(GetAst)]
@@ -78,29 +73,10 @@ pub async fn ast_group(
             .await;
     }
 
-    let (items, _poisoned, _ast_errors) = crate::ast::try_parse(&tt.tokens, early_err);
-
-    // UNSAFE:
-    // We're able to extend the lifetime of everything here because the actual backing string for
-    // the reference is kept alive by the `Arc`, which we get through `file_content` -- that's then
-    // returned at the end alongside everything else.
-    let items: Vec<crate::ast::Item<'static>> = unsafe { std::mem::transmute(items) };
-    let tt: FileTokenTree<'static> = unsafe { std::mem::transmute(tt) };
-    let tokens: Vec<SimpleToken<'static>> = unsafe { std::mem::transmute(tokens) };
-
-    Ok(Ok(Arc::new(AstGroup {
-        file,
-        tokens,
-        tt,
-        items,
-    })))
-}
-
-impl Drop for AstGroup {
-    fn drop(&mut self) {
-        // Drop all of the items in the opposite order to how they were created
-        self.items.drain(..);
-        self.tt.tokens.drain(..);
-        self.tokens.drain(..);
+    let (items, _poisoned, ast_errors) = crate::ast::try_parse(&file, &tt.tokens, early_err);
+    if !ast_errors.is_empty() {
+        db.extend_errors(job, ast_errors).await;
     }
+
+    Ok(Ok(Arc::new(AstGroup { file, items })))
 }

@@ -1,28 +1,32 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A macro definition
 ///
 /// This feature is a work-in-progress, and so this type has not yet been defined.
-#[derive(Debug, Clone)]
-pub struct MacroDef<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MacroDef {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    #[consumed(0)]
     placeholder: (),
 }
 
-impl<'a> MacroDef<'a> {
+impl MacroDef {
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         _ends_early: bool,
-        _containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        _proof_stmts: Option<ProofStmts<'a>>,
-        _vis: Option<Vis<'a>>,
-    ) -> Result<MacroDef<'a>, ItemParseErr> {
+        _containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        _proof_stmts: Option<ProofStmts>,
+        _vis: Option<Vis>,
+    ) -> Result<MacroDef, ItemParseErr> {
         let macro_idx = ident_idx - 1;
 
         errors.push(Error::MacrosUnimplemented {
-            macro_kwd: tokens[macro_idx].as_ref().unwrap(),
+            macro_kwd: Source::from(file, &tokens[macro_idx]),
         });
 
         Err(ItemParseErr {

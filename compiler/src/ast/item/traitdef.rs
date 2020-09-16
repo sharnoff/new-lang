@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A trait definition
 ///
@@ -23,18 +24,23 @@ use super::*;
 /// of an empty curly-brace block.
 ///
 /// [`TypeBound`]: struct.TypeBound.html
-#[derive(Debug, Clone)]
-pub struct TraitDef<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub proof_stmts: Option<ProofStmts<'a>>,
-    pub vis: Option<Vis<'a>>,
-    pub name: Ident<'a>,
-    pub generic_params: Option<GenericsParams<'a>>,
-    pub super_traits: Option<TypeBound<'a>>,
-    pub body: Option<ImplBody<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TraitDef {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub proof_stmts: Option<ProofStmts>,
+    pub vis: Option<Vis>,
+    #[consumed(name.consumed() + 1)] // +1 for "trait" keyword
+    pub name: Ident,
+    pub generic_params: Option<GenericsParams>,
+    // +1 for leading "::"
+    #[consumed(super_traits.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))]
+    pub super_traits: Option<TypeBound>,
+    #[consumed(1)]
+    pub body: Option<ImplBody>,
 }
 
-impl<'a> TraitDef<'a> {
+impl TraitDef {
     /// Consumes a trait definition as a prefix of the given tokens
     ///
     /// The semantics for this function are identical to what's described in the documentation for
@@ -43,19 +49,20 @@ impl<'a> TraitDef<'a> {
     ///
     /// [`FnDecl::consume`]: ../fndecl/struct.FnDecl.html#method.consume
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        proof_stmts: Option<ProofStmts<'a>>,
-        vis: Option<Vis<'a>>,
-    ) -> Result<TraitDef<'a>, ItemParseErr> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        proof_stmts: Option<ProofStmts>,
+        vis: Option<Vis>,
+    ) -> Result<TraitDef, ItemParseErr> {
         // We'll do a little bit of setup here.
 
         let mut consumed = ident_idx;
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
         macro_rules! err {
             () => {{
                 return Err(ItemParseErr { consumed });
@@ -65,21 +72,22 @@ impl<'a> TraitDef<'a> {
         let kwd_idx = ident_idx - 1;
         let kwd_token = assert_token!(
             tokens.get(kwd_idx) => "keyword `trait`",
-            Ok(t) && TokenKind::Keyword(Kwd::Trait) => t,
+            Ok(t) && TokenKind::Keyword(Kwd::Trait) => Source::token(file, t),
         );
 
         // We're expecting a name at `ident_idx`
         let name = expect!((
             Ok(t),
-            TokenKind::Ident(name) => Ident { src: t, name },
+            TokenKind::Ident(name) => Ident { src: t.span(file), name: (*name).into() },
             @else { err!() } => ExpectedKind::Ident(IdentContext::TraitDef { kwd_token }),
         ));
 
         consumed += 1;
 
         let generic_params = GenericsParams::try_consume(
+            file,
             &tokens[consumed..],
-            GenericsParamsContext::TraitDef(&tokens[kwd_idx..consumed]),
+            GenericsParamsContext::TraitDef(Source::slice_span(file, &tokens[kwd_idx..consumed])),
             |_| true,
             ends_early,
             containing_token,
@@ -97,6 +105,7 @@ impl<'a> TraitDef<'a> {
                 consumed += 1;
 
                 let bound = TypeBound::consume(
+                    file,
                     &tokens[consumed..],
                     ends_early,
                     containing_token,
@@ -122,10 +131,10 @@ impl<'a> TraitDef<'a> {
                 let ends_early = false;
 
                 let (items, poisoned) =
-                    Item::parse_all(inner, ends_early, Some(token), errors);
+                    Item::parse_all(file, inner, ends_early, Some(token), errors);
 
                 body = Some(ImplBody {
-                    src: token,
+                    src: token.span(file),
                     items,
                     poisoned,
                 });
@@ -134,7 +143,7 @@ impl<'a> TraitDef<'a> {
         ));
 
         Ok(TraitDef {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             proof_stmts,
             vis,
             name,

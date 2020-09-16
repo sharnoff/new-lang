@@ -1,6 +1,7 @@
 //! Parsing for places where we might either have a type *or* an expression
 
 use super::*;
+use crate::files::{FileInfo, Span};
 use crate::tokens::LiteralKind;
 
 /// A wrapper type for [`TypeOrExpr`] parse results that might not be ambiguous
@@ -10,11 +11,11 @@ use crate::tokens::LiteralKind;
 ///
 /// [`TypeOrExpr`]: enum.TypeOrExpr.html
 /// [`TypeOrExpr::consume`]: enum.TypeOrExpr.html#method.consume
-#[derive(Debug, Clone)]
-pub enum MaybeTypeOrExpr<'a> {
-    Type(Type<'a>),
-    Expr(Expr<'a>),
-    Ambiguous(TypeOrExpr<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum MaybeTypeOrExpr {
+    Type(Type),
+    Expr(Expr),
+    Ambiguous(TypeOrExpr),
 }
 
 /// A local helper type for handling the output of the individual parser functions
@@ -81,13 +82,13 @@ impl<T> Marker<T> {
 ///
 /// [type]: ../types/enum.Type.html
 /// [expression]: ../expr/enum.Expr.html
-#[derive(Debug, Clone)]
-pub enum TypeOrExpr<'a> {
-    Named(Path<'a>),
-    Ref(RefTypeOrExpr<'a>),
-    Tuple(TupleTypeOrExpr<'a>),
-    Struct(StructTypeOrExpr<'a>),
-    Array(ArrayTypeOrExpr<'a>),
+#[derive(Debug, Clone, Consumed)]
+pub enum TypeOrExpr {
+    Named(Path),
+    Ref(RefTypeOrExpr),
+    Tuple(TupleTypeOrExpr),
+    Struct(StructTypeOrExpr),
+    Array(ArrayTypeOrExpr),
 }
 
 /// An ambiguous reference type or expression
@@ -97,12 +98,17 @@ pub enum TypeOrExpr<'a> {
 /// RefTypeOrExpr = "&" [ "mut" ] TypeOrExpr .
 /// ```
 /// For more information, please refer to the documentation of [`TypeOrExpr`](enum.TypeOrExpr.html).
-#[derive(Debug, Clone)]
-pub struct RefTypeOrExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub ref_token: &'a Token<'a>,
-    pub mut_token: Option<&'a Token<'a>>,
-    pub value: Box<TypeOrExpr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct RefTypeOrExpr {
+    #[consumed(@ignore)]
+    pub(super) src: Span,
+
+    #[consumed(1)]
+    pub ref_token: Span,
+
+    #[consumed(if mut_token.is_some() { 1 } else { 0 })]
+    pub mut_token: Option<Span>,
+    pub value: Box<TypeOrExpr>,
 }
 
 /// An ambiguous tuple type or expression
@@ -112,10 +118,14 @@ pub struct RefTypeOrExpr<'a> {
 /// TupleTypeOrExpr = "(" [ TypeOrExpr { "," TypeOrExpr } [ "," ] ] ")" .
 /// ```
 /// For more information, please refer to the documentation of [`TypeOrExpr`](enum.TypeOrExpr.html).
-#[derive(Debug, Clone)]
-pub struct TupleTypeOrExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub elements: Vec<TypeOrExpr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct TupleTypeOrExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub elements: Vec<TypeOrExpr>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -131,19 +141,27 @@ pub struct TupleTypeOrExpr<'a> {
 /// attempts to resolve the syntax of this type.
 ///
 /// For more information, please refer to the documentation of [`TypeOrExpr`](enum.TypeOrExpr.html).
-#[derive(Debug, Clone)]
-pub struct StructTypeOrExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub fields: Vec<StructFieldTypeOrExpr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructTypeOrExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub fields: Vec<StructFieldTypeOrExpr>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
 /// A helper type for [`StructTypeOrExpr`](struct.StructTypeOrExpr.html)
-#[derive(Debug, Clone)]
-pub struct StructFieldTypeOrExpr<'a> {
-    pub(super) src: TokenSlice<'a>,
-    pub name: Ident<'a>,
-    pub value: TypeOrExpr<'a>,
+#[derive(Debug, Clone, Consumed)]
+pub struct StructFieldTypeOrExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub name: Ident,
+    #[consumed(@ignore)]
+    pub value: TypeOrExpr,
 }
 
 /// An ambiguous array type or expression
@@ -157,29 +175,35 @@ pub struct StructFieldTypeOrExpr<'a> {
 /// not be present.
 ///
 /// For more information, please refer to the documentation of [`TypeOrExpr`](enum.TypeOrExpr.html).
-#[derive(Debug, Clone)]
-pub struct ArrayTypeOrExpr<'a> {
-    pub(super) src: &'a Token<'a>,
-    pub value: Option<Box<TypeOrExpr<'a>>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct ArrayTypeOrExpr {
+    #[consumed(1)]
+    pub(super) src: Span,
+
+    #[consumed(@ignore)]
+    pub value: Option<Box<TypeOrExpr>>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
-impl<'a> TypeOrExpr<'a> {
+impl TypeOrExpr {
     /// Consumes a type or expression as a prefix of the given tokens, subject to the provided set
     /// of expression restrictions
     ///
     /// This function makes no assumptions about its input
     pub fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         expr_delim: ExprDelim,
         restrictions: Restrictions,
-        type_ctx: TypeContext<'a>,
+        type_ctx: TypeContext,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<MaybeTypeOrExpr<'a>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<MaybeTypeOrExpr, Option<usize>> {
         let mut local_errors = Vec::new();
         let marker = TypeOrExpr::marker_consume(
+            file,
             tokens,
             expr_delim,
             restrictions,
@@ -195,6 +219,7 @@ impl<'a> TypeOrExpr<'a> {
             }
             Marker::Expr => {
                 return Expr::consume(
+                    file,
                     tokens,
                     expr_delim,
                     restrictions,
@@ -206,6 +231,7 @@ impl<'a> TypeOrExpr<'a> {
             }
             Marker::Type => {
                 return Type::consume(
+                    file,
                     tokens,
                     type_ctx,
                     restrictions,
@@ -224,14 +250,15 @@ impl<'a> TypeOrExpr<'a> {
     /// [`TypeOrExpr::consume`]: #method.consume
     /// [`Marker<TypeOrExpr>`]: enum.Marker.html
     fn marker_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         expr_delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Marker<TypeOrExpr<'a>>, Option<usize>> {
-        make_expect!(tokens, 0, ends_early, containing_token, errors);
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Marker<TypeOrExpr>, Option<usize>> {
+        make_expect!(file, tokens, 0, ends_early, containing_token, errors);
 
         let maybe_expr;
         let maybe_type;
@@ -253,11 +280,17 @@ impl<'a> TypeOrExpr<'a> {
         }
 
         let marker = match &fst_token.kind {
-            TokenKind::Ident(_) => {
-                TypeOrExpr::consume_path(tokens, expr_delim, ends_early, containing_token, errors)?
-                    .map(TypeOrExpr::Named)
-            }
+            TokenKind::Ident(_) => TypeOrExpr::consume_path(
+                file,
+                tokens,
+                expr_delim,
+                ends_early,
+                containing_token,
+                errors,
+            )?
+            .map(TypeOrExpr::Named),
             TokenKind::Punctuation(Punc::And) => RefTypeOrExpr::consume(
+                file,
                 tokens,
                 expr_delim,
                 restrictions,
@@ -270,17 +303,17 @@ impl<'a> TypeOrExpr<'a> {
                 delim: Delim::Parens,
                 inner,
                 ..
-            } => TupleTypeOrExpr::parse(fst_token, inner, errors).map(TypeOrExpr::Tuple),
+            } => TupleTypeOrExpr::parse(file, fst_token, inner, errors).map(TypeOrExpr::Tuple),
             TokenKind::Tree {
                 delim: Delim::Curlies,
                 inner,
                 ..
-            } => StructTypeOrExpr::parse(fst_token, inner, errors).map(TypeOrExpr::Struct),
+            } => StructTypeOrExpr::parse(file, fst_token, inner, errors).map(TypeOrExpr::Struct),
             TokenKind::Tree {
                 delim: Delim::Squares,
                 inner,
                 ..
-            } => ArrayTypeOrExpr::parse(fst_token, inner, errors).map(TypeOrExpr::Array),
+            } => ArrayTypeOrExpr::parse(file, fst_token, inner, errors).map(TypeOrExpr::Array),
 
             // We should have had one of the above tokens guaranteed by the original match
             // statement
@@ -305,7 +338,7 @@ impl<'a> TypeOrExpr<'a> {
             Some(Ok(t)) => t,
         };
 
-        let continue_expr = Expr::can_continue_with(&tokens[consumed..], restrictions);
+        let continue_expr = Expr::can_continue_with(file, &tokens[consumed..], restrictions);
         let continue_type = type_or_expr.can_continue_type(next_token);
 
         if !continue_expr && !continue_type {
@@ -323,6 +356,7 @@ impl<'a> TypeOrExpr<'a> {
         // We don't need to double-check that it's a pipe, because
         // `Refinements::consume_if_not_expr` will panic for us if given invalid input.
         let maybe_refs: Option<Refinements> = Refinements::consume_if_not_expr(
+            file,
             &tokens[consumed..],
             expr_delim,
             restrictions,
@@ -346,19 +380,26 @@ impl<'a> TypeOrExpr<'a> {
     /// the case. It does not, however, assume that angle brackets *must* constitute generics
     /// arguments.
     fn consume_path(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         expr_delim: ExprDelim,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Marker<Path<'a>>, Option<usize>> {
-        let base =
-            Expr::consume_path_component(tokens, expr_delim, ends_early, containing_token, errors)?;
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Marker<Path>, Option<usize>> {
+        let base = Expr::consume_path_component(
+            file,
+            tokens,
+            expr_delim,
+            ends_early,
+            containing_token,
+            errors,
+        )?;
 
         let mut consumed = base.consumed();
         let mut components = vec![base];
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         while let Some(TokenKind::Punctuation(Punc::Dot)) = kind!(tokens)(consumed) {
             consumed += 1;
@@ -374,6 +415,7 @@ impl<'a> TypeOrExpr<'a> {
 
             // If we got here, we had an identifier; we'll consume the next component
             let next = Expr::consume_path_component(
+                file,
                 &tokens[consumed..],
                 expr_delim,
                 ends_early,
@@ -387,7 +429,7 @@ impl<'a> TypeOrExpr<'a> {
         }
 
         Ok(Marker::Either(Path {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             components,
         }))
     }
@@ -413,15 +455,16 @@ impl<'a> TypeOrExpr<'a> {
     }
 }
 
-impl<'a> RefTypeOrExpr<'a> {
+impl RefTypeOrExpr {
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         expr_delim: ExprDelim,
         restrictions: Restrictions,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Marker<RefTypeOrExpr<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Marker<RefTypeOrExpr>, Option<usize>> {
         // Here's the bnf for reference types and reference expressions:
         //   RefType = "&" [ Refinements ] Type .
         //        -> = "&" [ Refinements ] [ [ "!" ] "mut" ] Type .
@@ -431,11 +474,11 @@ impl<'a> RefTypeOrExpr<'a> {
 
         let ref_token = assert_token!(
             tokens.first() => "ampersand (`&`)",
-            Ok(t) && TokenKind::Punctuation(Punc::And) => t,
+            Ok(t) && TokenKind::Punctuation(Punc::And) => t.span(file),
         );
 
         let mut consumed = 1;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         // From the specification above, we can deduce the set of tokens that are allowed
         // immediately following the reference:
@@ -461,7 +504,7 @@ impl<'a> RefTypeOrExpr<'a> {
                     @else(return None) => ExpectedKind::TypeOrExprFollowRefNot,
                 ));
             },
-            TokenKind::Keyword(Kwd::Mut) => Some(t),
+            TokenKind::Keyword(Kwd::Mut) => Some(t.span(file)),
             _ if {
                 maybe_expr = Expr::is_starting_token(t);
                 maybe_type = Type::is_starting_token(t);
@@ -498,6 +541,7 @@ impl<'a> RefTypeOrExpr<'a> {
 
         // Otherwise, we parse as ambiguous and return
         let marker_value = TypeOrExpr::marker_consume(
+            file,
             &tokens[consumed..],
             expr_delim,
             restrictions,
@@ -514,7 +558,7 @@ impl<'a> RefTypeOrExpr<'a> {
                 consumed += value.consumed();
 
                 Ok(Marker::Either(RefTypeOrExpr {
-                    src: &tokens[..consumed],
+                    src: Source::slice_span(file, &tokens[..consumed]),
                     ref_token,
                     mut_token,
                     value: Box::new(value),
@@ -524,13 +568,14 @@ impl<'a> RefTypeOrExpr<'a> {
     }
 }
 
-impl<'a> TupleTypeOrExpr<'a> {
+impl TupleTypeOrExpr {
     /// Parses the entire input as a tuple type or expression
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Marker<TupleTypeOrExpr<'a>> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Marker<TupleTypeOrExpr> {
         // Tuple types and expressions are both represented by the following BNF:
         //   "(" [ E { "," E } [ "," ] ] ")"
         // for some element `E`. Individually, exprssions have `E = Expr`, and types have
@@ -546,14 +591,15 @@ impl<'a> TupleTypeOrExpr<'a> {
         let mut elements = Vec::new();
         let mut poisoned = false;
 
-        make_expect!(inner, consumed, ends_early, Some(src), errors);
+        make_expect!(file, inner, consumed, ends_early, Some(src), errors);
 
         while consumed < inner.len() {
-            if let Some(_) = Vis::try_consume(&inner[consumed..]) {
+            if let Some(_) = Vis::try_consume(file, &inner[consumed..]) {
                 return Marker::Type;
             }
 
             let res = TypeOrExpr::marker_consume(
+                file,
                 &inner[consumed..],
                 ExprDelim::Comma,
                 Restrictions::default(),
@@ -590,22 +636,23 @@ impl<'a> TupleTypeOrExpr<'a> {
         }
 
         Marker::Either(TupleTypeOrExpr {
-            src,
+            src: src.span(file),
             elements,
             poisoned,
         })
     }
 }
 
-impl<'a> StructTypeOrExpr<'a> {
+impl StructTypeOrExpr {
     /// Parses the entire input as a struct type or expression
     ///
     /// Note that block expressions *are* included as able to be parsed here.
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Marker<StructTypeOrExpr<'a>> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Marker<StructTypeOrExpr> {
         // Because we need to explicitly account for block expressions, we have a bit of a challenge
         // in parsing here. For convenience, we'll repeat the BNF definitions of each of the
         // relevant syntax constructs.
@@ -653,7 +700,7 @@ impl<'a> StructTypeOrExpr<'a> {
         macro_rules! return_empty {
             (poisoned = $p:expr) => {{
                 return Marker::Either(StructTypeOrExpr {
-                    src,
+                    src: src.span(file),
                     fields: Vec::new(),
                     poisoned: $p,
                 });
@@ -663,11 +710,11 @@ impl<'a> StructTypeOrExpr<'a> {
         let ends_early = false;
         let mut consumed = 0;
 
-        make_expect!(inner, consumed, ends_early, Some(src), errors);
+        make_expect!(file, inner, consumed, ends_early, Some(src), errors);
 
         // First up: If we find a visibility qualifier, we know it's either a block expression
         // starting with an item or a type:
-        let start_vis = Vis::try_consume(inner);
+        let start_vis = Vis::try_consume(file, inner);
 
         if start_vis.is_some() {
             consumed += start_vis.consumed();
@@ -718,12 +765,12 @@ impl<'a> StructTypeOrExpr<'a> {
                         // `Ident ","` must be a struct expression
                         Some(TokenKind::Punctuation(Punc::Comma)) => return Marker::Expr,
                         // Discussed above:
-                        Some(_) if Expr::can_follow_ident(&inner[1..]) => return Marker::Expr,
+                        Some(_) if Expr::can_follow_ident(file, &inner[1..]) => return Marker::Expr,
                         // And finally, the error case
                         Some(_) => {
                             errors.push(Error::Expected {
                                 kind: ExpectedKind::StructTypeOrExprFollowIdent,
-                                found: (&inner[1]).into(),
+                                found: Source::from(file, &inner[1]),
                             });
 
                             return_empty!(poisoned = true);
@@ -743,8 +790,13 @@ impl<'a> StructTypeOrExpr<'a> {
         consumed = 0; // reset consumed so we start at the beginning of a field
 
         while consumed < inner.len() {
-            let field_res =
-                StructFieldTypeOrExpr::consume(&inner[consumed..], ends_early, Some(src), errors);
+            let field_res = StructFieldTypeOrExpr::consume(
+                file,
+                &inner[consumed..],
+                ends_early,
+                Some(src),
+                errors,
+            );
 
             match field_res {
                 Ok(Marker::Type) => return Marker::Type,
@@ -774,21 +826,22 @@ impl<'a> StructTypeOrExpr<'a> {
         }
 
         Marker::Either(StructTypeOrExpr {
-            src,
+            src: src.span(file),
             fields,
             poisoned,
         })
     }
 }
 
-impl<'a> StructFieldTypeOrExpr<'a> {
+impl StructFieldTypeOrExpr {
     /// Consumes a single field of a struct that may either correspond to a type or an expression
     fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Marker<StructFieldTypeOrExpr<'a>>, Option<usize>> {
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+    ) -> Result<Marker<StructFieldTypeOrExpr>, Option<usize>> {
         // There's a lot that this function needs to handle that might not be immediately obvious.
         // Because *all* of the syntactical expression available both by struct *types* and struct
         // *expressions* must be correctly parsed here, we end up with a lot more to handle than
@@ -803,18 +856,18 @@ impl<'a> StructFieldTypeOrExpr<'a> {
         // need in order to efficiently parse this.
         //
         // So: The first thing we need to do is to try to parse a visibility qualifier:
-        if Vis::try_consume(tokens).is_some() {
+        if Vis::try_consume(file, tokens).is_some() {
             // If there *was* a visibility qualifier, this must have been a type field:
             return Ok(Marker::Type);
         }
 
         let mut consumed = 0;
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         // Otherwise, we're expecting an identifier:
         let name = expect!((
             Ok(src),
-            TokenKind::Ident(name) => Ident { src, name },
+            TokenKind::Ident(name) => Ident { src: src.span(file), name: (*name).into() },
             @else(return None) => ExpectedKind::StructTypeOrExprFieldNameOrVis,
         ));
 
@@ -842,6 +895,7 @@ impl<'a> StructFieldTypeOrExpr<'a> {
         // From the documentation for `StructExpr`, we can see that the expression cannot include
         // assignment.
         let marker = TypeOrExpr::marker_consume(
+            file,
             &tokens[consumed..],
             ExprDelim::StructFields,
             Restrictions::default().no_assignment(),
@@ -868,20 +922,21 @@ impl<'a> StructFieldTypeOrExpr<'a> {
         }
 
         Ok(Marker::Either(StructFieldTypeOrExpr {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             name,
             value,
         }))
     }
 }
 
-impl<'a> ArrayTypeOrExpr<'a> {
+impl ArrayTypeOrExpr {
     /// Parses the entire input as an array type or expression
     fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Marker<ArrayTypeOrExpr<'a>> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> Marker<ArrayTypeOrExpr> {
         let ends_early = false;
 
         // The ambiguous overlap between array types and expressions is only a single-element
@@ -902,6 +957,7 @@ impl<'a> ArrayTypeOrExpr<'a> {
 
         // Otherwise, we *must* parse a `TypeOrExpr`:
         let res = TypeOrExpr::marker_consume(
+            file,
             inner,
             // We give 'commas' as our delimiter, because it's *possible* for that to be the case
             ExprDelim::Comma,
@@ -916,7 +972,7 @@ impl<'a> ArrayTypeOrExpr<'a> {
             Ok(Marker::Type) => return Marker::Type,
             Err(_) => {
                 return Marker::Either(ArrayTypeOrExpr {
-                    src,
+                    src: src.span(file),
                     value: None,
                     poisoned: true,
                 })
@@ -929,7 +985,7 @@ impl<'a> ArrayTypeOrExpr<'a> {
         // defined as exactly `"[" TypeOrExpr "]"`, which is what we have here.
         if inner.len() <= value.consumed() {
             return Marker::Either(ArrayTypeOrExpr {
-                src,
+                src: src.span(file),
                 value: Some(Box::new(value)),
                 poisoned: false,
             });
@@ -937,14 +993,14 @@ impl<'a> ArrayTypeOrExpr<'a> {
 
         // Otherwise, there's only two tokens that are allowed to follow here - they also happen to
         // fully disambiguate here.
-        make_expect!(inner, value.consumed(), ends_early, Some(src), errors);
+        make_expect!(file, inner, value.consumed(), ends_early, Some(src), errors);
         expect!((
             Ok(_),
             TokenKind::Punctuation(Punc::Comma) => Marker::Expr,
             // As it stands, only array types can specify the length with a semicolon
             TokenKind::Punctuation(Punc::Semi) => Marker::Type,
             @else { return Marker::Either(ArrayTypeOrExpr {
-                src,
+                src: src.span(file),
                 value: Some(Box::new(value)),
                 poisoned: true,
             }) } => ExpectedKind::ArrayTypeOrExprCommaOrSemi,

@@ -1,48 +1,41 @@
 //! Error types and messages for parsing into the AST
 
-use super::{ExprDelim, Ident, TokenSlice};
-use crate::error::{Builder as ErrorBuilder, ToError, ERR_COLOR};
-use crate::token_tree::{self, Kwd, Token};
+use super::{ExprDelim, TokenResult};
+use crate::error::{Builder as ErrorBuilder, ERR_COLOR};
+use crate::files::{FileInfo, Span};
+use crate::token_tree::{self, Kwd};
+use crate::token_tree::{Token, TokenKindMarker as TokenKind};
 use std::ops::Range;
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug)]
-pub enum Error<'a> {
+pub enum Error {
     /// A catch-all error for generically expecting certain tokens or syntax elements
-    Expected {
-        kind: ExpectedKind<'a>,
-        found: Source<'a>,
-    },
+    Expected { kind: ExpectedKind, found: Source },
 
     /// Certain `Item`s are not allowed to have proof statements before them. This error allows us
     /// to give a clear error message when this type of mistake has been made.
-    ProofStmtsDisallowedBeforeItem {
-        stmts: TokenSlice<'a>,
-        item_kind: ItemKind,
-    },
+    ProofStmtsDisallowedBeforeItem { stmts: Span, item_kind: ItemKind },
 
     /// Certain `Item`s aren't allowed to have visibility qualifiers before them. This error allows
     /// us to give a clear error message when this type of mistake has been made.
-    VisDisallowedBeforeItem {
-        vis: Source<'a>,
-        item_kind: ItemKind,
-    },
+    VisDisallowedBeforeItem { vis: Span, item_kind: ItemKind },
 
     /// Generic const parameters are required to start with the keyword "const". This error results
     /// from cases where we expect the user has mistakenly missed this piece.
     GenericConstParamMissingConst {
         /// The complete source for the generic parameter that's been parsed. The first two tokens
         /// here are guaranteed to match `[ Ident, ":" ]`.
-        full_src: TokenSlice<'a>,
+        full_src: Span,
         /// The source for the *type* we parsed.
-        type_src: TokenSlice<'a>,
+        type_src: Span,
     },
 
     /// The user has attempted to write `"impl" "<"`, which might indicate generic parameters in
     /// other languages (e.g. Rust), but is not allowed here.
     GenericParamsOnImplBlock {
         /// The less-than token immediately following the `impl`
-        src: &'a Token<'a>,
+        src: Source,
     },
 
     /// In some places (e.g. 'if' conditions or match scrutinee expressions), curly braces are not
@@ -50,53 +43,41 @@ pub enum Error<'a> {
     CurliesDisallowed {
         ctx: NoCurlyContext,
         /// The curly brace that was found
-        source: Source<'a>,
+        src: Source,
     },
 
     /// Some delimited expressions don't allow colons
-    UnexpectedExprColon {
-        delim: ExprDelim,
-        src: TokenSlice<'a>,
-    },
+    UnexpectedExprColon { delim: ExprDelim, src: Span },
 
     /// There's a unique sort of error that we might run across when parsing an expression. For
     /// more information about this, refer to `Expr::consume_path_component`.
     ///
     /// This error is mostly defined by the place that generates it.
-    AmbiguousCloseGenerics {
-        path: TokenSlice<'a>,
-        op_src: TokenSlice<'a>,
-    },
+    AmbiguousCloseGenerics { path: Span, op_src: Span },
 
     /// A comma was found after generics arguments
-    UnexpectedGenericsArgsComma {
-        ident: &'a Token<'a>,
-        args: Vec<TokenSlice<'a>>,
-    },
+    UnexpectedGenericsArgsComma { ident: Span, args: Vec<Span> },
 
     /// Assignment operators are disallowed in struct expressions. For more information, please
     /// refer to the documentation for `StructExpr` and the comment inside of
     /// `StructTypeOrExpr::parse`.
-    AssignOpDisallowedInStructExpr { op_src: TokenSlice<'a> },
+    AssignOpDisallowedInStructExpr { op_src: Span },
 
     /// An anonymous struct instantiation was being used as a "big" expression; this is not
     /// allowed, but block expressions *are*.
-    StructAsBigExpr {
-        outer: &'a Token<'a>,
-        ctx: BigExprContext<'a>,
-    },
+    StructAsBigExpr { outer: Span, ctx: BigExprContext },
 
     /// There are expression contexts (namely: do..while conditions) where expressions with
     /// optional else branches aren't allowed.
-    PotentialElseDisallowed { src: &'a Token<'a>, kwd: Kwd },
+    PotentialElseDisallowed { src: Source, kwd: Kwd },
 
     /// Do..while expressions aren't allowed as part of more complex expressions; if we find one
     /// there, we'll produce an error.
-    DoWhileDisallowed { do_token: &'a Token<'a> },
+    DoWhileDisallowed { do_token: Source },
 
     /// In a similar fashion to the two above, type hints are disallowed within refinement
     /// expressions because they might themselves have refinements
-    TypeHintDisallowed { tilde_token: &'a Token<'a> },
+    TypeHintDisallowed { tilde_token: Source },
 
     /// Sometimes, we might find a comma following a single generics argument, without being
     /// enclosed by parentheses - e.g:
@@ -107,16 +88,13 @@ pub enum Error<'a> {
     /// This should have instead been written as `Foo<(T, S)>`, and so this error message reflects
     /// that, with the angle-bracket, argument, and trailing comma.
     GenericsArgsNotEnclosed {
-        leading_angle: &'a Token<'a>,
-        arg: TokenSlice<'a>,
-        comma: &'a Token<'a>,
+        leading_angle: Source,
+        arg: Span,
+        comma: Source,
     },
 
     /// "Reference" generics args - i.e. `"ref" Expr` cannot be named
-    NamedReferenceGenericsArg {
-        name: Ident<'a>,
-        ref_kwd: &'a Token<'a>,
-    },
+    NamedReferenceGenericsArg { name: Span, ref_kwd: Source },
 
     /// Parentheses were found as part of a [`UsePath`] following a dot token, e.g:
     /// ```text
@@ -125,38 +103,35 @@ pub enum Error<'a> {
     /// The user probably meant to use curly braces instead
     ///
     /// [`UsePath`]: ../item/import_use/enum.UsePath.html
-    UsePathDotParens {
-        path: TokenSlice<'a>,
-        parens: &'a Token<'a>,
-    },
+    UsePathDotParens { path: Span, parens: Source },
 
     /// A [`UsePath`] was likely intended to be a simple use, which requires the type of item
     /// brought into scope to prefix the path
     ///
     /// [`UsePath`]: ../item/import_use/enum.UsePath.html
-    MissingUseKind { path: TokenSlice<'a> },
+    MissingUseKind { path: Span },
 
     /// A [glob use] was likely intended, but is missing the dot token between the path and the
     /// asterisk. For example: `foo.bar*` instead of `foo.bar.*`.
     ///
     /// [glob use]: ../item/import_use/struct.GlobUse.html
-    MissingGlobUseDot { star_token: &'a Token<'a> },
+    MissingGlobUseDot { star_token: Source },
 
     /// A [multi-use] was likely intended, but is missing the dot token between the path and curly
     /// braces. For example: `foo{bar, baz}` intead of `foo.{bar, baz}`.
     ///
     /// [multi-use]: ../item/import_use/struct.MultiUse.html
-    MissingMultiUseDot { curly_token: &'a Token<'a> },
+    MissingMultiUseDot { curly_token: Source },
 
     /// Type declarations may optionally have bounds; these must be preceeded by a double-colon,
     /// but a user might have accidentally left a single colon instead.
-    TypeDeclSingleColonBound { colon: &'a Token<'a> },
+    TypeDeclSingleColonBound { colon: Source },
 
     /// Macros are currently unimplemented
-    MacrosUnimplemented { macro_kwd: &'a Token<'a> },
+    MacrosUnimplemented { macro_kwd: Source },
 
     /// Proof statements are currently unimplemented
-    ProofStmtsUnimplemented { proof_lines: &'a Token<'a> },
+    ProofStmtsUnimplemented { proof_lines: Span },
 
     /// Very occasionally, we'll have token following pipes that *might* be refinements in a way
     /// that is properly ambiguous. We don't allow that as valid syntax, so we request that the user
@@ -177,23 +152,107 @@ pub enum Error<'a> {
     /// This can happen for any token that can both start an expression and continue a fully-formed
     /// one; it cannot happen for anything else.
     AmbiguousExprAfterRefinements {
-        refinements_src: TokenSlice<'a>,
-        ambiguous_token: &'a Token<'a>,
+        refinements_src: Span,
+        ambiguous_token: Source,
     },
 }
 
 /// An individual source for a range of the source text, used within error messages.
-#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum Source<'a> {
-    EndDelim(&'a Token<'a>),
-    TokenResult(Result<&'a Token<'a>, token_tree::Error<'a>>),
-    EOF,
+pub struct Source {
+    pub(super) span: Span,
+    kind: SourceKind,
 }
 
-impl<'a> From<&'a Result<Token<'a>, token_tree::Error<'a>>> for Source<'a> {
-    fn from(res: &'a Result<Token<'a>, token_tree::Error<'a>>) -> Source<'a> {
-        Source::TokenResult(res.as_ref().map_err(|e| *e))
+/// The types of error sources available, aside from [`Span`]s
+///
+/// [`Span`]: ../../files/struct.Span.html
+#[derive(Debug, Copy, Clone)]
+enum SourceKind {
+    EOF,
+    Error(token_tree::ErrorKind),
+    Token(TokenKind),
+    TokenEnd(TokenKind),
+}
+
+impl Source {
+    /// Produces a `Source` from a token result, given the source file for the token
+    pub fn from(file: &FileInfo, res: &TokenResult) -> Source {
+        match res {
+            Err(e) => Source::err(file, e),
+            Ok(t) => Source::token(file, t),
+            // Err(e) => (e.span(file), SourceKind::Error(e.kind())),
+            // Ok(t) => (t.span(file), SourceKind::Token(t.kind())),
+        }
+    }
+
+    /// Produces a `Source` from a single token, given the corresponding source file
+    pub fn token(file: &FileInfo, token: &Token) -> Source {
+        Source {
+            span: token.span(file),
+            kind: SourceKind::Token(token.kind()),
+        }
+    }
+
+    pub fn err(file: &FileInfo, err: &token_tree::Error) -> Source {
+        Source {
+            span: err.span(file),
+            kind: SourceKind::Error(err.kind()),
+        }
+    }
+
+    /// Returns the `Source` corresponding exactly to the end of the given file
+    pub fn eof(file: &FileInfo) -> Source {
+        Source {
+            span: file.eof_span(),
+            kind: SourceKind::EOF,
+        }
+    }
+
+    /// Returns the [`Span`] corresponding to the slice of tokens
+    ///
+    /// [`Span`]: ../../files/struct.Span.html
+    pub fn slice_span(file: &FileInfo, range: &[TokenResult]) -> Span {
+        let start = Source::from(file, &range[0]);
+        let end = Source::from(file, &range[range.len() - 1]);
+        start.span.join(end.span)
+    }
+
+    /// Produces a `Source` from the end of a given token
+    ///
+    /// If the provided token was not a delimited token or collection of proof lines, this function
+    /// will panic.
+    pub fn end_delim(file: &FileInfo, token: &Token) -> Source {
+        let span = token.end_span(file);
+
+        let kind = token.kind();
+        match kind {
+            TokenKind::Tree(delim) => Source {
+                span,
+                kind: SourceKind::TokenEnd(kind),
+            },
+            TokenKind::ProofLines => {
+                // Because proof lines don't have a unique ending token (unlike parentheses, curly
+                // braces, etc.), we need some way of getting a span that indicates what we
+                // *actually* mean. The simple way we'll do that is by going *just* past the end of
+                // the span of the last token:
+                let start = span.end;
+
+                let span = Span {
+                    file: file.id,
+                    start,
+                    end: start + 1,
+                };
+
+                // This is okay to do because there's support built in elsewhere for handling spans
+                // that go one byte past the end of the file.
+                Source {
+                    span,
+                    kind: SourceKind::TokenEnd(kind),
+                }
+            }
+            k => panic!("unexpected token kind for `Source::end_delim`; got {:?}", k),
+        }
     }
 }
 
@@ -207,7 +266,7 @@ pub enum ItemKind {
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum ExpectedKind<'a> {
+pub enum ExpectedKind {
     ItemKwd(&'static [Kwd]),
     /// We parsed the `const` keyword as the start of an `Item`, but didn't find what we were
     /// expecting - either an `FnDecl` or a `ConstStmt`.
@@ -219,7 +278,7 @@ pub enum ExpectedKind<'a> {
     /// better error message.
     ItemAfterConst {
         /// The token giving us the "const" keyword
-        before: &'a Token<'a>,
+        before: Source,
     },
 
     /// If parsing an item starts with `["const", "pure"]` or `["pure", "const"]`, we expect `"fn"`
@@ -227,7 +286,7 @@ pub enum ExpectedKind<'a> {
     /// might not be completely clear to the user what went wrong.
     ConstPureExpectedFn {
         /// The two tokens preceeding what we expected to be a "fn" keyword
-        before: [&'a Token<'a>; 2],
+        before: [Source; 2],
     },
 
     /// Whenever we have an item definition starting with the "pure" keyword, we're expecting a
@@ -235,14 +294,14 @@ pub enum ExpectedKind<'a> {
     /// keyword or "fn" keyword.
     PureItemExpectedFnDecl {
         /// The token giving the "pure" keyword
-        before: &'a Token<'a>,
+        before: Source,
     },
 
     /// When parsing an item, after finding the tokens `"fn" Ident` (and possibly generics
     /// parameters), we'll be expecting the actual parameters of the function
     FnParams {
         /// The tokens starting the function declaration - i.e. `"fn" Ident [ GenericsParams ]`
-        fn_start: TokenSlice<'a>,
+        fn_start: Span,
     },
 
     /// A comma following a function parameter - either the method receiver or a "normal" parameter
@@ -301,43 +360,43 @@ pub enum ExpectedKind<'a> {
 
     FieldBound(FieldContext),
 
-    Ident(IdentContext<'a>),
+    Ident(IdentContext),
     ExprLhs,
-    LetColonOrEq(LetContext<'a>),
-    LetEq(LetContext<'a>),
-    ForLoopInKwd(TokenSlice<'a>), // The previous tokens in the start of the for loop
-    FnArgDelim(&'a Token<'a>),    // The containing token
+    LetColonOrEq(LetContext),
+    LetEq(LetContext),
+    ForLoopInKwd(Span), // The previous tokens in the start of the for loop
+    FnArgDelim(Source),   // The containing token
     StructFieldExprName,
     StructFieldExprColonOrComma {
-        name: &'a Token<'a>,
-        containing_token: &'a Token<'a>,
+        name: Source,
+        containing_token: Span,
     },
-    StructFieldExprDelim(&'a Token<'a>), // The containing token
-    ArrayDelim(&'a Token<'a>),           // The containing token
-    TupleDelim(&'a Token<'a>),           // The containing token
-    MatchBody(&'a Token<'a>),            // The `match` token
+    StructFieldExprDelim(Source), // The containing token
+    ArrayDelim(Source),           // The containing token
+    TupleDelim(Source),           // The containing token
+    MatchBody(Source),            // The `match` token
     MatchArmArrow,
-    MatchArmDelim(TokenSlice<'a>), // The arm after which we're expecting a delimiter
-    DotAccess(&'a Token<'a>),      // The dot token
+    MatchArmDelim(Span), // The arm after which we're expecting a delimiter
+    DotAccess(Source),   // The dot token
     BlockExpr,
     TrailingSemi {
-        expr_src: TokenSlice<'a>,
+        expr_src: Span,
     },
     EndOfIndexPostfix,
-    BigExpr(BigExprContext<'a>),
+    BigExpr(BigExprContext),
     DoWhileWhileToken,
-    Pattern(PatternContext<'a>),
-    StructPatternField(PatternContext<'a>),
-    StructPatternEnd(PatternContext<'a>),
-    StructPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
-    TuplePatternElement(PatternContext<'a>),
-    TuplePatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
-    ArrayPatternElement(PatternContext<'a>),
-    ArrayPatternDelim(PatternContext<'a>, &'a Token<'a>), // The containing token
-    GenericsParams(GenericsParamsContext<'a>),
-    Type(TypeContext<'a>),
-    MutTypeKeyword(TypeContext<'a>),
-    ArrayTypeSemi(TypeContext<'a>),
+    Pattern(PatternContext),
+    StructPatternField(PatternContext),
+    StructPatternEnd(PatternContext),
+    StructPatternDelim(PatternContext, Source), // The containing token
+    TuplePatternElement(PatternContext),
+    TuplePatternDelim(PatternContext, Source), // The containing token
+    ArrayPatternElement(PatternContext),
+    ArrayPatternDelim(PatternContext, Source), // The containing token
+    GenericsParams(GenericsParamsContext),
+    Type(TypeContext),
+    MutTypeKeyword(TypeContext),
+    ArrayTypeSemi(TypeContext),
     ArrayTypeInnerEnd,
     StructTypeFieldDelim,
     StructTypeFieldColon,
@@ -347,22 +406,22 @@ pub enum ExpectedKind<'a> {
     GenericsArgDelim,
     RefinementDelim,
     GenericsParam {
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
+        ctx: GenericsParamsContext,
+        prev_tokens: Span,
     },
     GenericTypeParamColons {
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
+        ctx: GenericsParamsContext,
+        prev_tokens: Span,
     },
     GenericsParamDelim {
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
+        ctx: GenericsParamsContext,
+        prev_tokens: Span,
     },
     GenericsArg {
-        prev_tokens: TokenSlice<'a>,
+        prev_tokens: Span,
     },
     GenericsArgCloseAngleBracket {
-        args_tokens: TokenSlice<'a>,
+        args_tokens: Span,
     },
     TypeOrExpr,
     /// After a dot token (`.`) when parsing a `TypeOrExpr`, we're expecting either an integer
@@ -404,40 +463,40 @@ pub enum ExpectedKind<'a> {
 
     TypeParamFollowOn {
         after_type_bound: bool,
-        ctx: GenericsParamsContext<'a>,
-        prev_tokens: TokenSlice<'a>,
-        param: TokenSlice<'a>,
+        ctx: GenericsParamsContext,
+        prev_tokens: Span,
+        param: Span,
     },
     FnBody {
-        fn_src: TokenSlice<'a>,
+        fn_src: Span,
     },
     FnBodyOrReturnType {
-        fn_src: TokenSlice<'a>,
+        fn_src: Span,
     },
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum IdentContext<'a> {
+pub enum IdentContext {
     /// The identifier used to name functions, provided immediately following the `fn` keyword. The
     /// attached slice of tokens gives the keywords used that indicate a function declaration.
-    FnDeclName(TokenSlice<'a>),
+    FnDeclName(Span),
 
     /// The name at the start of a generic type parameter, given as part of a function declaration
     /// or type declaration. The attached slice of tokens gives the set of tokens already parsed as
     /// part of the list of generic parameters.
-    TypeParam(GenericsParamsContext<'a>, TokenSlice<'a>),
+    TypeParam(GenericsParamsContext, Span),
 
     /// The name defined in a trait definition; the token here is the "trait" keyword
     TraitDef {
-        kwd_token: &'a Token<'a>,
+        kwd_token: Source,
     },
 
     GenericRefParam,
 
     /// Path components expect an identifier
-    PathComponent(PathComponentContext<'a>),
-    PatternPath(PatternContext<'a>, TokenSlice<'a>),
+    PathComponent(PathComponentContext),
+    PatternPath(PatternContext, Span),
     StructTypeField,
     EnumVariant,
     Field(FieldContext),
@@ -445,43 +504,43 @@ pub enum IdentContext<'a> {
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum GenericsParamsContext<'a> {
+pub enum GenericsParamsContext {
     /// The generics parameters used in a function declaration. The attached slice of tokens gives
     /// the keywords and name that indicate a function declaration.
-    FnDecl(TokenSlice<'a>),
+    FnDecl(Span),
 
     /// The tokens given here are the
-    TraitDef(TokenSlice<'a>),
+    TraitDef(Span),
 
     TypeDecl,
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum TypeContext<'a> {
+pub enum TypeContext {
     /// The optional return type used in a function declaration. The attached slice of tokens gives
     /// all of the preceeding parts of the item.
-    FnDeclReturn(TokenSlice<'a>),
+    FnDeclReturn(Span),
     GenericTypeParam {
-        param: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
+        param: Span,
+        ctx: GenericsParamsContext,
     },
     GenericConstParam {
-        param: TokenSlice<'a>,
-        ctx: GenericsParamsContext<'a>,
+        param: Span,
+        ctx: GenericsParamsContext,
     },
     GenericsArg {
-        prev_tokens: TokenSlice<'a>,
-        name: Option<&'a Token<'a>>,
+        prev_tokens: Option<Span>,
+        name: Option<Span>,
     },
-    LetHint(LetContext<'a>),
+    LetHint(LetContext),
     TypeBinding {
-        tilde: &'a Token<'a>,
+        tilde: Source,
     },
     ImplBlockType {
         /// The tokens starting the `impl` block; essentially defined to satisfy
         /// `"impl" [ Trait "for" ]`
-        prev_tokens: TokenSlice<'a>,
+        prev_tokens: Span,
     },
     TypeDecl,
     FieldBound(FieldContext),
@@ -498,10 +557,10 @@ pub enum FieldContext {
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub struct PathComponentContext<'a> {
+pub struct PathComponentContext {
     /// The previous tokens within the greater path; this will be `None` if the expected path
     /// component is the first.
-    pub prev_tokens: Option<TokenSlice<'a>>,
+    pub prev_tokens: Option<Span>,
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
@@ -515,114 +574,53 @@ pub enum NoCurlyContext {
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum BigExprContext<'a> {
-    Else(&'a Token<'a>),
+pub enum BigExprContext {
+    Else(Source),
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub struct LetContext<'a> {
-    pub let_kwd: &'a Token<'a>,
-    pub pat: TokenSlice<'a>,
+pub struct LetContext {
+    pub let_kwd: Source,
+    pub pat: Span,
 }
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone)]
-pub enum PatternContext<'a> {
-    Let(&'a Token<'a>),
-    Match(&'a Token<'a>),
-    For(&'a Token<'a>),
-    Is(&'a Token<'a>),
+pub enum PatternContext {
+    Let(Source),
+    Match(Source),
+    For(Source),
+    Is(Source),
 }
 
-impl<F: Fn(Option<&str>) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
-    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
-        todo!()
-    }
-}
-
-/*
-impl<F: Fn(Option<&str>) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
-    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+impl Into<ErrorBuilder> for Error {
+    fn into(self) -> ErrorBuilder {
         use Error::*;
 
         match self {
-            Expected { kind, found } => kind.make_error(found, ranger, file_name),
-            _ => {
-                println!("unformatted error: {:?}", self);
-                todo!()
-            }
+            Expected { kind, found } => return kind.make_error(found),
+            _ => (),
         }
-
-        // // TODO: This is really just a temporary implementation until we give these good formatting
-        // // later. It's just for checking that it *does* work
-        // let s = format!("{:?}", self);
-        // ErrorBuilder::new("Parse error").text(s)
-    }
-}
-
-// impl Error<'_> {
-//
-// }
-
-impl ExpectedKind<'_> {
-    fn make_error(
-        &self,
-        src: Source,
-        ranger: impl Fn(Option<&str>) -> Range<usize>,
-        file_name: &str,
-    ) -> ErrorBuilder {
-        let src_range = src.range(ranger);
 
         // TODO: This is really just a temporary implementation until we give these good formatting
         // later. It's just for checking that it *does* work
         let s = format!("{:?}", self);
+        ErrorBuilder::new("Parse error").text(s)
+    }
+}
+
+impl ExpectedKind {
+    fn make_error(
+        &self,
+        src: Source,
+    ) -> ErrorBuilder {
+        // TODO: This is really just a temporary implementation until we give these good formatting
+        // later. It's just for checking that it *does* work
+        let s = format!("{:?}", self);
         ErrorBuilder::new("Parse error")
-            .context(file_name, src_range.start)
-            .highlight(file_name, vec![src_range], ERR_COLOR)
+            .context(src.span)
+            .highlight(src.span, ERR_COLOR)
             .text(s)
     }
 }
-
-trait Ranged {
-    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize>;
-}
-
-impl Ranged for Token<'_> {
-    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize> {
-        let start = ranger(Some(self.src[0].src));
-        let end = ranger(Some(self.src.last().unwrap().src));
-
-        start.start..end.end
-    }
-}
-
-impl Ranged for Source<'_> {
-    fn range(&self, ranger: impl Fn(Option<&str>) -> Range<usize>) -> Range<usize> {
-        match self {
-            Source::EndDelim(token) => {
-                let Range { start, end } = token.range(ranger);
-                assert!(start < end);
-
-                (end - 1)..end
-            }
-            Source::TokenResult(Ok(t)) => t.range(ranger),
-            Source::TokenResult(Err(e)) => {
-                use token_tree::Error::*;
-
-                match e {
-                    UnexpectedCloseDelim(t) => ranger(Some(t.src)),
-                    MismatchedCloseDelim { end, .. } => ranger(Some(end.src)),
-                    UnclosedDelim(_, ts, _) => {
-                        let start = ranger(Some(ts[0].src));
-                        let end = ranger(Some(ts.last().unwrap().src));
-                        start.start..end.end
-                    }
-                    NestedProofLines(_, t) => ranger(Some(t.src)),
-                }
-            }
-            Source::EOF => ranger(None),
-        }
-    }
-}
-*/

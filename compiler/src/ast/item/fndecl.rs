@@ -1,4 +1,5 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 
 /// A function declaration, independent of where it occurs
 ///
@@ -30,18 +31,24 @@ use super::*;
 /// [`ProofStmts`]: ../proofstmts/struct.ProofStmts.html
 /// [`GenericsParams`]: ../genericsparams/struct.GenericsParams.html
 /// [`FnParams`]: struct.FnParams.html
-#[derive(Debug, Clone)]
-pub struct FnDecl<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub proof_stmts: Option<ProofStmts<'a>>,
-    pub vis: Option<Vis<'a>>,
-    pub is_const: Option<&'a Token<'a>>,
-    pub is_pure: Option<&'a Token<'a>>,
-    pub name: Ident<'a>,
-    pub generic_params: Option<GenericsParams<'a>>,
-    pub params: FnParams<'a>,
-    pub return_ty: Option<Type<'a>>,
-    pub body: Option<BlockExpr<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct FnDecl {
+    #[consumed(@ignore)]
+    pub(in crate::ast) src: Span,
+    pub proof_stmts: Option<ProofStmts>,
+    pub vis: Option<Vis>,
+    #[consumed(if is_const.is_some() { 1 } else { 0 })]
+    pub is_const: Option<Span>,
+    #[consumed(if is_pure.is_some() { 1 } else { 0 })]
+    pub is_pure: Option<Span>,
+    #[consumed(name.consumed() + 1)] // +1 for "fn" keyword
+    pub name: Ident,
+    pub generic_params: Option<GenericsParams>,
+    pub params: FnParams,
+    #[consumed(return_ty.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))] // +1 for leading "->"
+    pub return_ty: Option<Type>,
+    #[consumed(1)]
+    pub body: Option<BlockExpr>,
 }
 
 /// The parameters of a function; a helper type for [`FnDecl`]
@@ -63,11 +70,16 @@ pub struct FnDecl<'a> {
 /// [`FnDecl`]: struct.FnDecl.html
 /// [Method receivers]: struct.MethodReceiver.html
 /// [`impl` blocks]: ../implblock/struct.ImplBlock.html
-#[derive(Debug, Clone)]
-pub struct FnParams<'a> {
-    pub(in crate::ast) src: &'a Token<'a>,
-    pub receiver: Option<MethodReceiver<'a>>,
-    pub params: Vec<Field<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct FnParams {
+    #[consumed(1)]
+    pub(in crate::ast) src: Span,
+
+    #[consumed(@ignore)]
+    pub receiver: Option<MethodReceiver>,
+    #[consumed(@ignore)]
+    pub params: Vec<Field>,
+    #[consumed(@ignore)]
     pub poisoned: bool,
 }
 
@@ -85,11 +97,12 @@ pub struct FnParams<'a> {
 ///
 /// [`FnParams`]: struct.FnParams.html
 /// [`impl` blocks]: ../implblock/struct.ImplBlock.html
-#[derive(Debug, Clone)]
-pub struct MethodReceiver<'a> {
-    pub(in crate::ast) src: TokenSlice<'a>,
-    pub maybe_ref: Option<MethodReceiverRef<'a>>,
-    pub self_refinements: Option<Refinements<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MethodReceiver {
+    #[consumed(1)] // 1 to account for 'self' keyword
+    pub(in crate::ast) src: Span,
+    pub maybe_ref: Option<MethodReceiverRef>,
+    pub self_refinements: Option<Refinements>,
 }
 
 /// A helper type for [`MethodReceiver`] to collect the optional portions that are only available
@@ -101,14 +114,16 @@ pub struct MethodReceiver<'a> {
 /// ```
 ///
 /// [`MethodReceiver`]: struct.MethodReceiver.html
-#[derive(Debug, Clone)]
-pub struct MethodReceiverRef<'a> {
-    pub ref_token: &'a Token<'a>,
-    pub refinements: Option<Refinements<'a>>,
-    pub has_mut: Option<&'a Token<'a>>,
+#[derive(Debug, Clone, Consumed)]
+pub struct MethodReceiverRef {
+    #[consumed(1)] // 1 to account for "&" token
+    pub ref_token: Span,
+    pub refinements: Option<Refinements>,
+    #[consumed(if has_mut.is_some() { 1 } else { 0 })]
+    pub has_mut: Option<Span>,
 }
 
-impl<'a> FnDecl<'a> {
+impl FnDecl {
     /// Consumes a function declaration as a prefix of the given set of tokens
     ///
     /// There are many pieces of context passed into this function in order to prevent
@@ -129,22 +144,27 @@ impl<'a> FnDecl<'a> {
     /// within the current token tree should not continue, or `Some` to give the number of tokens
     /// that were consumed in parsing here.
     pub(super) fn consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ident_idx: usize,
         ends_early: bool,
-        containing_token: Option<&'a Token<'a>>,
-        errors: &mut Vec<Error<'a>>,
-        proof_stmts: Option<ProofStmts<'a>>,
+        containing_token: Option<&Token>,
+        errors: &mut Vec<Error>,
+        proof_stmts: Option<ProofStmts>,
         proof_stmts_consumed: usize,
-        vis: Option<Vis<'a>>,
-        is_const: Option<&'a Token<'a>>,
-        is_pure: Option<&'a Token<'a>>,
-    ) -> Result<FnDecl<'a>, ItemParseErr> {
+        vis: Option<Vis>,
+        is_const: Option<&Token>,
+        is_pure: Option<&Token>,
+    ) -> Result<FnDecl, ItemParseErr> {
+        let is_const = is_const.map(|t| t.span(file));
+        let is_pure = is_pure.map(|t| t.span(file));
+
         // The first token that we're given is an identifier - we'll get the token here.
         let name = Ident::parse(
+            file,
             tokens.get(ident_idx),
-            IdentContext::FnDeclName(&tokens[proof_stmts_consumed..ident_idx]),
-            end_source!(containing_token),
+            IdentContext::FnDeclName(Source::slice_span(file, &tokens[proof_stmts_consumed..ident_idx])),
+            end_source!(file, containing_token),
             errors,
         )
         .map_err(|()| ItemParseErr {
@@ -153,11 +173,12 @@ impl<'a> FnDecl<'a> {
 
         let mut consumed = ident_idx + 1;
 
-        make_expect!(tokens, consumed, ends_early, containing_token, errors);
+        make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
         let generic_params = GenericsParams::try_consume(
+            file,
             &tokens[consumed..],
-            GenericsParamsContext::FnDecl(&tokens[proof_stmts_consumed..consumed]),
+            GenericsParamsContext::FnDecl(Source::slice_span(file, &tokens[proof_stmts_consumed..consumed])),
             |err| match err {
                 token_tree::Error::UnclosedDelim(Delim::Parens, _, _) => true,
                 _ => false,
@@ -183,12 +204,12 @@ impl<'a> FnDecl<'a> {
             Ok(t),
             TokenKind::Tree { delim: Delim::Parens, inner, .. } => {
                 consumed += 1;
-                Ok(FnParams::parse(t, inner, errors))
+                Ok(FnParams::parse(file, t, inner, errors))
             },
             _ => {
                 errors.push(Error::Expected {
-                    kind: ExpectedKind::FnParams { fn_start: &tokens[ident_idx-1..consumed] },
-                    found: Source::TokenResult(Ok(t)),
+                    kind: ExpectedKind::FnParams { fn_start: Source::slice_span(file, &tokens[ident_idx-1..consumed] )},
+                    found: Source::token(file, t),
                 });
 
                 // If we couldn't find the function parameters, we'll check whether continuing is
@@ -222,7 +243,7 @@ impl<'a> FnDecl<'a> {
                 ))
             },
             @else { return Err(ItemParseErr { consumed }) } => ExpectedKind::FnParams {
-                fn_start: &tokens[ident_idx-1..consumed]
+                fn_start: Source::slice_span(file, &tokens[ident_idx-1..consumed])
             },
         ));
 
@@ -242,8 +263,9 @@ impl<'a> FnDecl<'a> {
                     consumed += 1;
 
                     let ty = Type::consume(
+                        file,
                         &tokens[consumed..],
-                        TypeContext::FnDeclReturn(&tokens[..consumed]),
+                        TypeContext::FnDeclReturn(Source::slice_span(file, &tokens[..consumed])),
                         Restrictions::default(),
                         ends_early,
                         containing_token,
@@ -259,7 +281,7 @@ impl<'a> FnDecl<'a> {
                 TokenKind::Punctuation(Punc::Semi) => None,
 
                 @else { return Err(ItemParseErr { consumed }) } => ExpectedKind::FnBodyOrReturnType {
-                    fn_src: &tokens[..consumed],
+                    fn_src: Source::slice_span(file, &tokens[..consumed]),
                 },
             ))
         };
@@ -276,9 +298,10 @@ impl<'a> FnDecl<'a> {
             },
             TokenKind::Tree { delim: Delim::Curlies, .. } => {
                 let body = BlockExpr::parse(
+                    file,
                     tokens.get(consumed),
                     ends_early,
-                    end_source!(containing_token),
+                    end_source!(file, containing_token),
                     errors,
                 )
                 .map_err(|()| ItemParseErr { consumed })?;
@@ -287,14 +310,14 @@ impl<'a> FnDecl<'a> {
                 Some(body)
             },
             @else { return Err(ItemParseErr { consumed }) } => {
-                ExpectedKind::FnBody { fn_src: &tokens[..consumed] }
+                ExpectedKind::FnBody { fn_src: Source::slice_span(file, &tokens[..consumed]) }
             }
         ));
 
         params
             .map_err(|_| ItemParseErr { consumed })
             .map(|params| FnDecl {
-                src: &tokens[..consumed],
+                src: Source::slice_span(file, &tokens[..consumed]),
                 proof_stmts,
                 vis,
                 is_const,
@@ -308,7 +331,7 @@ impl<'a> FnDecl<'a> {
     }
 }
 
-impl<'a> FnParams<'a> {
+impl FnParams {
     /// Parses function parameters from the given token
     ///
     /// This function expects the source token to be a parenthetically-enclosed token tree, but
@@ -317,10 +340,11 @@ impl<'a> FnParams<'a> {
     /// The only type of failure available to this function is through marking the internal portion
     /// of the parameters as poisoned.
     pub(super) fn parse(
-        src: &'a Token<'a>,
-        inner: TokenSlice<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> FnParams<'a> {
+        file: &FileInfo,
+        src: &Token,
+        inner: TokenSlice,
+        errors: &mut Vec<Error>,
+    ) -> FnParams {
         let ends_early = false;
 
         // Because function parameters are mostly made up of a couple components, this parsing
@@ -343,13 +367,13 @@ impl<'a> FnParams<'a> {
         let mut params = Vec::new();
         let mut poisoned = false;
 
-        make_expect!(inner, consumed, ends_early, Some(src), errors);
+        make_expect!(file, inner, consumed, ends_early, Some(src), errors);
 
         // First will be a helper macro to handle error returns:
         macro_rules! return_err {
             () => {{
                 return FnParams {
-                    src,
+                    src: src.span(file),
                     receiver,
                     params,
                     poisoned: true,
@@ -379,7 +403,7 @@ impl<'a> FnParams<'a> {
         // And with that macro out of the way, the rest of this becomes very simple!
         //
         // First, we attempt to parse the receiver
-        handle!(Ok(r) => receiver = r, MethodReceiver::try_consume(inner, ends_early, src, errors));
+        handle!(Ok(r) => receiver = r, MethodReceiver::try_consume(file, inner, ends_early, src, errors));
 
         // Then, if that's not the end of the tokens, we're expecting a trailing comma:
         if receiver.is_some() && consumed < inner.len() {
@@ -395,6 +419,7 @@ impl<'a> FnParams<'a> {
             handle!(
                 Ok(p) => params.push(p),
                 Field::consume(
+                    file,
                     &inner[consumed..],
                     FieldContext::FnParam,
                     ends_early,
@@ -417,7 +442,7 @@ impl<'a> FnParams<'a> {
         }
 
         FnParams {
-            src,
+            src: src.span(file),
             receiver,
             params,
             poisoned,
@@ -425,20 +450,21 @@ impl<'a> FnParams<'a> {
     }
 }
 
-impl<'a> MethodReceiver<'a> {
+impl MethodReceiver {
     /// Attempts to consume a method receiver as a prefix of the given tokens
     fn try_consume(
-        tokens: TokenSlice<'a>,
+        file: &FileInfo,
+        tokens: TokenSlice,
         ends_early: bool,
-        containing_token: &'a Token<'a>,
-        errors: &mut Vec<Error<'a>>,
-    ) -> Result<Option<MethodReceiver<'a>>, Option<usize>> {
+        containing_token: &Token,
+        errors: &mut Vec<Error>,
+    ) -> Result<Option<MethodReceiver>, Option<usize>> {
         if tokens.is_empty() {
             return Ok(None);
         }
 
         let mut consumed = 0;
-        make_expect!(tokens, consumed, ends_early, Some(containing_token), errors);
+        make_expect!(file, tokens, consumed, ends_early, Some(containing_token), errors);
 
         let maybe_ref = expect!((
             Ok(ref_token),
@@ -446,6 +472,7 @@ impl<'a> MethodReceiver<'a> {
                 consumed += 1;
 
                 let refinements = Refinements::try_consume(
+                    file,
                     &tokens[consumed..],
                     Restrictions::default(),
                     ends_early,
@@ -459,14 +486,15 @@ impl<'a> MethodReceiver<'a> {
                 // mutable reference
                 let has_mut = expect!((
                     Ok(mut_token),
-                    TokenKind::Keyword(Kwd::Mut) => Some(mut_token),
+                    TokenKind::Keyword(Kwd::Mut) => {
+                        consumed += 1;
+                        Some(mut_token.span(file))
+                    },
                     _ => None,
                     @else(return None) => ExpectedKind::MethodReceiverMutOrSelf,
                 ));
 
-                consumed += has_mut.consumed();
-
-                Some(MethodReceiverRef { ref_token, refinements, has_mut })
+                Some(MethodReceiverRef { ref_token: ref_token.span(file), refinements, has_mut })
             },
             _ => None,
             @else(return None) => ExpectedKind::MethodReceiverOrParam,
@@ -483,6 +511,7 @@ impl<'a> MethodReceiver<'a> {
 
         // And then, as our final component, we'll see if there's any refinements on `self`:
         let self_refinements = Refinements::try_consume(
+            file,
             &tokens[consumed..],
             Restrictions::default(),
             ends_early,
@@ -494,7 +523,7 @@ impl<'a> MethodReceiver<'a> {
         consumed += self_refinements.consumed();
 
         Ok(Some(MethodReceiver {
-            src: &tokens[..consumed],
+            src: Source::slice_span(file, &tokens[..consumed]),
             maybe_ref,
             self_refinements,
         }))

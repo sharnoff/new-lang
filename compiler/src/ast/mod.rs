@@ -3,6 +3,10 @@
 //! The definition of the syntax can be found in the neighboring file, 'bnf.md'. This is how each
 //! piece of the parser is defined, with additional ambiguities elaborated upon.
 
+use parse_macros::Consumed;
+use crate::files::FileInfo;
+use crate::error;
+
 #[macro_use]
 mod macros;
 mod consumed;
@@ -39,12 +43,9 @@ type TokenSlice<'a> = &'a [TokenResult<'a>];
 /// [`token_tree`]: ../token_tree/index.html
 type TokenResult<'a> = Result<Token<'a>, token_tree::Error<'a>>;
 
-pub fn try_parse<'a>(
-    tokens: TokenSlice<'a>,
-    ends_early: bool,
-) -> (Vec<Item<'a>>, bool, Vec<Error<'a>>) {
+pub fn try_parse(file: &FileInfo, tokens: TokenSlice, ends_early: bool) -> (Vec<Item>, bool, Vec<error::Builder>) {
     let mut errors = Vec::new();
 
-    let (items, poisoned) = Item::parse_all(tokens, ends_early, None, &mut errors);
-    (items, poisoned, errors)
+    let (items, poisoned) = Item::parse_all(file, tokens, ends_early, None, &mut errors);
+    (items, poisoned, errors.into_iter().map(Error::into).collect())
 }

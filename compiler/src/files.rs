@@ -30,6 +30,19 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
+    /// Returns the [`Span`](struct.Span.html) corresponding to the end of the file
+    pub fn eof_span(&self) -> Span {
+        Span {
+            file: self.id,
+            // Note that we go one byte past the end of the file here.
+            // The support for len + 1 is baked into the other functions on `FileInfo` taking
+            // spans, and we need to do this because we otherwise wouldn't be guarantee a non-zero
+            // length'd span inside the file. (it may be empty)
+            start: self.content.len(),
+            end: self.content.len() + 1,
+        }
+    }
+
     /// Returns the line corresponding to the given index in the lines of the file's content
     ///
     /// If the provided index is greater than or equal to the number of lines in the file, this
