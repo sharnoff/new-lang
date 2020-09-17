@@ -1332,11 +1332,17 @@ impl Expr {
     /// ```text
     /// BigExpr = IfExpr | MatchExpr | ForExpr | WhileExpr | LoopExpr | BlockExpr .
     /// ```
+    /// Note that -- in addition to the above, `do .. while .. else` expressions are included here,
+    /// but only in the case that they do contain an else clause. As such, parsing with
+    /// [`Expr::consume_big`] does not permit `do .. while` expressions, to be conservative.
+    ///
+    /// [`Expr::consume_big`]: #method.consume_big
     fn is_big(&self) -> bool {
         use Expr::*;
 
         match self {
             If(_) | Match(_) | For(_) | While(_) | Loop(_) | Block(_) | AmbiguousBlock(_) => true,
+            DoWhile(ex) if ex.else_branch.is_some() || ex.pred.is_big() => true,
             Literal(_) | Named(_) | PrefixOp(_) | BinOp(_) | PostfixOp(_) | Struct(_)
             | Array(_) | Tuple(_) | DoWhile(_) | Continue(_) => false,
         }
@@ -1344,7 +1350,9 @@ impl Expr {
 
     /// Consumes a "big" expression
     ///
-    /// Essentially, this only consumes an expression satisfying [`Expr::is_big`]
+    /// Essentially, this only consumes an expression satisfying [`Expr::is_big`], with one notable
+    /// exception - while `is_big` returns true for certain types of `do .. while` expressions,
+    /// they are not allowed here.
     ///
     /// [`Expr::is_big`]: #method.is_big
     fn consume_big(
