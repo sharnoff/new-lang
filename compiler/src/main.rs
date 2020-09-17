@@ -32,7 +32,11 @@ fn main() {
                 n => format!("{} previous errors", n),
             };
 
-            eprintln!("{}: Failed due to {}", error::ERR_COLOR.paint("error"), num_errs);
+            eprintln!(
+                "{}: Failed due to {}",
+                error::ERR_COLOR.paint("error"),
+                num_errs
+            );
         }
     })
 }

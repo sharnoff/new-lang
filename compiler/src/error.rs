@@ -111,7 +111,11 @@ pub trait ToError<A> {
 /// Displays the set of errors, printing them to the terminal via stderr
 ///
 /// Returns the number of errors printed.
-pub async fn display_errors(db: &Database, job: &JobId, errs: impl IntoIterator<Item = &Builder>) -> usize {
+pub async fn display_errors(
+    db: &Database,
+    job: &JobId,
+    errs: impl IntoIterator<Item = &Builder>,
+) -> usize {
     let mut count = 0;
 
     for err in errs {

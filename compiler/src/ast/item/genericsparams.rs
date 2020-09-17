@@ -418,7 +418,10 @@ impl GenericsParam {
         // If neither of these worked, we'll go back to assuming it's a `GenericTypeParam`, and
         // produce the error from finding ":" instead of "::".
         errors.push(Error::Expected {
-            kind: ExpectedKind::GenericTypeParamColons { ctx, prev_tokens: Source::slice_span(file, prev_tokens )},
+            kind: ExpectedKind::GenericTypeParamColons {
+                ctx,
+                prev_tokens: Source::slice_span(file, prev_tokens),
+            },
             found: Source::token(file, snd_token),
         });
 

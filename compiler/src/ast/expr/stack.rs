@@ -21,15 +21,8 @@ pub struct Stack {
 /// [`Stack`]: struct.Stack.html
 #[derive(Clone)]
 pub(super) enum Element {
-    BinOp {
-        lhs: Expr,
-        op: BinOp,
-        op_src: Span,
-    },
-    PrefixOp {
-        op: PrefixOp,
-        op_src: Span,
-    },
+    BinOp { lhs: Expr, op: BinOp, op_src: Span },
+    PrefixOp { op: PrefixOp, op_src: Span },
 }
 
 /// An indicator for the type of syntax element that's expected by the stack
@@ -85,11 +78,7 @@ impl Stack {
         self.collapse_bp_gt(op.bp(), op.fixity());
         let lhs = self.last_expr.take().unwrap();
 
-        let elem = Element::BinOp {
-            lhs,
-            op,
-            op_src,
-        };
+        let elem = Element::BinOp { lhs, op, op_src };
         self.elems.push(elem);
     }
 
@@ -176,17 +165,9 @@ impl Stack {
 
         while let Some(elem) = self.elems.pop() {
             match elem {
-                Element::BinOp {
-                    lhs,
-                    op,
-                    op_src,
-                } => {
+                Element::BinOp { lhs, op, op_src } => {
                     if !greater_than(&op.bp(), &bp) {
-                        self.elems.push(Element::BinOp {
-                            lhs,
-                            op,
-                            op_src,
-                        });
+                        self.elems.push(Element::BinOp { lhs, op, op_src });
                         break;
                     }
 
@@ -199,15 +180,9 @@ impl Stack {
                         rhs,
                     }));
                 }
-                Element::PrefixOp {
-                    op,
-                    op_src,
-                } => {
+                Element::PrefixOp { op, op_src } => {
                     if !greater_than(&op.bp(), &bp) {
-                        self.elems.push(Element::PrefixOp {
-                            op,
-                            op_src,
-                        });
+                        self.elems.push(Element::PrefixOp { op, op_src });
                         break;
                     }
 

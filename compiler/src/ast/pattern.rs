@@ -824,13 +824,11 @@ impl FieldPattern {
         match pat_res {
             Err(None) => Err(None),
             Err(Some(c)) => Err(Some(c + 2)),
-            Ok(pat) => {
-                Ok(FieldPattern {
-                    src: Source::slice_span(file, &tokens[..pat.consumed() + 2]),
-                    name,
-                    binding: Some(pat),
-                })
-            }
+            Ok(pat) => Ok(FieldPattern {
+                src: Source::slice_span(file, &tokens[..pat.consumed() + 2]),
+                name,
+                binding: Some(pat),
+            }),
         }
     }
 }

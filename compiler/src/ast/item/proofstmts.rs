@@ -137,7 +137,9 @@ impl ProofStmts {
         _inner: TokenSlice,
         errors: &mut Vec<Error>,
     ) -> ProofStmts {
-        errors.push(Error::ProofStmtsUnimplemented { proof_lines: src.span(file) });
+        errors.push(Error::ProofStmtsUnimplemented {
+            proof_lines: src.span(file),
+        });
 
         ProofStmts {
             src: src.span(file),

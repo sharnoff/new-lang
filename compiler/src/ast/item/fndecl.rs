@@ -163,7 +163,10 @@ impl FnDecl {
         let name = Ident::parse(
             file,
             tokens.get(ident_idx),
-            IdentContext::FnDeclName(Source::slice_span(file, &tokens[proof_stmts_consumed..ident_idx])),
+            IdentContext::FnDeclName(Source::slice_span(
+                file,
+                &tokens[proof_stmts_consumed..ident_idx],
+            )),
             end_source!(file, containing_token),
             errors,
         )
@@ -178,7 +181,10 @@ impl FnDecl {
         let generic_params = GenericsParams::try_consume(
             file,
             &tokens[consumed..],
-            GenericsParamsContext::FnDecl(Source::slice_span(file, &tokens[proof_stmts_consumed..consumed])),
+            GenericsParamsContext::FnDecl(Source::slice_span(
+                file,
+                &tokens[proof_stmts_consumed..consumed],
+            )),
             |err| match err {
                 token_tree::Error::UnclosedDelim(Delim::Parens, _, _) => true,
                 _ => false,
@@ -464,7 +470,14 @@ impl MethodReceiver {
         }
 
         let mut consumed = 0;
-        make_expect!(file, tokens, consumed, ends_early, Some(containing_token), errors);
+        make_expect!(
+            file,
+            tokens,
+            consumed,
+            ends_early,
+            Some(containing_token),
+            errors
+        );
 
         let maybe_ref = expect!((
             Ok(ref_token),

@@ -365,7 +365,7 @@ pub enum ExpectedKind {
     LetColonOrEq(LetContext),
     LetEq(LetContext),
     ForLoopInKwd(Span), // The previous tokens in the start of the for loop
-    FnArgDelim(Source),   // The containing token
+    FnArgDelim(Source), // The containing token
     StructFieldExprName,
     StructFieldExprColonOrComma {
         name: Source,
@@ -611,10 +611,7 @@ impl Into<ErrorBuilder> for Error {
 }
 
 impl ExpectedKind {
-    fn make_error(
-        &self,
-        src: Source,
-    ) -> ErrorBuilder {
+    fn make_error(&self, src: Source) -> ErrorBuilder {
         // TODO: This is really just a temporary implementation until we give these good formatting
         // later. It's just for checking that it *does* work
         let s = format!("{:?}", self);

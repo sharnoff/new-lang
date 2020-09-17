@@ -1,7 +1,7 @@
 use super::*;
+use crate::files::{FileInfo, Span};
 use crate::tokens::LiteralKind;
 use std::convert::TryFrom;
-use crate::files::{FileInfo, Span};
 
 /// An import statment
 ///
@@ -284,8 +284,14 @@ impl UseStmt {
         let mut consumed = ident_idx;
         make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
-        let path = UsePath::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
-            .map_err(ItemParseErr::add(consumed))?;
+        let path = UsePath::consume(
+            file,
+            &tokens[consumed..],
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(ItemParseErr::add(consumed))?;
         consumed += path.consumed();
 
         expect!((
@@ -426,7 +432,8 @@ impl UsePath {
         containing_token: Option<&Token>,
         errors: &mut Vec<Error>,
     ) -> Result<Path, Option<usize>> {
-        let base = PathComponent::consume(file, tokens, None, ends_early, containing_token, errors)?;
+        let base =
+            PathComponent::consume(file, tokens, None, ends_early, containing_token, errors)?;
         let mut consumed = base.consumed();
         let mut components = vec![base];
 
@@ -478,7 +485,8 @@ impl MultiUse {
         }
 
         while consumed < inner.len() {
-            let path_res = UsePath::consume(file, &inner[consumed..], ends_early, Some(src), errors);
+            let path_res =
+                UsePath::consume(file, &inner[consumed..], ends_early, Some(src), errors);
             match path_res {
                 Ok(p) => {
                     consumed += p.consumed();
@@ -525,8 +533,14 @@ impl SingleUse {
         let mut consumed = 1;
         make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
-        let path = Path::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
-            .map_err(p!(Some(c) => Some(c + consumed)))?;
+        let path = Path::consume(
+            file,
+            &tokens[consumed..],
+            ends_early,
+            containing_token,
+            errors,
+        )
+        .map_err(p!(Some(c) => Some(c + consumed)))?;
         consumed += path.consumed();
 
         // [ "as" Ident ]

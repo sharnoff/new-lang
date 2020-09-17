@@ -122,8 +122,14 @@ impl ImplBlock {
         // If we aren't jumping to the type, we're parsing a path as our trait, then interpreting
         // it based on what comes next.
         if !jump_to_type {
-            let path = Path::consume(file, &tokens[consumed..], ends_early, containing_token, errors)
-                .map_err(ItemParseErr::add(consumed))?;
+            let path = Path::consume(
+                file,
+                &tokens[consumed..],
+                ends_early,
+                containing_token,
+                errors,
+            )
+            .map_err(ItemParseErr::add(consumed))?;
             consumed += path.consumed();
 
             // And with that path parsed, we'll look ahead one token to see whether this should be
