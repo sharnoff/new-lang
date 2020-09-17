@@ -56,6 +56,17 @@ impl Stack {
         }
     }
 
+    /// Returns whether the stack requires an additional atomic expression in order to be completed
+    ///
+    /// This is exactly equal to testing if [`self.expecting()`] equals
+    /// [`Expecting::AtomOrPrefix`].
+    ///
+    /// [`self.expecting()`]: #method.expecting
+    /// [`Expecting::AtomOrPrefix`]: ../enum.Expecting.html
+    pub(super) fn requires_more(&self) -> bool {
+        self.expecting() == Expecting::AtomOrPrefix
+    }
+
     /// Pushes the given prefix operator onto the stack
     pub fn push_prefix(&mut self, op: PrefixOp, op_src: Span) {
         assert_eq!(self.expecting(), Expecting::AtomOrPrefix);

@@ -839,7 +839,7 @@ impl Expr {
 
             match res {
                 Ok(Some(c)) => consumed += c,
-                Ok(None) if stack.is_empty() => {
+                Ok(None) if stack.requires_more() => {
                     errors.push(Error::Expected {
                         kind: ExpectedKind::ExprLhs,
                         found: match tokens.get(consumed) {
