@@ -33,7 +33,7 @@ pub(super) enum Expecting {
 }
 
 impl Stack {
-    /// Constructs a new `Stack` from the
+    /// Constructs a blank `Stack`
     pub const fn new() -> Self {
         Stack {
             elems: Vec::new(),
