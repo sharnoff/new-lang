@@ -2195,6 +2195,8 @@ impl PostfixOp {
                                     });
 
                                     return Err(None);
+                                } else {
+                                    return Ok(None);
                                 }
                             }
 
@@ -3145,6 +3147,7 @@ impl MatchExpr {
             errors,
         )
         .map_err(p!(Some(c) => Some(consumed + c)))?;
+        consumed += expr.consumed();
 
         let (arms, poisoned) = match tokens.get(consumed) {
             None if ends_early => return Err(None),
@@ -3211,8 +3214,12 @@ impl MatchArm {
         let mut arms = Vec::new();
         let ends_early = false;
 
+        make_expect!(file, inner, consumed, ends_early, Some(curly_src), errors);
+
         let pat_ctx = PatternContext::Match(match_kwd);
         while consumed < inner.len() {
+            // breakpoint
+
             let arm_res = MatchArm::consume(
                 file,
                 &inner[consumed..],
@@ -3221,7 +3228,9 @@ impl MatchArm {
                 Some(curly_src),
                 errors,
             );
+
             let arm_src;
+            let requires_delim;
 
             match arm_res {
                 Err(None) => {
@@ -3232,54 +3241,24 @@ impl MatchArm {
                     arm_src = Source::slice_span(file, &inner[consumed..consumed + c]);
                     consumed += c;
                     poisoned = true;
+                    requires_delim = false;
                 }
                 Ok(arm) => {
                     arm_src = Source::slice_span(file, &inner[consumed..consumed + arm.consumed()]);
                     consumed += arm.consumed();
-                    let requires_delim = arm.requires_delim();
+                    requires_delim = arm.requires_delim();
                     arms.push(arm);
-                    if !requires_delim {
-                        continue;
-                    }
                 }
             }
 
-            // After each match arm that requires it, we'll expect a comma to delimit the arms
-            match inner.get(consumed) {
-                // Running out of tokens is fine- we don't have any more arms to parse, so we'll do
-                // a normal exit
-                None => {
-                    if ends_early {
-                        poisoned = true;
-                    }
-                    break;
-                }
-                // If the arms have already been poisoned and we find a tokenizer error, we'll just
-                // exit because we don't have enough information
-                Some(Err(_)) if poisoned => break,
-                // Otherwise, we were expecting a comma - we'll produce an error because we didn't
-                // find one.
-                Some(Err(e)) => {
-                    errors.push(Error::Expected {
-                        kind: ExpectedKind::MatchArmDelim(arm_src),
-                        found: Source::err(file, e),
-                    });
-
-                    poisoned = true;
-                    break;
-                }
-                Some(Ok(t)) => match &t.kind {
+            if consumed < inner.len() {
+                expect!((
+                    Ok(_),
                     TokenKind::Punctuation(Punc::Comma) => consumed += 1,
-                    _ => {
-                        errors.push(Error::Expected {
-                            kind: ExpectedKind::MatchArmDelim(arm_src),
-                            found: Source::token(file, t),
-                        });
-
-                        poisoned = true;
-                        break;
-                    }
-                },
+                    _ if !requires_delim => continue,
+                    _ if poisoned => break,
+                    @else { poisoned = true; break } => ExpectedKind::MatchArmDelim(arm_src),
+                ))
             }
         }
 
@@ -3365,7 +3344,7 @@ impl MatchArm {
     /// A helper function to determine whether a match arm requires a trailing comma. Only
     /// `BigExpr` expressions are allowed to omit the trailing comma.
     fn requires_delim(&self) -> bool {
-        self.eval.is_big()
+        !self.eval.is_big()
     }
 }
 
