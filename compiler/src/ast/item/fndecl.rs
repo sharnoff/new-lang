@@ -43,7 +43,7 @@ pub struct FnDecl {
     pub is_pure: Option<Span>,
     #[consumed(name.consumed() + 1)] // +1 for "fn" keyword
     pub name: Ident,
-    pub generic_params: Option<GenericsParams>,
+    pub generics_params: Option<GenericsParams>,
     pub params: FnParams,
     #[consumed(return_ty.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))] // +1 for leading "->"
     pub return_ty: Option<Type>,
@@ -178,7 +178,7 @@ impl FnDecl {
 
         make_expect!(file, tokens, consumed, ends_early, containing_token, errors);
 
-        let generic_params = GenericsParams::try_consume(
+        let generics_params = GenericsParams::try_consume(
             file,
             &tokens[consumed..],
             GenericsParamsContext::FnDecl(Source::slice_span(
@@ -195,7 +195,7 @@ impl FnDecl {
         )
         .map_err(ItemParseErr::add(consumed))?;
 
-        consumed += generic_params.consumed();
+        consumed += generics_params.consumed();
 
         // A temporary enum for marking where to go next if parsing the parameters failed
         // The relevance of this type is made clear below.
@@ -329,7 +329,7 @@ impl FnDecl {
                 is_const,
                 is_pure,
                 name,
-                generic_params,
+                generics_params,
                 params,
                 return_ty,
                 body,

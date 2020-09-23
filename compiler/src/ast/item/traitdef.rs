@@ -32,7 +32,7 @@ pub struct TraitDef {
     pub vis: Option<Vis>,
     #[consumed(name.consumed() + 1)] // +1 for "trait" keyword
     pub name: Ident,
-    pub generic_params: Option<GenericsParams>,
+    pub generics_params: Option<GenericsParams>,
     // +1 for leading "::"
     #[consumed(super_traits.as_ref().map(|t| t.consumed() + 1).unwrap_or(0))]
     pub super_traits: Option<TypeBound>,
@@ -84,7 +84,7 @@ impl TraitDef {
 
         consumed += 1;
 
-        let generic_params = GenericsParams::try_consume(
+        let generics_params = GenericsParams::try_consume(
             file,
             &tokens[consumed..],
             GenericsParamsContext::TraitDef(Source::slice_span(file, &tokens[kwd_idx..consumed])),
@@ -95,7 +95,7 @@ impl TraitDef {
         )
         .map_err(ItemParseErr::add(consumed))?;
 
-        consumed += generic_params.consumed();
+        consumed += generics_params.consumed();
 
         // If we find a double-colon ("::") after the trait name with generic parameters, we'll be
         // expecting a type bound.
@@ -147,7 +147,7 @@ impl TraitDef {
             proof_stmts,
             vis,
             name,
-            generic_params,
+            generics_params,
             super_traits,
             body,
         })
