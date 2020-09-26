@@ -4,6 +4,7 @@ use crate::Database;
 use hydra::JobId;
 use std::borrow::Cow;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::{fs, io};
@@ -23,6 +24,7 @@ pub struct FileId(usize);
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub id: FileId,
+    pub path: PathBuf,
     pub name: String,
     pub content: String,
     line_ranges: Vec<Range<usize>>,
@@ -142,22 +144,24 @@ pub struct IoError {
 pub async fn file_content(
     db: Database,
     job: &JobId,
-    file_name: String, // TODO: this should be a path instead
+    file_path: PathBuf,
 ) -> hydra::Result<IoResult<FileInfo>> {
     // wrap with `Ok` because there's never any other DB requirements here
-    Ok(match fs::read_to_string(&file_name).await {
+    Ok(match fs::read_to_string(&file_path).await {
         Err(err) => Err(Arc::new(IoError {
             reported: AtomicBool::new(false),
             err,
         })),
         Ok(content) => {
             let line_ranges = FileInfo::make_lines(&content);
+            let name = file_path.to_string_lossy().into();
 
             let mut file = None;
             db.register_file(job, |id| {
                 let f = Arc::new(FileInfo {
                     id,
-                    name: file_name,
+                    path: file_path,
+                    name,
                     content,
                     line_ranges,
                 });

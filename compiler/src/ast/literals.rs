@@ -5,6 +5,7 @@
 use super::*;
 use crate::files::{FileInfo, Span};
 use crate::tokens::LiteralKind;
+use std::hash::{Hash, Hasher};
 
 #[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Clone, Consumed)]
@@ -14,6 +15,12 @@ pub struct Ident {
 
     #[consumed(1)]
     pub name: String,
+}
+
+impl Hash for Ident {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Consumed)]

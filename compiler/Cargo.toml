@@ -10,5 +10,6 @@ edition = "2018"
 ansi_term = "0.12"
 unicode-width = "0.1.7"
 hydra = { path = "../hydra" }
+arc-offset = { path = "../arc-offset" }
 parse-macros = { path = "../parse-macros" }
 tokio = { version = "0.2", features = ["fs", "io-util"] }

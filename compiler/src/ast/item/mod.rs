@@ -4,6 +4,7 @@
 // this module.
 use super::*;
 use crate::files::{FileInfo, Span};
+use arc_offset::ArcOffset;
 
 // And all of the submodules here are really just for code organization; we want them all to exist
 // (and be documented) under the single `ast::item` namespace.
@@ -25,7 +26,7 @@ pub use self::{
     proofstmts::*, traitdef::*, typedecl::*,
 };
 
-#[derive(Debug, Clone, Consumed)]
+#[derive(Debug, Clone, ArcOffset, Consumed)]
 pub enum Item {
     Fn(FnDecl),
     Macro(MacroDef),
@@ -37,6 +38,16 @@ pub enum Item {
     Import(ImportStmt),
     Use(UseStmt),
 }
+
+pub type ArcFnItem = ArcOffset<Item, FnDecl>;
+pub type ArcMacroItem = ArcOffset<Item, MacroDef>;
+pub type ArcTypeItem = ArcOffset<Item, TypeDecl>;
+pub type ArcTraitItem = ArcOffset<Item, TraitDef>;
+pub type ArcImplItem = ArcOffset<Item, ImplBlock>;
+pub type ArcConstItem = ArcOffset<Item, ConstStmt>;
+pub type ArcStaticItem = ArcOffset<Item, StaticStmt>;
+pub type ArcImportItem = ArcOffset<Item, ImportStmt>;
+pub type ArcUseItem = ArcOffset<Item, UseStmt>;
 
 /// A specific enum for handling item parsing failure
 ///

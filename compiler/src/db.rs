@@ -10,14 +10,17 @@ use crate::error::{Builder as Error, ToError};
 use crate::files::{FileId, FileInfo, GetFile, IoResult};
 use crate::token_tree::FileTokenTree;
 use crate::tokens::SimpleToken;
-use hydra::JobId;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+// We publicly re-use JobId so that there's one collected area for managing database interactions
+pub use hydra::JobId;
 
 hydra::make_database! {
     /// The central database used for managing queries of every piece of information in the
     /// compiler
     pub struct Database {
-        @single root_file: String,
+        @single pub root_directory: Arc<Path>,
 
         @indexed {
             pub emit_error -> get_error as usize => errors: Error,
@@ -27,6 +30,7 @@ hydra::make_database! {
         impl {
             pub file_content: GetFile,
             pub ast_info: GetAst,
+            pub get_module: GetModule,
         }
     }
 }
@@ -42,9 +46,9 @@ pub struct AstGroup {
 pub async fn ast_group(
     db: Database,
     job: &JobId,
-    file_name: String,
+    file_path: PathBuf,
 ) -> hydra::Result<IoResult<AstGroup>> {
-    let file = match db.file_content(job.new_child(), file_name).await {
+    let file = match db.file_content(job.new_child(), file_path).await {
         Err(e) => return Err(e),
         Ok(Err(e)) => return Ok(Err(e)),
         Ok(Ok(c)) => c,
@@ -56,7 +60,6 @@ pub async fn ast_group(
         .map(Result::unwrap)
         .collect::<Vec<_>>();
 
-    // TODO: Actually store the errors
     let token_errors = token_results
         .drain(tokens.len()..)
         .filter_map(Result::err)

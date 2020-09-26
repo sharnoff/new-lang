@@ -1,6 +1,7 @@
 // #![allow(unused_variables)]
 // #![allow(dead_code)]
 
+#[warn(missing_debug_implementations)]
 use hydra::JobId;
 use hydra::Runtime;
 
@@ -8,6 +9,7 @@ mod ast;
 mod db;
 mod error;
 mod files;
+mod modules;
 mod token_tree;
 mod tokens;
 mod utils;
