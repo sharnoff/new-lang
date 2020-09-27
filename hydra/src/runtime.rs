@@ -1,18 +1,18 @@
 //! The primary implementation of the systems used for managing the runtime operations of the
 //! database
 
-use crate::internal::{Computable, Priority, Runtime};
+use crate::internal::{Computable, Runtime};
 use crate::{Error, JobId};
-use futures::channel::oneshot::{self, Sender};
-use futures::executor::ThreadPool;
-use futures::lock::{Mutex, MutexGuard};
-use futures::prelude::*;
 use std::collections::{hash_map::Entry, HashMap};
 use std::fmt::Debug;
+use std::future::Future;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
+use tokio::runtime::Runtime as TokioRuntime;
+use tokio::sync::oneshot::{self, Sender};
+use tokio::sync::{Mutex, MutexGuard};
 
 pub struct DBLayer<K, V, DB, Token> {
     values: Mutex<HashMap<K, ComputeStatus<V>>>,
@@ -168,7 +168,7 @@ where
             tx.send(result).unwrap();
         };
 
-        db.executor().add_task(task, Priority::Asap)
+        db.executor().add_task(task)
     }
 
     /// Queues a low-priority task into the global executor that marks all of the job's ancestors
@@ -181,10 +181,9 @@ where
             Some(p) => p.clone(),
         };
 
-        global.executor().add_task(
-            global.clone().mark_blocked_recursive(parent, blocked_by),
-            Priority::Defer,
-        );
+        global
+            .executor()
+            .add_task(global.clone().mark_blocked_recursive(parent, blocked_by));
     }
 
     /// Determines whether any of the `JobId`s in the list are an ancestor of the first, returning
@@ -376,14 +375,56 @@ impl Index for usize {
     }
 }
 
-pub struct Executor(ThreadPool);
+pub struct Executor(TokioRuntime);
 
 impl Executor {
+    /// Creates a new `Executor`
+    ///
+    /// This is essentially a wrapper around the backing executor/runtime provided by the futures
+    /// implementation. It's a newtype so that the exposed API can be minimized and made
+    /// consistent if/when the backend changes.
     pub fn new() -> Executor {
-        Executor(ThreadPool::new().expect("failed to build executor thread pool"))
+        Executor(TokioRuntime::new().expect("failed to build executor thread pool"))
     }
 
-    fn add_task(&self, f: impl 'static + Send + Future<Output = ()>, _priority: Priority) {
-        self.0.spawn_ok(f);
+    // An internal function used for spawning a background task
+    fn add_task(&self, f: impl 'static + Send + Future<Output = ()>) {
+        self.0.spawn(f);
+    }
+
+    /// Executes all of the provided futures in parallel, their outputs
+    ///
+    /// This function will panic if it fails to re-join with any of the given tasks. Notable places
+    /// where this might occur are from cancellation or if any of the jobs panic. If this function
+    /// panics, there are no guarantees made about the execution status of futures.
+    ///
+    /// Internally, this function spawns individual jobs in the runtime for each future before
+    /// blocking on their join handles and returning.
+    pub async fn execute_all<Fut>(&self, jobs: impl IntoIterator<Item = Fut>) -> Vec<Fut::Output>
+    where
+        Fut: 'static + Send + Sync + Future,
+        Fut::Output: 'static + Send + Sync,
+    {
+        let mut handles = Vec::new();
+        for fut in jobs {
+            handles.push(self.0.spawn(fut));
+        }
+
+        let mut outputs = Vec::with_capacity(handles.len());
+        for h in handles {
+            outputs.push(h.await.expect("task failed to execute"));
+        }
+
+        outputs
+    }
+
+    /// Blocks on the future, returning only once the executor has run it to completion
+    ///
+    /// This function must not be called from an asyncronous context. It is currently a wrapper
+    /// around `tokio`'s [`Runtime::block_on`], which is used as the entry point to the runtime.
+    ///
+    /// [`Runtime::block_on`]: TokioRuntime::block_on
+    pub fn block_on<Fut: Future>(&self, job: Fut) -> Fut::Output {
+        self.0.handle().block_on(job)
     }
 }

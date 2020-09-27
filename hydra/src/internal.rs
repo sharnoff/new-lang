@@ -10,10 +10,11 @@
 #![doc(hidden)]
 
 use crate::JobId;
-use futures::future::Future;
-use futures::lock::Mutex;
 use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
+use tokio::sync::Mutex;
+use tokio::task::yield_now;
 
 pub use crate::runtime::Executor;
 
@@ -119,6 +120,8 @@ pub trait Runtime: 'static + Clone + Send + Sync {
         by: JobId,
     ) -> Pin<Box<dyn Send + Sync + Future<Output = ()>>> {
         async fn inner(this: impl Runtime, job: JobId, by: JobId) {
+            // Immediately yield to mark this job as lower priority
+            yield_now().await;
             let mut job = &job;
 
             // From the documentation of `mark_single_blocked`:
@@ -128,6 +131,14 @@ pub trait Runtime: 'static + Clone + Send + Sync {
             }
 
             while let Some(p) = job.parent() {
+                // And at each loop iteration, we yield control.
+                // We do this so that the other futures we might have unblocked get the chance to
+                // cascade their values before this happens.
+                //
+                // Essentially, doing this increases the chance that `mark_single_blocked` will
+                // return `None`, meaning that we won't have anything to do anymore.
+                yield_now().await;
+
                 job = &p;
                 if this.mark_single_blocked(job, &by).await.is_none() {
                     return ();
@@ -137,11 +148,6 @@ pub trait Runtime: 'static + Clone + Send + Sync {
 
         Box::pin(inner(self, job, by))
     }
-}
-
-pub enum Priority {
-    Defer,
-    Asap,
 }
 
 pub struct JobOwners {

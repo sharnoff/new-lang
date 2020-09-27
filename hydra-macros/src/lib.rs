@@ -164,7 +164,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
         #vis struct #db_type(std::sync::Arc<#db_inner_type>);
 
         struct #db_inner_type {
-            #( #singles_names: hydra::futures::lock::Mutex<Option<#singles_types>>, )*
+            #( #singles_names: hydra::tokio::sync::Mutex<Option<#singles_types>>, )*
 
             #( #indexed_field_names: hydra::Indexed<#indexers, #indexed_types>, )*
 
@@ -184,7 +184,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
             #vis fn new() -> Self {
                 use hydra::DBLayer;
                 use hydra::internal::{JobOwners, Executor};
-                use hydra::futures::lock::Mutex;
+                use hydra::tokio::sync::Mutex;
 
                 Self(std::sync::Arc::new(#db_inner_type {
                     #( #singles_names: Mutex::new(None), )*
@@ -199,7 +199,7 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
 
         impl hydra::internal::Runtime for #db_type {
             fn mark_single_blocked<'a>(&'a self, job: &'a hydra::JobId, by: &'a hydra::JobId) ->
-                std::pin::Pin<Box<dyn 'a + Send + Sync + hydra::futures::prelude::Future<Output = Option<()>>>> {
+                std::pin::Pin<Box<dyn 'a + Send + Sync + ::std::future::Future<Output = Option<()>>>> {
                 use std::sync::Arc;
                 use hydra::JobId;
 
@@ -213,7 +213,6 @@ pub fn __make_database(input: TokenStream) -> TokenStream {
                 }
 
                 Box::pin(inner(self, job, by))
-
             }
 
             fn executor(&self) -> &hydra::internal::Executor {
@@ -276,7 +275,7 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn construct<'a>(db: #db_type, job: &'a hydra::JobId, key: Self::Key) ->
                     std::pin::Pin<Box<
                         dyn 'a + Send + Sync +
-                        hydra::futures::future::Future<Output=hydra::Result<#value_type>>
+                        ::std::future::Future<Output=hydra::Result<#value_type>>
                     >>
             {
                 async fn inner(#fn_args) #fn_out #body

@@ -16,12 +16,13 @@ mod runtime;
 pub mod internal;
 
 pub use self::core::{Error, Result};
+pub use internal::Runtime;
 pub use job_id::JobId;
 pub use runtime::{DBLayer, Index, Indexed};
 
-// Re-export `futures` so that we guarantee that it's available for us in the macro
+// Re-export `tokio` so that we guarantee that it's available for us inside the macro
 #[doc(hidden)]
-pub use futures;
+pub use tokio;
 
 /// The macro that constructs the root database type itself
 ///

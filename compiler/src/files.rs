@@ -3,11 +3,10 @@
 use crate::Database;
 use hydra::JobId;
 use std::borrow::Cow;
-use std::fs;
-use std::io;
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tokio::{fs, io};
 use unicode_width::UnicodeWidthStr;
 
 /// A unique identifier to track files that have been successfully read
@@ -145,16 +144,8 @@ pub async fn file_content(
     job: &JobId,
     file_name: String, // TODO: this should be a path instead
 ) -> hydra::Result<IoResult<FileInfo>> {
-    // This function is one of the few async database functions that *doesn't* cooperate.
-    // Ironically, because using async here would require *more* dependencies (and an additional
-    // runtime), we actually do blocking io here -- without allowing the runtime to delay.
-    //
-    // Thankfully, file IO should take an incredibly small amount of time, relative to the rest of
-    // the data processing we need to do, so we're okay with having a little bit of inefficiency
-    // here.
-
     // wrap with `Ok` because there's never any other DB requirements here
-    Ok(match fs::read_to_string(&file_name) {
+    Ok(match fs::read_to_string(&file_name).await {
         Err(err) => Err(Arc::new(IoError {
             reported: AtomicBool::new(false),
             err,
